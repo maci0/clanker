@@ -3490,7 +3490,7 @@ const Model = struct {
             if (maybe_line) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
         } else |_| {}
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session_mod.saveSession(self.io, self.gpa, self.arena, "state/sessions", .{
+        session_mod.saveSession(self.io, self.arena, "state/sessions", .{
             .id = sid,
             .title = self.session_title,
             .messages = self.messages.items,
@@ -4753,7 +4753,7 @@ const Model = struct {
             break :blk self.arena.dupe(u8, session_mod.titleFromTask(&title_buf, session_mod.titleSource(transcript.items, ""))) catch "";
         };
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session_mod.saveSession(self.io, self.gpa, self.arena, "state/sessions", .{
+        session_mod.saveSession(self.io, self.arena, "state/sessions", .{
             .id = id,
             .title = title,
             .messages = transcript.items,

@@ -200,7 +200,7 @@ fn encodeToolCalls(arena: std.mem.Allocator, calls: ?[]const types.ToolCall) ![]
 /// Writes a session to `<sessions_dir>/<id>.db`: the meta record upserted,
 /// the transcript replaced (the messages table is the mutable projection),
 /// in one transaction. The events table is never touched here.
-pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, session: Session) !void {
+pub fn saveSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, session: Session) !void {
     if (!validSessionId(session.id)) return error.InvalidSessionId;
     std.Io.Dir.cwd().createDirPath(io, sessions_dir) catch {};
 
@@ -249,7 +249,7 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     try tx.commit();
     // Cross-session full-text index (fail-open: a missing index only costs
     // the next search its speedup).
-    session_fts.replaceSession(io, gpa, arena, session.id, session.messages);
+    session_fts.replaceSession(arena, session.id, session.messages);
 }
 
 pub const StoredToolCall = struct {
@@ -277,9 +277,9 @@ pub const StoredMessage = struct {
 };
 
 /// Reads a session's meta + transcript rows from an open connection. Copies
-/// are arena-owned.
-fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator, id: []const u8) !StoredMessageList {
-    _ = id;
+/// are arena-owned. Every row is taken: the connection is one session's own
+/// database, so the messages table holds that session and nothing else.
+fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator) !StoredMessageList {
     var out: std.ArrayList(StoredMessage) = .empty;
     var stmt = try conn.prepare(
         \\SELECT role, content, images, tool_calls, tool_call_id, steered FROM messages ORDER BY seq;
@@ -342,7 +342,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     const workspace = metaGet(&conn, arena, "workspace") orelse "";
     const archived = std.mem.eql(u8, metaGet(&conn, arena, "archived") orelse "", "true");
     const system_prompt = metaGet(&conn, arena, "system_prompt");
-    const stored = try loadStored(&conn, arena, id);
+    const stored = try loadStored(&conn, arena);
 
     var messages: std.ArrayList(types.Message) = .empty;
     for (stored.items) |sm| {
@@ -405,7 +405,7 @@ pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     const s = try loadSession(io, gpa, arena, sessions_dir, id);
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const new_id = try std.fmt.allocPrint(arena, "{s}-fork-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
-    try saveSession(io, gpa, arena, sessions_dir, .{
+    try saveSession(io, arena, sessions_dir, .{
         .id = new_id,
         .title = try std.fmt.allocPrint(arena, "fork of {s}", .{s.title}),
         .workspace = s.workspace,
@@ -453,7 +453,7 @@ pub fn branchSession(
     // Nanosecond suffix keeps two branches of the same session distinct and
     // stays within the alphanumeric/dash alphabet validSessionId accepts.
     const new_id = try std.fmt.allocPrint(arena, "{s}-branch-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
-    try saveSession(io, gpa, arena, sessions_dir, .{
+    try saveSession(io, arena, sessions_dir, .{
         .id = new_id,
         .title = try std.fmt.allocPrint(arena, "branch of {s}", .{s.title}),
         .workspace = s.workspace,
@@ -893,7 +893,6 @@ fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, match_le
 /// search, matching how the listing treats a corrupt session.
 pub fn searchSessions(
     io: std.Io,
-    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     sessions_dir: []const u8,
     query: []const u8,
@@ -907,7 +906,7 @@ pub fn searchSessions(
     // the listing: load meta only for the ids the index named. No index ->
     // full linear scan.
     var metas: []SessionMeta = &.{};
-    if (session_fts.candidates(io, gpa, arena, query)) |ids| {
+    if (session_fts.candidates(arena, query)) |ids| {
         var listed: std.ArrayList(SessionMeta) = .empty;
         for (ids) |id| {
             if (sessionMetaFromDb(io, arena, sessions_dir, id)) |meta| try listed.append(arena, meta);
@@ -1079,7 +1078,7 @@ pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 /// Accepts an array of {"role":"user"|"assistant","content":string} (unknown
 /// roles/tools are skipped) so both providers' exports and our own session
 /// JSON can be pasted without conversion.
-pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
+pub fn importChat(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
     var out: std.ArrayList(types.Message) = .empty;
     for (messages_in) |sm| {
         if (sm.content == null or sm.content.?.len == 0) continue;
@@ -1090,7 +1089,7 @@ pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
     if (out.items.len == 0) return error.MissingField;
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const new_id = try std.fmt.allocPrint(arena, "sess-{d}-{d}", .{ now, @rem(std.Io.Timestamp.now(io, .real).nanoseconds, 1000000) });
-    try saveSession(io, gpa, arena, sessions_dir, .{
+    try saveSession(io, arena, sessions_dir, .{
         .id = new_id,
         .title = if (title.len > 0) title else "imported chat",
         .messages = try out.toOwnedSlice(arena),
@@ -1138,7 +1137,7 @@ test "session store rejects ids that can escape its directory" {
     const dir = try testDir(arena, &env);
 
     const bad_id = "../../escaped";
-    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, dir, .{
+    try std.testing.expectError(error.InvalidSessionId, saveSession(io, arena, dir, .{
         .id = bad_id,
         .title = "bad",
         .messages = &.{},
@@ -1165,7 +1164,7 @@ test "a saved session round-trips messages, attachments and the system prompt" {
         } },
         .{ .role = .tool, .tool_call_id = "call_1", .content = "{\"ok\":true}" },
     };
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "vision",
         .title = "with image",
         .messages = &messages,
@@ -1204,7 +1203,7 @@ test "a steered message round-trips as the user's own words plus the flag" {
         .{ .role = .user, .content = "write the report" },
         .{ .role = .user, .content = "cite the source", .steered = true },
     };
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "steered",
         .title = "interjection",
         .messages = &messages,
@@ -1262,7 +1261,7 @@ test "a session written before the steered column still opens and saves" {
         .{ .role = .user, .content = "the old turn" },
         .{ .role = .user, .content = "and an interjection", .steered = true },
     };
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "legacy",
         .title = "legacy",
         .messages = &messages,
@@ -1321,7 +1320,7 @@ test "listing reads counts stamped at save and scans a database without them" {
         .{ .role = .user, .content = "hello" },
         .{ .role = .assistant, .content = "hi there" },
     };
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "counted",
         .title = "counted",
         .messages = &messages,
@@ -1367,7 +1366,7 @@ test "a limited listing keeps the newest rows, not the first ones walked" {
     for ([_]i64{ 10, 30, 20 }) |updated| {
         var id_buf: [16]u8 = undefined;
         const id = try std.fmt.bufPrint(&id_buf, "sess{d}", .{updated});
-        try saveSession(io, std.testing.allocator, arena, dir, .{
+        try saveSession(io, arena, dir, .{
             .id = id,
             .title = id,
             .messages = &messages,
@@ -1417,7 +1416,7 @@ test "a fork copies the conversation; search finds text in the transcript" {
         .{ .role = .user, .content = "hello" },
         .{ .role = .assistant, .content = "hi there" },
     };
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "orig",
         .title = "original",
         .messages = &messages,
@@ -1430,7 +1429,7 @@ test "a fork copies the conversation; search finds text in the transcript" {
     try std.testing.expect(std.mem.startsWith(u8, f.title, "fork of"));
     try std.testing.expectEqual(@as(usize, 2), f.messages.len);
 
-    const hits = try searchSessions(io, std.testing.allocator, arena, dir, "hi there", 10);
+    const hits = try searchSessions(io, arena, dir, "hi there", 10);
     try std.testing.expectEqual(@as(usize, 2), hits.len);
     try std.testing.expect(std.mem.find(u8, hits[0].snippet, "hi there") != null);
     // The hit's turn indexes the message that matched ("hi there" is the
@@ -1446,7 +1445,7 @@ test "setArchived, setWorkspace and renameSession update the record" {
     const arena = env.arena();
     const dir = try testDir(arena, &env);
 
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "meta-test",
         .title = "t",
         .messages = &.{},
@@ -1506,7 +1505,7 @@ test "the messages table refuses what the read path could not decode" {
         try ins.bindText(1, role);
         _ = try ins.step();
     }
-    const rows = try loadStored(&conn, arena, "checked");
+    const rows = try loadStored(&conn, arena);
     try std.testing.expectEqual(@as(usize, 4), rows.items.len);
 }
 
@@ -1520,7 +1519,7 @@ test "a search over an indexed id with no database mints none" {
     // `deleteSession`'s index write is fail-open, so a session removed while
     // the index was unopenable leaves its rows behind naming a conversation
     // that has no file. Reading one must not create it.
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "real",
         .title = "real",
         .messages = &.{.{ .role = .user, .content = "hello" }},
@@ -1531,9 +1530,9 @@ test "a search over an indexed id with no database mints none" {
     defer session_fts.index_path = saved_index_path; // restore before env.deinit frees the path
     session_fts.index_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/session_fts.db", .{&env.tmp.sub_path});
     const ghost = [_]types.Message{.{ .role = .user, .content = "ghostneedle text" }};
-    session_fts.replaceSession(io, std.testing.allocator, arena, "ghost", &ghost);
+    session_fts.replaceSession(arena, "ghost", &ghost);
 
-    const hits = try searchSessions(io, std.testing.allocator, arena, dir, "ghostneedle", 10);
+    const hits = try searchSessions(io, arena, dir, "ghostneedle", 10);
     try std.testing.expectEqual(@as(usize, 0), hits.len);
     const ghost_path = try std.fmt.allocPrint(arena, "{s}/ghost{s}", .{ dir, db_suffix });
     try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, ghost_path, .{}));
@@ -1547,7 +1546,7 @@ test "a session database opens in WAL journal mode" {
     const arena = env.arena();
     const dir = try testDir(arena, &env);
 
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "walmode",
         .title = "wal",
         .messages = &.{},
@@ -1572,7 +1571,7 @@ test "a saved session database and its WAL sidecars are owner-only" {
     const arena = env.arena();
     const dir = try testDir(arena, &env);
 
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "private",
         .title = "private",
         .messages = &.{.{ .role = .user, .content = "my email is user@example.test" }},
@@ -1619,7 +1618,7 @@ test "deleting a session removes its journal sidecars too" {
     const arena = env.arena();
     const dir = try testDir(arena, &env);
 
-    try saveSession(io, std.testing.allocator, arena, dir, .{
+    try saveSession(io, arena, dir, .{
         .id = "sidecar",
         .title = "sidecar",
         .messages = &.{},

@@ -112,9 +112,7 @@ pub fn open(arena: std.mem.Allocator) !sqlite.Connection {
 /// in the index — and it covers the `fts_meta` progress record with the rows,
 /// so a rolled-back append also rolls back the count and is re-derived (and
 /// re-inserted) next time.
-pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, session_id: []const u8, messages: []const types.Message) void {
-    _ = io;
-    _ = gpa;
+pub fn replaceSession(arena: std.mem.Allocator, session_id: []const u8, messages: []const types.Message) void {
     var conn = open(arena) catch return;
     defer conn.close();
     const key = indexKey(arena, session_id) orelse return;
@@ -193,9 +191,7 @@ const candidate_cap: usize = 4096;
 /// Session ids whose content matches `query` (3+ chars, substring semantics
 /// via the trigram tokenizer). Returns null when the index is unavailable,
 /// signalling the caller to fall back to the linear scan.
-pub fn candidates(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, query: []const u8) ?[]const []const u8 {
-    _ = io;
-    _ = gpa;
+pub fn candidates(arena: std.mem.Allocator, query: []const u8) ?[]const []const u8 {
     if (query.len < 3) return null;
     var conn = open(arena) catch return null;
     defer conn.close();
@@ -242,11 +238,11 @@ test "fts candidates find substring matches across sessions" {
     defer index_path = saved_index_path; // restore before env.deinit frees the path
 
     const messages = [_]types.Message{.{ .role = .user, .content = "the needleword is hidden here" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-a", &messages);
+    replaceSession(arena, "sess-a", &messages);
     const none = [_]types.Message{.{ .role = .user, .content = "nothing to see" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-b", &none);
+    replaceSession(arena, "sess-b", &none);
 
-    const hits = candidates(io, std.testing.allocator, arena, "needleword") orelse return error.FtsUnavailable;
+    const hits = candidates(arena, "needleword") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), hits.len);
     try std.testing.expectEqualStrings("sess-a", hits[0]);
 
@@ -254,27 +250,26 @@ test "fts candidates find substring matches across sessions" {
     try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
 
     // A mid-word substring still matches via the trigram tokenizer.
-    const mid = candidates(io, std.testing.allocator, arena, "needle") orelse return error.FtsUnavailable;
+    const mid = candidates(arena, "needle") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), mid.len);
 }
 
 test "replaceSession drops a session's previous text" {
     var env: test_env.Env = .init();
     defer env.deinit();
-    const io = env.io();
     const arena = env.arena();
     const saved_index_path = index_path;
     index_path = try testIndexPath(arena, &env);
     defer index_path = saved_index_path; // restore before env.deinit frees the path
 
     const first = [_]types.Message{.{ .role = .user, .content = "the staleword lives here" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-r", &first);
+    replaceSession(arena, "sess-r", &first);
     const second = [_]types.Message{.{ .role = .user, .content = "the freshword lives here" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-r", &second);
+    replaceSession(arena, "sess-r", &second);
 
-    const gone = candidates(io, std.testing.allocator, arena, "staleword") orelse return error.FtsUnavailable;
+    const gone = candidates(arena, "staleword") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 0), gone.len);
-    const hits = candidates(io, std.testing.allocator, arena, "freshword") orelse return error.FtsUnavailable;
+    const hits = candidates(arena, "freshword") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), hits.len);
     try std.testing.expectEqualStrings("sess-r", hits[0]);
 }
@@ -282,22 +277,21 @@ test "replaceSession drops a session's previous text" {
 test "removeSession forgets a session's text; other sessions keep theirs" {
     var env: test_env.Env = .init();
     defer env.deinit();
-    const io = env.io();
     const arena = env.arena();
     const saved_index_path = index_path;
     index_path = try testIndexPath(arena, &env);
     defer index_path = saved_index_path; // restore before env.deinit frees the path
 
     const gone = [_]types.Message{.{ .role = .user, .content = "the doomedword lives here" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-gone", &gone);
+    replaceSession(arena, "sess-gone", &gone);
     const kept = [_]types.Message{.{ .role = .user, .content = "the survivorword lives here" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-kept", &kept);
+    replaceSession(arena, "sess-kept", &kept);
 
     removeSession(arena, "sess-gone");
 
-    const hits = candidates(io, std.testing.allocator, arena, "doomedword") orelse return error.FtsUnavailable;
+    const hits = candidates(arena, "doomedword") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 0), hits.len);
-    const still = candidates(io, std.testing.allocator, arena, "survivorword") orelse return error.FtsUnavailable;
+    const still = candidates(arena, "survivorword") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), still.len);
     try std.testing.expectEqualStrings("sess-kept", still[0]);
 }
@@ -317,7 +311,6 @@ fn indexedRowCount(arena: std.mem.Allocator, session_id: []const u8) !usize {
 test "an appended turn indexes incrementally without duplicating earlier rows" {
     var env: test_env.Env = .init();
     defer env.deinit();
-    const io = env.io();
     const arena = env.arena();
     const saved_index_path = index_path;
     index_path = try testIndexPath(arena, &env);
@@ -327,24 +320,24 @@ test "an appended turn indexes incrementally without duplicating earlier rows" {
         .{ .role = .user, .content = "first turn about lighthouses" },
         .{ .role = .assistant, .content = "" }, // empty content is never a row
     };
-    replaceSession(io, std.testing.allocator, arena, "sess-inc", &first);
+    replaceSession(arena, "sess-inc", &first);
     try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-inc"));
 
     // The everyday save: same prefix, one more message. The prefix must not
     // be reinserted behind its already-indexed copy.
     const second = first ++ [_]types.Message{.{ .role = .assistant, .content = "second turn about giraffes" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-inc", &second);
+    replaceSession(arena, "sess-inc", &second);
     try std.testing.expectEqual(@as(usize, 2), try indexedRowCount(arena, "sess-inc"));
 
-    const old = candidates(io, std.testing.allocator, arena, "lighthouses") orelse return error.FtsUnavailable;
+    const old = candidates(arena, "lighthouses") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), old.len);
-    const fresh = candidates(io, std.testing.allocator, arena, "giraffes") orelse return error.FtsUnavailable;
+    const fresh = candidates(arena, "giraffes") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
 
     // An id reused after deletion rebuilds rather than appending onto
     // nothing.
     removeSession(arena, "sess-inc");
-    replaceSession(io, std.testing.allocator, arena, "sess-inc", &first);
+    replaceSession(arena, "sess-inc", &first);
     try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-inc"));
 }
 
@@ -357,7 +350,7 @@ test "failed FTS progress write rolls back appended rows before retry" {
     defer index_path = saved_index_path;
 
     const first = [_]types.Message{.{ .role = .user, .content = "original lighthouse" }};
-    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &first);
+    replaceSession(arena, "sess-failure", &first);
     var conn = try open(arena);
     defer conn.close();
     try conn.exec(
@@ -365,18 +358,18 @@ test "failed FTS progress write rolls back appended rows before retry" {
         \\BEGIN SELECT RAISE(ABORT, 'progress write failed'); END;
     );
     const second = first ++ [_]types.Message{.{ .role = .assistant, .content = "new giraffe" }};
-    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &second);
+    replaceSession(arena, "sess-failure", &second);
     try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-failure"));
     const state = readIndexState(&conn, arena, "idx:sess-failure").?;
     try std.testing.expectEqual(@as(usize, 1), state.count);
     try std.testing.expectEqual(hashContents(&first), state.hash);
-    const absent = candidates(env.io(), std.testing.allocator, arena, "giraffe").?;
+    const absent = candidates(arena, "giraffe").?;
     try std.testing.expectEqual(@as(usize, 0), absent.len);
 
     try conn.exec("DROP TRIGGER refuse_progress;");
-    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &second);
+    replaceSession(arena, "sess-failure", &second);
     try std.testing.expectEqual(@as(usize, 2), try indexedRowCount(arena, "sess-failure"));
-    const hits = candidates(env.io(), std.testing.allocator, arena, "giraffe").?;
+    const hits = candidates(arena, "giraffe").?;
     try std.testing.expectEqual(@as(usize, 1), hits.len);
     try std.testing.expectEqualStrings("sess-failure", hits[0]);
 }
@@ -384,20 +377,19 @@ test "failed FTS progress write rolls back appended rows before retry" {
 test "same-count edited content fails the prefix check and rebuilds" {
     var env: test_env.Env = .init();
     defer env.deinit();
-    const io = env.io();
     const arena = env.arena();
     const saved_index_path = index_path;
     index_path = try testIndexPath(arena, &env);
     defer index_path = saved_index_path;
 
     const original = [_]types.Message{.{ .role = .user, .content = "meeting moved to tuesday" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-edit", &original);
+    replaceSession(arena, "sess-edit", &original);
     const edited = [_]types.Message{.{ .role = .user, .content = "meeting moved to wednesday" }};
-    replaceSession(io, std.testing.allocator, arena, "sess-edit", &edited);
+    replaceSession(arena, "sess-edit", &edited);
 
-    const stale = candidates(io, std.testing.allocator, arena, "tuesday") orelse return error.FtsUnavailable;
+    const stale = candidates(arena, "tuesday") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 0), stale.len);
-    const fresh = candidates(io, std.testing.allocator, arena, "wednesday") orelse return error.FtsUnavailable;
+    const fresh = candidates(arena, "wednesday") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
     try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-edit"));
 }

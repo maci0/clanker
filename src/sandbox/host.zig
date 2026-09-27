@@ -1025,7 +1025,7 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         // Cap plus one: the extra row is how `truncated` is decided, matching
         // the HTTP search surface. The guest then answers with at most 50.
         const search_limit: usize = 50;
-        const hits = session_mod.searchSessions(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, q, search_limit + 1) catch return Err.invalid;
+        const hits = session_mod.searchSessions(h.sandbox.io, arena, sessions_dir, q, search_limit + 1) catch return Err.invalid;
         const truncated = hits.len > search_limit;
         const shown = if (truncated) hits[0..search_limit] else hits;
         w.beginObject() catch return Err.invalid;

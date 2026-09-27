@@ -4272,6 +4272,28 @@ const ok_cli_gates =
     \\}
 ;
 
+// The zig-gate fragment every fixture below shares verbatim: the gates whose
+// load-bearing call sits on a canonically indented line of its own. Only the
+// gate under test varies from fixture to fixture, so a change to one of these
+// bodies must not have to be copied into five fixtures to reach all of them.
+const ok_zig_gates =
+    \\pub fn lintGate() !GateResult {
+    \\                hits += 1
+    \\}
+    \\pub fn toolDescriptorGate() !GateResult {
+    \\    if (problems.items.len > 0) {}
+    \\}
+    \\pub fn gitDenyGuardGate() GateResult {
+    \\                    hasGitInExecAllow(
+    \\}
+    \\pub fn providerKindLeakGate() GateResult {
+    \\                hits += 1
+    \\}
+    \\pub fn configWeakeningGate() GateResult {
+    \\                    weakensImprove(
+    \\}
+;
+
 test "the live checks.zig gate functions still reach their load-bearing calls" {
     const src = @embedFile("../gate/checks.zig");
     try std.testing.expect(checksZigShapeBroken(src) == null);
@@ -4352,21 +4374,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn fmtGate() !GateResult {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
         \\}
-        \\pub fn lintGate() !GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn toolDescriptorGate() !GateResult {
-        \\    if (problems.items.len > 0) {}
-        \\}
-        \\pub fn gitDenyGuardGate() GateResult {
-        \\                    hasGitInExecAllow(
-        \\}
-        \\pub fn providerKindLeakGate() GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn configWeakeningGate() GateResult {
-        \\                    weakensImprove(
-        \\}
+    ++ ok_zig_gates ++
         \\fn runZigArgs() !GateResult {
         \\    return .{ .ok = true, .label = label };
         \\    _ = std.process.run(
@@ -4393,21 +4401,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn fmtGate() !GateResult {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
         \\}
-        \\pub fn lintGate() !GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn toolDescriptorGate() !GateResult {
-        \\    if (problems.items.len > 0) {}
-        \\}
-        \\pub fn gitDenyGuardGate() GateResult {
-        \\                    hasGitInExecAllow(
-        \\}
-        \\pub fn providerKindLeakGate() GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn configWeakeningGate() GateResult {
-        \\                    weakensImprove(
-        \\}
+    ++ ok_zig_gates ++
         \\fn runZigArgs() !GateResult {
         \\    if (false) {
         \\        const result = try std.process.run(gpa, io, .{
@@ -4438,21 +4432,7 @@ test "a patch that guts a clanker-gate-only check implementation is rejected too
         \\pub fn fmtGate() !GateResult {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
         \\}
-        \\pub fn lintGate() !GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn toolDescriptorGate() !GateResult {
-        \\    if (problems.items.len > 0) {}
-        \\}
-        \\pub fn gitDenyGuardGate() GateResult {
-        \\                    hasGitInExecAllow(
-        \\}
-        \\pub fn providerKindLeakGate() GateResult {
-        \\                hits += 1
-        \\}
-        \\pub fn configWeakeningGate() GateResult {
-        \\                    weakensImprove(
-        \\}
+    ++ ok_zig_gates ++
         \\fn runZigArgs() !GateResult {
         \\    std.process.run(
         \\}
