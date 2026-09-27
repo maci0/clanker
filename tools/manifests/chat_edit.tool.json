@@ -1,15 +1,11 @@
 {
   "name": "chat_edit",
   "description": "Edit your own chat message. Only the original sender can edit. The message is marked as edited with a timestamp. Returns the updated message id and edited timestamp.",
-  "llm_description": "Edit your own chat message (sender-only); marks it edited with a timestamp. Input: {room, msg_id, text (max 4096 chars)}. Returns updated message id and edited timestamp.",
+  "llm_description": "Edit your own chat message (sender-only); marks it edited with a timestamp. Input: {msg_id, text (max 4096 chars)}. The message is identified by msg_id alone; there is no room. Returns updated message id and edited timestamp.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": {
-        "type": "string",
-        "description": "Not used by this action: the message is identified by msg_id alone."
-      },
       "msg_id": {
         "type": "string",
         "description": "Message id to edit"

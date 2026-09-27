@@ -1,15 +1,11 @@
 {
   "name": "chat_react",
   "description": "Toggle an emoji reaction on a chat message. If you already reacted with that emoji, the reaction is removed (Slack-style toggle). Returns whether the reaction was added or removed.",
-  "llm_description": "Toggle an emoji reaction on a chat message (Slack-style: same emoji again removes it). Input: {room, msg_id, emoji}. Returns whether added or removed.",
+  "llm_description": "Toggle an emoji reaction on a chat message (Slack-style: same emoji again removes it). Input: {msg_id, emoji}. The message is identified by msg_id alone; there is no room. Returns whether added or removed.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
-      "room": {
-        "type": "string",
-        "description": "Not used by this action: the message is identified by msg_id alone."
-      },
       "msg_id": {
         "type": "string",
         "description": "Message id to react to"
