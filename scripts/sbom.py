@@ -7,6 +7,7 @@ list anywhere:
 - build.zig.zon            — zwasm, vaxis (zig hash-pinned)
 - vendor/toml/README.md    — vendored zig-toml (MIT)
 - vendor/sqlite/README.md  — vendored SQLite amalgamation (Public Domain)
+- bun.lock                 — oxlint, tailwindcss + transitive npm deps
 - tools/ts/bun.lock        — assemblyscript + transitive npm deps
 - ui/vendor/README.md      — vendored web UI JS/CSS
 - scripts/setup-python-wasi.sh — optional kernel CPython interpreter
@@ -140,32 +141,60 @@ def vendored_sqlite() -> dict | None:
     }
 
 
-# --- npm toolchain (tools/ts/bun.lock) --------------------------------------
+# --- npm toolchains (bun.lock, tools/ts/bun.lock) ---------------------------
 
-def npm_components() -> list:
+# Both lockfiles are in tree and both resolve dev-only trees: the root one
+# (oxlint, tailwindcss) and the AssemblyScript one. Neither reaches a shipped
+# binary, so everything they resolve is dev-scope in the document.
+NPM_LOCKFILES = ("bun.lock", "tools/ts/bun.lock")
+
+
+def _read_lock(lockfile: str) -> dict:
     # bun.lock is JSONC: valid JSON except for trailing commas, which bun emits
     # to keep diffs one-line-per-package. Strip them and parse as JSON.
-    text = re.sub(r",(\s*[}\]])", r"\1", read("tools/ts/bun.lock"))
-    lock = json.loads(text)
-    out = []
-    # Each entry is [spec, registry, metadata, integrity]; spec is "name@version"
-    # and integrity is the registry digest ("sha512-..."), absent for workspaces.
-    for key, entry in lock.get("packages", {}).items():
-        if not isinstance(entry, list) or not entry:
-            continue
-        spec = entry[0]
-        name, _, version = spec.rpartition("@")
-        integrity = next((f for f in entry[1:] if isinstance(f, str) and f.startswith("sha")), None)
-        out.append({
-            "name": name or key,
-            "version": version or "unknown",
-            "integrity": integrity,
-            # bun.lock records no license field; tools/ts declares only
-            # devDependencies, so everything resolved from it is dev-only.
-            "license": None,
-            "dev": True,
-        })
-    return out
+    return json.loads(re.sub(r",(\s*[}\]])", r"\1", read(lockfile)))
+
+
+def npm_components() -> list:
+    out: dict[tuple[str, str], dict] = {}
+    for lockfile in NPM_LOCKFILES:
+        lock = _read_lock(lockfile)
+        # Each entry is [spec, registry, metadata, integrity]; spec is
+        # "name@version" and integrity is the registry digest ("sha512-..."),
+        # absent for workspaces.
+        for key, entry in lock.get("packages", {}).items():
+            if not isinstance(entry, list) or not entry:
+                continue
+            spec = entry[0]
+            name, _, version = spec.rpartition("@")
+            name, version = name or key, version or "unknown"
+            integrity = next(
+                (f for f in entry[1:] if isinstance(f, str) and f.startswith("sha")),
+                None,
+            )
+            # Two lockfiles can name the same package at the same version; the
+            # digest is then the same one and the first lockfile read names it.
+            out.setdefault((name, version), {
+                "name": name,
+                "version": version,
+                "integrity": integrity,
+                # bun.lock records no license field; both manifests declare
+                # only devDependencies, so everything resolved is dev-only.
+                "license": None,
+                "dev": True,
+                "lockfile": lockfile,
+            })
+    return list(out.values())
+
+
+def npm_direct_devdeps() -> list:
+    """Names each lockfile's own workspace declares, in lockfile order."""
+    names = []
+    for lockfile in NPM_LOCKFILES:
+        workspaces = _read_lock(lockfile).get("workspaces", {})
+        for entry in workspaces.values():
+            names.extend(entry.get("devDependencies", {}))
+    return names
 
 
 # --- vendored web UI (ui/vendor/README.md) ----------------------------------
@@ -295,7 +324,7 @@ def build() -> dict:
             "properties": props,
         }))
 
-    # AssemblyScript toolchain (dev-scope; not shipped in the binary)
+    # npm toolchains (dev-scope; neither tree ships in the binary)
     npm = npm_components()
     for n in npm:
         if n.get("integrity"):
@@ -318,6 +347,7 @@ def build() -> dict:
             "purl": purl(n["name"], n["version"]),
             "scope": "optional" if n["dev"] else "required",
             "hashes": hashes,
+            "properties": [{"name": "clanker:lockfile", "value": n["lockfile"]}],
         }))
 
     # Vendored web UI files; several rows share one upstream package (the two
@@ -396,11 +426,15 @@ def build() -> dict:
     for c in comps:
         c["properties"].sort(key=lambda p: p["name"])
 
-    # AssemblyScript's transitive npm deps, as recorded in the lockfile.
+    # npm edges, as recorded in the lockfiles: the project's own devDeps hang
+    # off the root component, AssemblyScript's transitive deps off AssemblyScript.
     by_name = {}
     for c in comps:
         by_name.setdefault(c["name"], c["purl"])
     rels = []
+    direct = [by_name[n] for n in npm_direct_devdeps() if n in by_name]
+    if direct:
+        rels.append({"ref": "clanker", "dependsOn": direct})
     for n in npm:
         if n["name"] != "assemblyscript":
             continue

@@ -7,9 +7,9 @@ adding a row in the same change.
 
 Two things are deliberately not claimed. clanker's own license is not declared
 in this repository, and the JS build toolchain (`assemblyscript`,
-`binaryen`, `long`, `oxlint`) is not vendored, so its licenses are not
-recorded in-tree either. Both are gaps a redistributor has to close, not
-facts this file can assert.
+`binaryen`, `long`, `oxlint`, `tailwindcss`, `@tailwindcss/cli`) is not
+vendored, so its licenses are not recorded in-tree either. Both are gaps a
+redistributor has to close, not facts this file can assert.
 
 ## Fetched at build time (`build.zig.zon`)
 
@@ -51,9 +51,19 @@ friends" line.
 ## Resolved at build time by the package manager (not vendored)
 
 `package.json` and `tools/ts/package.json` declare only `devDependencies`
-(`oxlint`, `assemblyscript`), each pinned to an exact version, with
-`bun.lock` and `tools/ts/bun.lock` committed so `bun install --frozen-lockfile`
-resolves the same tree with the same integrity digests (CI, `scripts/verify.sh`
-and `tools/ts/verify.sh` all pass that flag). No package installs a
-post-install script: neither manifest grants a `trustedDependencies` entry, and
-bun runs lifecycle scripts only for packages listed there.
+(`oxlint`, `tailwindcss`, `@tailwindcss/cli` in the root; `assemblyscript` in
+`tools/ts`), each pinned to an exact version, with `bun.lock` and
+`tools/ts/bun.lock` committed so `bun install --frozen-lockfile` resolves the
+same tree with the same integrity digests (CI, `scripts/verify.sh` and
+`tools/ts/verify.sh` all pass that flag). No package installs a post-install
+script: neither manifest grants a `trustedDependencies` entry, and bun runs
+lifecycle scripts only for packages listed there. Both lockfiles are read by
+`scripts/sbom.py`, so the release SBOM names every one of these packages with
+the digest the lockfile pins it to.
+
+One entry there is a pre-release build: `tools/ts/bun.lock` pins
+`binaryen@131.0.0-nightly.20260721`, the exact transitive version
+`assemblyscript@0.28.20` asks for. It only reaches `tools/ts/dist/`, and
+`tools/ts/verify.sh` rebuilds and diffs that output in CI, so a nightly that
+regressed would show up there rather than ship silently. It moves only with an
+AssemblyScript upgrade.

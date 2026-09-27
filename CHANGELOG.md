@@ -33,6 +33,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- The release SBOM (`scripts/sbom.py`) covers both committed lockfiles. It
+  read only `tools/ts/bun.lock`, so `oxlint`, `tailwindcss` and
+  `@tailwindcss/cli` with their transitive tree were absent from
+  `sbom.cdx.json` even though `bun audit` and CI resolve them. Each npm
+  component now carries the `clanker:lockfile` that pins it, and the root
+  component lists every declared devDependency under `dependencies`. A
+  document that predates this names no `clanker:lockfile` property and
+  resolves the project's devDependencies through the components alone.
 - The Activity plugin is styled with Tailwind utilities and ships no
   stylesheet: `ui/plugins/activity/app.css` is deleted. Its 44px phone and
   coarse-pointer touch target is now the `max-[40rem]`/`pointer-coarse`
