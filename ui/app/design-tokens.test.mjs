@@ -370,12 +370,13 @@ test("every theme declares all three elevation rungs", () => {
 // Violet is the axis that kept its name while losing its meaning. app.css
 // re-points --violet at --accent twice (the day root and the night block):
 // goals and jumps are operator action, and "a cabinet whose whole argument is
-// that one blue means one thing cannot carry two blues". Eight of the ten
-// themes shipped the palette's own pink/magenta as violet anyway -- frappe's
-// #f4b8e4 beside its #ca9ee6 accent, tokyonight's #bb9af7 beside #9d7cd8 --
-// so a goal chip and a button were two different colours on one screen.
-// Pinned exactly like the chat hues: the theme rides the token, it does not
-// fork it.
+// that one blue means one thing cannot carry two blues". The themes shipped the
+// palette's own pink/magenta as violet -- frappe's #f4b8e4, tokyonight's
+// #bb9af7 -- so a goal chip and a button were two different colours on one
+// screen, and a mauve --accent meant the aliases below could not have fixed
+// it: the interactive role itself needed re-deriving, which the next test
+// pins. Both halves are the same rule, so the theme rides the token rather
+// than forking it.
 test("violet is the interactive accent in every theme", () => {
   const appCss = readFileSync(join(here, "app.css"), "utf8");
   assert.match(
@@ -386,6 +387,43 @@ test("violet is the interactive accent in every theme", () => {
   for (const [file, tokens] of themeTokens()) {
     assert.equal(tokens["--violet"], "var(--accent)", `themes/${file} --violet must ride --accent`);
     assert.equal(tokens["--violet-text"], "var(--accent-text)", `themes/${file} --violet-text must ride --accent-text`);
+  }
+});
+
+// The accent is the one role no theme may colour for its own sake. The chat
+// hues were re-derived per family because eight themes shipped a borrowed ramp;
+// the accent was the same borrowing one role up, and it was worse: seven of the
+// ten themes put their palette's mauve where the IEC rule says operator blue
+// lives (mocha #cba6f7, tokyonight #9d7cd8, latte #8839ef, ...), so the one
+// colour the whole system is built on read as a different colour in every theme
+// but two, and the day face's #1d5c9e had no sibling on a dark panel. Each
+// theme now carries a blue reading of its own palette's blue, picked at or
+// above the contrast its mauve had. A named theme is its neutrals and its
+// lamps; it is not allowed an accent.
+test("the operator accent is a blue reading in every theme", () => {
+  for (const [file, tokens] of themeTokens()) {
+    const resolve = tokenValue(tokens);
+    const accent = tokens["--accent"];
+    assert.match(accent, /^#[0-9a-f]{6}$/i, `themes/${file} --accent must be a literal hex`);
+    const hue = hueAngle(accent);
+    // Blue band, 180-260. hackerman's green CRT and every neutral-free grey are
+    // deliberately outside it, so this refuses mauve and magenta only.
+    const inBlueBand = hue !== null && hue >= 180 && hue <= 260;
+    if (!inBlueBand) {
+      // Green-on-black is the one deliberate exception: the theme is a phosphor.
+      assert.match(tokens["--fg"] || "", /^#(33ff66|00ff88)/i,
+        `themes/${file} --accent ${accent} is not a blue reading (hue ${hue?.toFixed(1)})`);
+      continue;
+    }
+    const surface = resolve(tokens, "--surface") || resolve(tokens, "--paper");
+    assert.ok(surface, `themes/${file} must declare --surface/--paper`);
+    assert.ok(contrast(accent, surface) >= 4.5,
+      `themes/${file} --accent ${accent} on ${surface} is under 4.5:1`);
+    // The ink that sits on the accent must clear too, or the button label
+    // goes with the fill.
+    const ink = resolve(tokens, "--on-accent");
+    assert.ok(ink && contrast(accent, ink) >= 4.5,
+      `themes/${file} --on-accent ${ink} on --accent ${accent} is under 4.5:1`);
   }
 });
 
@@ -551,6 +589,19 @@ test("every chat hue is a card enamel, shaded", () => {
   assert.deepEqual(strays, [], `sender hues are the card enamels shaded, not a second palette:\n${strays.join("\n")}`);
 });
 
+// A theme token may alias another (`var(--paper)`), so any test that measures
+// a colour has to read through the alias. One hop chain is the most the
+// catalog actually uses; the depth cap is there so a cycle cannot hang the
+// suite.
+function tokenValue(tokens) {
+  const read = (key, seen = 0) => {
+    const v = tokens[key];
+    if (!v || !v.startsWith("var(") || seen > 4) return v;
+    return read(v.slice(4, -1), seen + 1);
+  };
+  return (t, key) => read(key);
+}
+
 test("every theme declares all eight chat hues, legible on its own surface", () => {
   // A sender hue is drawn twice: as the name's text on the panel face, and as
   // an avatar fill carrying --on-accent as ink (see .avatar-tone-* in app.css).
@@ -558,12 +609,8 @@ test("every theme declares all eight chat hues, legible on its own surface", () 
   // the floor rather than the cards' 5.5 because a sender name is not a badge
   // on a fill and the palette must still spread across eight tellable hues;
   // the borrowed ramp this replaced bottomed out at 4.2.
-  const resolve = (tokens, key, seen = 0) => {
-    const v = tokens[key];
-    if (!v || !v.startsWith("var(") || seen > 4) return v;
-    return resolve(tokens, v.slice(4, -1), seen + 1);
-  };
   for (const [file, tokens] of themeTokens()) {
+    const resolve = tokenValue(tokens);
     const surface = resolve(tokens, "--surface") || resolve(tokens, "--paper");
     const ink = resolve(tokens, "--on-accent");
     assert.ok(surface && ink, `themes/${file} must declare --surface/--paper and --on-accent`);

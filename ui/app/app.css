@@ -38,7 +38,9 @@
   --on-accent: #ffffff;
   --ok: #117a3a;
   --ok-fill: #2c6b34;   /* RAL 6002 leaf green */
-  /* Goals and jumps are operator action: same blue as the actuators. */
+  /* Goals and jumps are operator action: same blue as the actuators. Every
+     theme/ file carries its own blue reading of that role, so this is the day
+     face's value and not the value a theme may borrow. */
   --violet: var(--accent);
   --violet-text: var(--accent-text);
   --danger: #a72920;    /* RAL 3001 signal red */

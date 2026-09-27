@@ -655,7 +655,7 @@
 
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 
-.slack-dialog-form h3 { margin: 0; font-size: 16px; }
+.slack-dialog-form h3 { margin: 0; font-size: var(--step-1); }
 
 .slack-dialog-form input, .slack-dialog-form textarea { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: var(--step-1); }
 

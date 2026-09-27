@@ -109,6 +109,8 @@ Warm cabinet neutrals carry the interface; blue is reserved for operator action,
 
 **The IEC Rule.** Blue means operator action; green means healthy; amber means abnormal; red means fault. Never reuse those colors decoratively.
 
+**One role, no theme's own.** Every theme in `themes/` carries its own blue reading of the operator color, derived from that palette rather than copied from upstream: light themes a deep blue that clears 4.5:1 on the panel, dark themes a lifted one that clears it against the backplane. A named theme is its neutrals, its lamps and its weather; the accent is not on its list, so a theme that wants mauve keeps it in the card enamels where a card is entitled to any colour.
+
 ## Typography
 
 **Display Font:** system sans-serif stack  
