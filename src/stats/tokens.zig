@@ -18,7 +18,6 @@ const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const file_tail = @import("../util/file_tail.zig");
-const client = @import("../llm/client.zig");
 const test_env = @import("../util/test_env.zig");
 
 pub const stat_path = "token_stats.jsonl";
@@ -94,6 +93,18 @@ pub const Stat = struct {
         return @as(f64, @floatFromInt(self.total_tokens)) / (@as(f64, @floatFromInt(self.duration_ms)) / 1000.0);
     }
 };
+
+/// Adds two costs, saturating at the largest finite f64. A per-1M rate is
+/// operator-supplied and only checked for being non-negative, so a running
+/// total can reach +inf on an absurd rate or enough turns. Every surface that
+/// reports a cost prints it with `{d:.6}`, which writes `inf`: an invalid JSON
+/// token in `/api/stats` and in the `cost` field of the next
+/// state/token_stats.jsonl record. Saturating keeps the output parseable.
+pub fn addCost(a: f64, b: f64) f64 {
+    if (!std.math.isFinite(a) or !std.math.isFinite(b)) return std.math.floatMax(f64);
+    const sum = a + b;
+    return if (std.math.isFinite(sum)) sum else std.math.floatMax(f64);
+}
 
 fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
     if (state_dir.len == 0) return stat_path;
@@ -426,7 +437,7 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
         gop.value_ptr.total_tokens += r.total_tokens;
         gop.value_ptr.cache_hit += r.cache_hit;
         gop.value_ptr.cache_miss += r.cache_miss;
-        gop.value_ptr.cost = client.addCost(gop.value_ptr.cost, r.cost);
+        gop.value_ptr.cost = addCost(gop.value_ptr.cost, r.cost);
         gop.value_ptr.duration_ms += r.duration_ms;
         if (r.ok) gop.value_ptr.ok_calls += 1 else gop.value_ptr.error_calls += 1;
         if (r.ok) if (r.thinking_level) |level| {
@@ -462,7 +473,7 @@ pub fn totals(stats: []const Stat) Stat {
         t.total_tokens += s.total_tokens;
         t.cache_hit += s.cache_hit;
         t.cache_miss += s.cache_miss;
-        t.cost = client.addCost(t.cost, s.cost);
+        t.cost = addCost(t.cost, s.cost);
         t.duration_ms += s.duration_ms;
         t.ok_calls += s.ok_calls;
         t.error_calls += s.error_calls;

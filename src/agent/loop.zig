@@ -6,6 +6,7 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const providers = @import("../llm/registry.zig");
+const token_stats = @import("../stats/tokens.zig");
 const registry = @import("../toolhost/registry.zig");
 const tool_usage = @import("../toolhost/usage.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -781,7 +782,7 @@ pub const Agent = struct {
             self.session_stats.total_tokens += self.stats.total_tokens;
             self.session_stats.total_cache_hit_tokens += self.stats.total_cache_hit_tokens;
             self.session_stats.total_cache_miss_tokens += self.stats.total_cache_miss_tokens;
-            self.session_stats.cost = client.addCost(self.session_stats.cost, self.stats.cost);
+            self.session_stats.cost = token_stats.addCost(self.session_stats.cost, self.stats.cost);
             if (self.cfg.modules.autolearn and run_ms > 0) {
                 autolearn.recordRun(self.ctx.io, self.ctx.gpa, self.arena, .{
                     .provider = self.provider.name,
@@ -2035,9 +2036,9 @@ pub const Agent = struct {
         // cost to +inf. That value is written to state/token_stats.jsonl and
         // printed by every stats surface as `{d:.6}`, which emits the invalid
         // JSON token `inf` and breaks the next reader of the log.
-        if (active.cost_per_1m_input) |ci| self.stats.cost = client.addCost(self.stats.cost, client.promptCost(u, ci));
+        if (active.cost_per_1m_input) |ci| self.stats.cost = token_stats.addCost(self.stats.cost, client.promptCost(u, ci));
         if (active.cost_per_1m_output) |co| {
-            self.stats.cost = client.addCost(self.stats.cost, @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co);
+            self.stats.cost = token_stats.addCost(self.stats.cost, @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co);
         }
         if (self.on_usage) |cb| cb(self.stats);
     }
