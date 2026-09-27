@@ -39,6 +39,11 @@ const worktree_mod = @import("worktree.zig");
 const agent_loop = @import("../agent/loop.zig");
 const test_env = @import("../util/test_env.zig");
 
+/// Bytes of a planned idea a log line may carry. The text is model-written
+/// from the operator's instruction, so it is user text by derivation, and a
+/// planning call emits as many ideas as the model offers.
+const idea_log_bytes: usize = 256;
+
 pub const Options = struct {
     instructions: []const u8,
     iters: u32 = 3,
@@ -548,7 +553,11 @@ pub const Engine = struct {
         const prev_context = log.getContext();
         log.setContext("improve");
         defer if (prev_context.len > 0) log.setContext(prev_context) else log.clearContext();
-        log.log(.info, "improve-self: {s}", .{opts.instructions});
+        // The instruction is the operator's own words, kept verbatim in the
+        // owner-only ledger (history_mod), and a log line is a weaker place to
+        // keep it: the log file is served by `GET /api/logs` and collected by
+        // whatever ships it. Its size is what a log reader needs.
+        log.log(.info, "improve-self: {d} byte(s) of instructions", .{opts.instructions.len});
         for (gate_evals) |g| log.log(.info, "gate: {s}", .{g});
         self.requests_left = opts.max_context_requests;
         self.stuck_hint = "";
@@ -1471,12 +1480,16 @@ pub const Engine = struct {
             while (self.plan_next < self.plan_ideas.len) {
                 const idea = self.plan_ideas[self.plan_next];
                 self.plan_next += 1;
+                // An idea is written from the operator's instruction and the
+                // tree's records, so it quotes both. Capped for the same reason
+                // the instruction itself is not logged whole.
+                const idea_note = utf8.cap(idea.text, idea_log_bytes);
                 if (plan_mod.tried(self.arena, idea.text, summaries) catch false) {
-                    log.log(.info, "plan: skipping an idea history already records: {s}", .{idea.text});
+                    log.log(.info, "plan: skipping an idea history already records: {s}", .{idea_note});
                     continue;
                 }
                 if (!plan_mod.hasWritableTarget(idea.files)) {
-                    log.log(.info, "plan: skipping an idea with no writable file target: {s}", .{idea.text});
+                    log.log(.info, "plan: skipping an idea with no writable file target: {s}", .{idea_note});
                     continue;
                 }
                 self.adoptIdea(idea) catch |err| {
@@ -1551,7 +1564,7 @@ pub const Engine = struct {
         ,
             .{try self.fenceIdea(idea.text)},
         );
-        log.log(.info, "plan: this iteration implements: {s}", .{idea.text});
+        log.log(.info, "plan: this iteration implements: {s}", .{utf8.cap(idea.text, idea_log_bytes)});
     }
 
     /// Byte cap on the idea text spliced into this iteration's instruction.

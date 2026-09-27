@@ -6532,7 +6532,9 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
             .git_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{}),
             .zig_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted zig verb", .{}),
             .uv_verb => log.log(.warn, "[sandbox] ck_exec denied uv argv; only uv run of tools/py/opencv.py is allowed", .{}),
-            .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
+            // Same reason as the arg arms below: `cmd` is the whole model-chosen
+            // command line, built from the operator's task, and is unbounded.
+            .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{redact.forLog(&arg_buf, cmd)}),
             .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, redact.forLog(&arg_buf, x.arg) }),
             .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, redact.forLog(&arg_buf, x.arg) }),
             .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{redact.forLog(&arg_buf, a)}),

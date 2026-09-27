@@ -4618,7 +4618,11 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             printUsageError(init.io, "{s}", .{detail});
             std.process.exit(1);
         };
-        log.log(.info, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason });
+        // The evaluator's reason quotes the goal condition the operator wrote,
+        // so it is capped like the per-turn line above (cliGoalLoopDecision)
+        // rather than logged whole.
+        const outcome_reason = utf8.cap(outcome.reason, goal_loop.reason_log_bytes);
+        log.log(.info, "goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome_reason });
         if (resolved_task.goal_id) |gid| {
             recordGoalLoopOutcome(io, init.gpa, arena, &cfg, init.environ_map, gid, outcome);
         }
@@ -13746,6 +13750,19 @@ const dir_listing_cap: usize = 2000;
 // every configured key to whoever can reach the port (a LAN client when
 // `--host 0.0.0.0`, or any local process).
 
+/// A file whose mode grants nobody but its owner is not served. Every
+/// personal-data store under `state/` writes itself
+/// `atomic_write.private_file` (the session database and its sidecars,
+/// reasoning traces, spills, exported transcripts, goals, chatrooms), and a
+/// checkout's private keys are 0600 too: the store's own mode is its statement
+/// that those bytes do not leave the account, and the HTTP file browser is
+/// reachable by every process and LAN client that can open the port. The
+/// dotenv rule cannot name these, because the class is the mode, not the
+/// filename.
+fn isOwnerOnlyFile(st: std.Io.File.Stat) bool {
+    return (@as(u32, @intFromEnum(st.permissions)) & 0o077) == 0;
+}
+
 /// `GET /api/files?path=<rel>`, list one directory inside the current
 /// workspace, or, when `path` names a file rather than a directory, that
 /// file's content (capped at `file_preview_cap`, refused as binary rather
@@ -13828,7 +13845,13 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     // clamp back to the workspace root instead of serving it.
     if (path.len > 0) {
         if (root_dir.dir.statFile(io, path, .{}) catch null) |st| {
-            if (st.kind == .file) return handleFileContent(io, arena, root_dir.dir, path, root_dir.label, st, accepts_gzip, stream);
+            if (st.kind == .file) {
+                if (isOwnerOnlyFile(st)) {
+                    respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"owner-only file not served\"}");
+                    return;
+                }
+                return handleFileContent(io, arena, root_dir.dir, path, root_dir.label, st, accepts_gzip, stream);
+            }
         }
     }
 
@@ -13890,6 +13913,10 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
             break;
         }
         const st = dir.statFile(io, entry.name, .{}) catch continue;
+        // An owner-only file is a personal-data store or a private key: it
+        // neither appears in the listing nor opens, so browsing a folder
+        // cannot enumerate what the account keeps to itself.
+        if (st.kind == .file and isOwnerOnlyFile(st)) continue;
         const is_dir = entry.kind == .directory;
         const mtime: i64 = std.math.cast(i64, @divTrunc(st.mtime.nanoseconds, @as(i96, std.time.ns_per_s))) orelse 0;
         list.append(arena, .{ .name = arena.dupe(u8, entry.name) catch continue, .is_dir = is_dir, .size = st.size, .mtime = mtime }) catch return;
@@ -14029,6 +14056,23 @@ test "the file browser's symlink walk refuses a planted link but passes real pat
     try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/abs"));
     try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/rel"));
     try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/abs/passwd"));
+}
+
+test "an owner-only file is not served by the file browser" {
+    // The mode is the whole rule: a session database, a reasoning trace, a
+    // spill or a private key is refused whatever it is called, and an ordinary
+    // tracked file is still browsable.
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state/spills/sess-1");
+    try atomic_write.writeFilePerms(io, tmp.dir, "state/spills/sess-1/abc12345.txt", "the user's tool result", atomic_write.private_file);
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/main.zig", .data = "pub fn main() void {}" });
+
+    try std.testing.expect(isOwnerOnlyFile(try tmp.dir.statFile(io, "state/spills/sess-1/abc12345.txt", .{})));
+    try std.testing.expect(!isOwnerOnlyFile(try tmp.dir.statFile(io, "src/main.zig", .{})));
 }
 
 /// Basename of the absolute working directory, used as the workspace label.
