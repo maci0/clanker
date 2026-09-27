@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted — 2026-08-17. Records the decision opened in [RFC 0013 — MCP client configuration: how clanker consumes external MCP servers](../rfcs/0013-mcp-client-configuration-how-clanker-consumes-external-mcp.md).
+Accepted — 2026-08-17. Records the decision opened in [RFC 0013 — MCP client configuration: how clanker consumes external MCP servers](../rfcs/0013-mcp-client-configuration-how-clanker-consumes-external-mcp.md). Not yet
+implemented (2026-09-27): there is no `src/mcp_client` in the tree, and no
+`kind = mcp_client` dispatch in `src/toolhost/registry.zig`. What has landed
+is `[mcp_servers.<name>]` parsing and validation in `src/config.zig` and the
+`modules.mcp_client = false` gate. Tracked as
+[PRD 0032 — MCP client bridge](../prds/0032-mcp-client-bridge.md).
 
 ## Context
 
