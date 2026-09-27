@@ -17,6 +17,7 @@ const json = std.json;
 const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 const atomic_write = @import("util/atomic_write.zig");
+const utf8 = @import("util/utf8.zig");
 const models_dev = @import("llm/models_dev.zig");
 const llm_registry = @import("llm/registry.zig");
 const test_env = @import("util/test_env.zig");
@@ -1339,9 +1340,9 @@ pub const Config = struct {
     /// by a script, and it puts host addresses on stdout, so the one flag
     /// whose whole job is "show me what you actually loaded" answered in the
     /// one shape nothing can use.
-    pub fn writeJson(self: *const Config, w: *std.Io.Writer) !void {
+    pub fn writeJson(self: *const Config, w: *std.Io.Writer, alloc: std.mem.Allocator) !void {
         var s = std.json.Stringify{ .writer = w, .options = .{ .whitespace = .indent_2 } };
-        try writeJsonValue(&s, self.*);
+        try writeJsonValue(alloc, &s, self.*);
         try w.writeByte('\n');
     }
 
@@ -1370,26 +1371,41 @@ pub const Config = struct {
     /// `Authorization: Basic dXNlcjpwYXNzd29yZA==` dumped as
     /// `Authorization: Basic dXNlcjpwYXNzd29yZA` -- the whole credential, one
     /// padding character short.
-    fn writeKvNames(s: *std.json.Stringify, items: []const []const u8, sep: u8) !void {
+    fn writeKvNames(alloc: std.mem.Allocator, s: *std.json.Stringify, items: []const []const u8, sep: u8) !void {
         try s.beginArray();
         for (items) |item| {
             const cut = std.mem.findScalar(u8, item, sep) orelse item.len;
-            try s.write(item[0..cut]);
+            try utf8.writeJsonString(alloc, s, item[0..cut]);
         }
         try s.endArray();
     }
 
-    fn writeJsonValue(s: *std.json.Stringify, value: anytype) !void {
+    /// An object key is a value too: a provider or model id read from the
+    /// operator's TOML can hold bytes that are not UTF-8, and those have to
+    /// reach the dump as a key rather than as an array of byte numbers.
+    fn objectFieldString(alloc: std.mem.Allocator, s: *std.json.Stringify, key: []const u8) !void {
+        if (std.unicode.utf8ValidateSlice(key)) return s.objectField(key);
+        const clean = try utf8.sanitize(alloc, key);
+        defer alloc.free(clean);
+        return s.objectField(clean);
+    }
+
+    fn writeJsonValue(alloc: std.mem.Allocator, s: *std.json.Stringify, value: anytype) !void {
         const T = @TypeOf(value);
         switch (@typeInfo(T)) {
             .optional => {
-                if (value) |inner| try writeJsonValue(s, inner) else try s.write(null);
+                if (value) |inner| try writeJsonValue(alloc, s, inner) else try s.write(null);
             },
             .pointer => |ptr| {
-                // A `[]const u8` is a string; every other slice is a list.
-                if (ptr.size != .slice or ptr.child == u8) return s.write(value);
+                // A `[]const u8` is a string; every other slice is a list. A
+                // config value carries whatever bytes the operator's file
+                // held, and `Stringify.write` serializes a slice that is not
+                // valid UTF-8 as an *array of byte numbers* — so one latin-1
+                // byte in a base_url turned every reader of this dump
+                // (`jq`, the web UI) into a shape error.
+                if (ptr.size != .slice or ptr.child == u8) return utf8.writeJsonString(alloc, s, value);
                 try s.beginArray();
-                for (value) |item| try writeJsonValue(s, item);
+                for (value) |item| try writeJsonValue(alloc, s, item);
                 try s.endArray();
             },
             .@"struct" => |st| {
@@ -1400,8 +1416,8 @@ pub const Config = struct {
                     try s.beginObject();
                     var it = value.iterator();
                     while (it.next()) |kv| {
-                        try s.objectField(kv.key_ptr.*);
-                        try writeJsonValue(s, kv.value_ptr.*);
+                        try objectFieldString(alloc, s, kv.key_ptr.*);
+                        try writeJsonValue(alloc, s, kv.value_ptr.*);
                     }
                     return s.endObject();
                 }
@@ -1413,11 +1429,11 @@ pub const Config = struct {
                         if (comptime !isParseBookkeeping(f.name)) {
                             try s.objectField(f.name);
                             if (comptime std.mem.eql(u8, f.name, "env")) {
-                                try writeKvNames(s, @field(value, f.name), '=');
+                                try writeKvNames(alloc, s, @field(value, f.name), '=');
                             } else if (comptime std.mem.eql(u8, f.name, "headers")) {
-                                try writeKvNames(s, @field(value, f.name), ':');
+                                try writeKvNames(alloc, s, @field(value, f.name), ':');
                             } else {
-                                try writeJsonValue(s, @field(value, f.name));
+                                try writeJsonValue(alloc, s, @field(value, f.name));
                             }
                         }
                     }
@@ -1427,7 +1443,7 @@ pub const Config = struct {
                 inline for (st.fields) |f| {
                     if (comptime !isParseBookkeeping(f.name)) {
                         try s.objectField(f.name);
-                        try writeJsonValue(s, @field(value, f.name));
+                        try writeJsonValue(alloc, s, @field(value, f.name));
                     }
                 }
                 try s.endObject();
@@ -1449,7 +1465,7 @@ pub const Config = struct {
 
         var out: std.Io.Writer.Allocating = .init(gpa);
         defer out.deinit();
-        try cfg.writeJson(&out.writer);
+        try cfg.writeJson(&out.writer, gpa);
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
@@ -1467,6 +1483,29 @@ pub const Config = struct {
         try std.testing.expect(parsed.object.get("agent_fields") == null);
         // No `u8@...` host address anywhere in the dump.
         try std.testing.expect(std.mem.find(u8, out.written(), "u8@") == null);
+    }
+
+    test "writeJson writes a non-UTF-8 config value as a string, not as byte numbers" {
+        // A latin-1 byte is legal in a config file and reaches the dump as
+        // itself. `Stringify.write` turns such a slice into an array of byte
+        // numbers, which every reader of the dump then fails to parse.
+        const gpa = std.testing.allocator;
+        var cfg: Config = .{ .default_provider = "caf\xe9-provider" };
+        defer cfg.providers.deinit(gpa);
+        try cfg.providers.put(gpa, "caf\xe9", .{ .name = "caf\xe9", .base_url = "https://ex\xe9ample.test" });
+
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try cfg.writeJson(&out.writer, gpa);
+        try std.testing.expect(std.mem.find(u8, out.written(), "default_provider\": \"caf") != null);
+
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), out.written(), .{});
+        try std.testing.expectEqualStrings("caf\u{FFFD}-provider", parsed.object.get("default_provider").?.string);
+        // The key of a provider table came from the same file.
+        const row = parsed.object.get("providers").?.object.get("caf\u{FFFD}").?.object;
+        try std.testing.expectEqualStrings("https://ex\u{FFFD}ample.test", row.get("base_url").?.string);
     }
 
     test "writeJson redacts mcp_servers env and header values, keeping names" {
@@ -1494,7 +1533,7 @@ pub const Config = struct {
 
         var out: std.Io.Writer.Allocating = .init(gpa);
         defer out.deinit();
-        try cfg.writeJson(&out.writer);
+        try cfg.writeJson(&out.writer, gpa);
 
         // Token values never reach the dump at all...
         try std.testing.expect(std.mem.find(u8, out.written(), "ghp_super_secret_abc123") == null);

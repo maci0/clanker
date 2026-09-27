@@ -44,14 +44,17 @@ pub fn stripXmlTags(alloc: std.mem.Allocator, xml: []const u8) ![]const u8 {
                 try out.append(alloc, '"');
                 i += 6;
             } else if (i + 2 < xml.len and xml[i + 1] == '#') {
-                // Numeric entity: captions use &#39; for every apostrophe.
+                // Numeric entity: captions use &#39; for every apostrophe, and
+                // hand-written XML uses the hex form (`&#xE9;`) just as often.
+                // Both spellings decode, or the characters they name are gone
+                // from the transcript.
                 const semi = std.mem.findScalarPos(u8, xml, i + 2, ';') orelse {
                     try out.append(alloc, xml[i]);
                     i += 1;
                     continue;
                 };
                 const digits = xml[i + 2 .. semi];
-                const cp = std.fmt.parseInt(u21, digits, 10) catch 0;
+                const cp = parseNumericEntity(digits) orelse 0;
                 if (cp > 0 and cp < 128) {
                     try out.append(alloc, @intCast(cp));
                 } else if (cp >= 128) {
@@ -75,6 +78,20 @@ pub fn stripXmlTags(alloc: std.mem.Allocator, xml: []const u8) ![]const u8 {
     return out.toOwnedSlice(alloc);
 }
 
+/// The codepoint a `&#NNN;` / `&#xHH;` reference names, or null when the
+/// digits are not a reference at all. A surrogate is null: it has no UTF-8
+/// encoding, so the caller drops the entity rather than emit a broken
+/// sequence, and `utf8Encode`'s own error already covers the > U+10FFFF case.
+fn parseNumericEntity(digits: []const u8) ?u21 {
+    if (digits.len == 0) return null;
+    const hex_form = digits[0] == 'x' or digits[0] == 'X';
+    const body = if (hex_form) digits[1..] else digits;
+    if (body.len == 0) return null;
+    const cp = std.fmt.parseInt(u21, body, if (hex_form) 16 else 10) catch return null;
+    if (cp >= 0xD800 and cp <= 0xDFFF) return null;
+    return cp;
+}
+
 test "stripXmlTags joins words and breaks on paragraph ends" {
     const xml = "<p t=\"80\"><s>In</s><s t=\"320\"> 1993,</s></p><p t=\"5440\"><s>hello</s></p>";
     const text = try stripXmlTags(std.testing.allocator, xml);
@@ -89,6 +106,27 @@ test "stripXmlTags decodes entities" {
     const text = try stripXmlTags(std.testing.allocator, xml);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("a & b <c> 'd\n", text);
+}
+
+test "stripXmlTags decodes the hex form of a numeric reference" {
+    // `&#xNN;` is the other spelling of `&#NNN;`. Reading it as decimal made
+    // every hex reference parse as 0, and the character it named was dropped
+    // from the transcript with no trace.
+    const xml = "<p>caf&#xE9; &#x1F600; &#x41; &#233;</p>";
+    const text = try stripXmlTags(std.testing.allocator, xml);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("café \u{1F600} A é\n", text);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(text));
+}
+
+test "stripXmlTags drops a reference that names no character" {
+    // An unpaired surrogate and an out-of-range value have no UTF-8 form.
+    // Dropping the whole entity is the honest answer; emitting a broken
+    // sequence is not.
+    const text = try stripXmlTags(std.testing.allocator, "<p>a&#xD800;b&#x110000;c</p>");
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("abc\n", text);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(text));
 }
 
 test "fuzz: no transcript bytes crash the stripper or amplify the text" {

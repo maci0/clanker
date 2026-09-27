@@ -296,16 +296,20 @@ fn hexVal(c: u8) ?u8 {
 pub fn percentDecode(s: []const u8, dst: []u8) []const u8 {
     var j: usize = 0;
     var i: usize = 0;
+    // j < dst.len is the only capacity guard: `i` indexes the input and says
+    // nothing about room in the output. Reading s[i + 1] / s[i + 2] needs both
+    // inside `s`, so a truncated escape at the end ("%4", "%z") is copied
+    // through as its literal characters.
     while (i < s.len and j < dst.len) {
-        if (s[i] == '%' and i + 2 < s.len + 1 and hexVal(s[i + 1]) != null and hexVal(s[i + 2]) != null and j + 1 <= dst.len) {
+        if (s[i] == '%' and i + 2 < s.len and hexVal(s[i + 1]) != null and hexVal(s[i + 2]) != null) {
             dst[j] = (hexVal(s[i + 1]).? << 4) | hexVal(s[i + 2]).?;
             j += 1;
             i += 3;
-        } else if (i + 1 <= dst.len) {
+        } else {
             dst[j] = s[i];
             j += 1;
             i += 1;
-        } else break;
+        }
     }
     return dst[0..j];
 }
@@ -705,6 +709,22 @@ test "percentEncode encodes reserved, leaves unreserved" {
     try std.testing.expectEqualStrings("zig%20st.%20%2Blang", enc);
     const back = percentDecode(enc, &buf);
     try std.testing.expectEqualStrings("zig st. +lang", back);
+}
+
+test "percentDecode leaves a truncated escape at the end alone" {
+    var buf: [128]u8 = undefined;
+    // "%4" has no second hex digit: the escape is incomplete, not a byte.
+    // Reading past it would index out of bounds on a response the remote
+    // side controls.
+    try std.testing.expectEqualStrings("%4", percentDecode("%4", &buf));
+    try std.testing.expectEqualStrings("%", percentDecode("%", &buf));
+    try std.testing.expectEqualStrings("%zz", percentDecode("%zz", &buf));
+    try std.testing.expectEqualStrings("a%z", percentDecode("a%z", &buf));
+    // "a%4b" *is* a complete escape: '4' and 'b' are both hex digits.
+    try std.testing.expectEqualStrings("aK", percentDecode("a%4b", &buf));
+    // Decoded bytes are the UTF-8 a query parameter carries, not the escapes.
+    try std.testing.expectEqualStrings("café", percentDecode("caf%C3%A9", &buf));
+    try std.testing.expect(std.unicode.utf8ValidateSlice(percentDecode("caf%C3%A9", &buf)));
 }
 
 test "collapseSpace folds runs of whitespace and trims the ends" {
