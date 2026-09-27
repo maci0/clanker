@@ -1,6 +1,6 @@
 ---
 title: Writing a goal
-description: When asked to draft, write, or save a structured goal (`clanker write-goal`, `/write-goal`, `goal_write`/`goal_add`). Not `clanker goal` or `/goal`, which start the loop.
+description: When asked to draft, write, or save a structured goal (`clanker write-goal`, `/write-goal`, `clanker add-goal`, `/add-goal`, `goal_write`/`goal_add`). Not `clanker goal` or `/goal`, which start the loop.
 enabled: true
 ---
 
@@ -48,3 +48,7 @@ genuinely unknown. Prefer a short honest goal to a padded one.
 `goal_write` already inspects `state/goals.json` for an open goal covering
 the intent. `goal_add` only appends; it cannot update an existing entry and
 does not create the board card. If it reports a duplicate, return that id.
+
+`clanker add-goal "<objective>" ["<criterion>"]` and `/add-goal` are that
+same save as one step, for a caller who already knows the fields and does
+not want a draft; they start nothing either.
