@@ -3161,10 +3161,10 @@ function ingestChatMessages(messages, room) {
     if (!placed && _chatUnreadCutoff > 0 && m.ts > _chatUnreadCutoff) {
       placed = true;
       var divider = document.createElement("div");
-      divider.className = "chat-unread-divider";
+      divider.className = CHAT_UNREAD_CLASS;
       divider.setAttribute("role", "separator");
       divider.setAttribute("aria-label", "New messages");
-      divider.innerHTML = "<span>New messages</span>";
+      divider.innerHTML = "<span class=\"" + CHAT_UNREAD_LABEL_CLASS + "\">New messages</span>";
       el.chatLog.appendChild(divider);
     }
     var node = buildChatMessage(m);
@@ -3257,6 +3257,34 @@ function formatChatText(raw) {
   return frag;
 }
 
+/* The message row: one shape for the transcript, the same in every room. State
+   is an attribute (`data-grouped`, `data-mine`, `data-seen`, `data-md`,
+   `data-action`, `data-deleted`), so the sheet reads what the script writes.
+   The day and unread dividers draw their rules with `before:`/`after:` rather
+   than a component rule, and the sender's hue picks a table in the sheet. */
+var MSG_CLASS = "group relative box-border flex flex-col items-stretch gap-0.5 rounded-plate border-l-2 border-l-transparent px-2 py-1 font-sans text-sm leading-normal wrap-anywhere hover:border-l-rule hover:bg-[color-mix(in_srgb,var(--surface-2)_40%,transparent)] data-[grouped=true]:py-0.5 data-[grouped=true]:[&_[data-role=meta]]:hidden data-[mine=true]:bg-transparent data-[mine=true]:hover:bg-[color-mix(in_srgb,var(--surface-2)_35%,transparent)] data-[mine=true]:[&_[data-role=from]]:text-ok data-[deleted=true]:[&_[data-role=actions]]:hidden";
+var CHAT_META_CLASS = "mb-0.5 flex min-w-0 flex-wrap items-baseline gap-2";
+var CHAT_MARK_CLASS = "grid h-5 w-5 place-items-center rounded-capsule border border-rule bg-surface-2 text-xs leading-none";
+var CHAT_FROM_CLASS = "text-fg";
+var CHAT_TIME_CLASS = "tabular-nums text-fg-muted data-[seen=true]:after:content-['_\u2713\u2713'] data-[seen=true]:after:text-ok";
+var CHAT_GUTTER_TIME_CLASS = "text-xs text-fg-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";
+var CHAT_TEXT_CLASS = "w-full min-w-0 whitespace-pre-wrap text-fg data-[md=true]:whitespace-normal data-[action=true]:italic data-[action=true]:text-fg-muted data-[deleted=true]:italic data-[deleted=true]:text-fg-muted";
+var CHAT_UNFURL_CLASS = "inline-block max-w-full overflow-hidden rounded-plate border border-[color-mix(in_srgb,var(--accent)_45%,var(--rule))] bg-surface-2 px-2 py-1 text-sm text-ellipsis whitespace-nowrap text-accent-text no-underline";
+var CHAT_ACTIONS_CLASS = "absolute -top-2.5 right-2 z-1 hidden items-center gap-0.5 rounded-capsule border border-border bg-surface px-1 py-0.5 shadow-[var(--lift-low)] group-hover:flex group-focus-within:flex hover-none:flex [&_button]:min-h-6 [&_button]:rounded-capsule [&_button]:px-2 [&_button]:text-xs";
+var CHAT_REACTIONS_CLASS = "mt-1 flex flex-wrap gap-1 empty:hidden";
+var CHAT_REACTION_CLASS = "cursor-pointer rounded-capsule border border-rule bg-surface-2 px-2 py-0.5 text-sm focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 data-[mine=true]:border-accent data-[mine=true]:bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))]";
+var CHAT_THREAD_BAR_CLASS = "mt-2 flex flex-wrap items-center gap-2 text-sm [&_button]:min-h-6 [&_button]:rounded-capsule [&_button]:px-2 [&_button]:text-xs";
+var CHAT_THREAD_LIST_CLASS = "mt-1 flex basis-full flex-col gap-0.5 pl-3";
+var CHAT_THREAD_REPLY_CLASS = "py-0.5 text-sm text-fg";
+var CHAT_DAY_CLASS = "mt-2 flex items-center gap-3 border-t-0 pt-2 pb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted before:h-px before:flex-1 before:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] before:content-[''] after:h-px after:flex-1 after:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] after:content-['']";
+var CHAT_UNREAD_CLASS = "my-1 flex items-center gap-3 py-1 before:h-px before:flex-1 before:bg-danger before:content-[''] after:h-px after:flex-1 after:bg-danger after:content-['']";
+var CHAT_EDITED_CLASS = "text-xs italic text-fg-muted";
+var CHAT_UNREAD_LABEL_CLASS = "font-sans text-xs font-bold whitespace-nowrap text-danger uppercase tracking-label";
+var CHAT_EDIT_INPUT_CLASS = "w-full rounded-plate-lg border border-accent bg-surface px-2 py-1 text-sm text-fg [font:inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var TYPING_INDICATOR_CLASS = "min-h-5 flex-none px-4 py-1 text-xs text-fg-muted";
+var TYPING_DOTS_CLASS = "ml-1 inline-flex gap-0.5 align-middle";
+var TYPING_DOT_CLASS = "h-1 w-1 animate-typing-dot rounded-full bg-fg-muted motion-reduce:animate-none [&:nth-child(2)]:[animation-delay:0.16s] [&:nth-child(3)]:[animation-delay:0.32s]";
+
 var _lastChatFrom = null;
 var _lastChatTs = 0;
 function _chatDayKey(ts){ try{ var d=new Date(ts*1000); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }catch(_){ return ""; } }
@@ -3264,7 +3292,8 @@ var _lastChatDay = "";
 function buildChatMessage(m) {
   var grouped = (m.from === _lastChatFrom) && (m.ts - _lastChatTs < 300) && (_chatDayKey(m.ts) === _lastChatDay);
   var wrap = document.createElement("div");
-  wrap.className = "chat-msg" + (m.from === instanceName ? " mine" : "");
+  wrap.className = MSG_CLASS;
+  if (m.from === instanceName) wrap.setAttribute("data-mine", "true");
   if (grouped) wrap.setAttribute("data-grouped", "true");
   if (m.id) wrap.dataset.msgId = m.id;
   /* Every action that names a message to the server — react, pin, edit,
@@ -3280,7 +3309,7 @@ function buildChatMessage(m) {
   if (dayKey && dayKey !== _lastChatDay) {
     _lastChatDay = dayKey;
     var sep = document.createElement("div");
-    sep.className = "chat-day";
+    sep.className = CHAT_DAY_CLASS;
     sep.textContent = dayKey;
     // attach as sibling marker stored on wrap for the caller to insert
     wrap._daySep = sep;
@@ -3289,14 +3318,16 @@ function buildChatMessage(m) {
   }
 
   var meta = document.createElement("div");
-  meta.className = "chat-meta";
+  meta.className = CHAT_META_CLASS;
+  meta.setAttribute("data-role", "meta");
   var mark = document.createElement("span");
-  mark.className = "chat-mark";
+  mark.className = CHAT_MARK_CLASS;
   mark.textContent = clankerMark(m.from || "");
   mark.setAttribute("aria-hidden", "true");
   meta.appendChild(mark);
   var from = document.createElement("span");
-  from.className = "chat-from";
+  from.className = CHAT_FROM_CLASS;
+  from.setAttribute("data-role", "from");
   from.textContent = m.from;
   // Hue per name so different clankers read as different people at a
   // glance. The hue values live in CSS as --chat-hue-N (with dark-theme
@@ -3305,24 +3336,25 @@ function buildChatMessage(m) {
   from.setAttribute("data-color", String((function(h){ var v=0; for(var i=0;i<m.from.length;i++) v=(v*31 + m.from.charCodeAt(i))>>>0; return v%8; })(m.from)));
   meta.appendChild(from);
   var time = document.createElement("span");
-  time.className = "chat-time";
+  time.className = CHAT_TIME_CLASS;
   time.textContent = formatChatTime(m.ts);
   meta.appendChild(time);
   wrap.appendChild(meta);
   // Slack-like hover timestamp gutter for grouped messages
   if (grouped) {
     var gutter = document.createElement("span");
-    gutter.className = "chat-gutter-time";
+    gutter.className = CHAT_GUTTER_TIME_CLASS;
     gutter.textContent = formatChatTime(m.ts);
     gutter.setAttribute("aria-hidden", "true");
     wrap.appendChild(gutter);
   }
 
   var text = document.createElement("div");
-  text.className = "chat-text md";
+  text.className = CHAT_TEXT_CLASS;
+  text.setAttribute("data-md", "true");
   // Deleted messages
   if (m.deleted) {
-    text.classList.add("chat-deleted");
+    text.setAttribute("data-deleted", "true");
     text.textContent = "[This message was deleted]";
     wrap.appendChild(text);
     wrap.setAttribute("data-deleted", "true");
@@ -3332,7 +3364,7 @@ function buildChatMessage(m) {
   }
   var said = boardActionLine(m.text);
   if (said) {
-    text.classList.add("chat-action");
+    text.setAttribute("data-action", "true");
     text.textContent = said;
   } else {
     // Slack-style unfurl: bare URL preview affordance (no fetch, just link styling already does it,
@@ -3345,7 +3377,7 @@ function buildChatMessage(m) {
       linkCard.href = trimmed;
       linkCard.target = "_blank";
       linkCard.rel = "noopener noreferrer";
-      linkCard.className = "chat-unfurl";
+      linkCard.className = CHAT_UNFURL_CLASS;
       linkCard.textContent = trimmed;
       // keep original text too for copy, but add card beneath
       var unfurl = document.createElement("div");
@@ -3370,14 +3402,14 @@ function buildChatMessage(m) {
   if (m.reactions && m.reactions.length) {
     m.reactions.forEach(function(r){ reacts[r.emoji] = reacts[r.emoji] || []; reacts[r.emoji].push(r.from); });
   }
-  var reactionsBar = document.createElement("div"); reactionsBar.className = "chat-reactions";
+  var reactionsBar = document.createElement("div"); reactionsBar.className = CHAT_REACTIONS_CLASS;
   var EMOJIS = ["👍","❤️","🎉","🔥","👀","✅"];
   function renderReacts(){
     reactionsBar.textContent="";
     Object.keys(reacts).forEach(function(emoji){
       var cnt = reacts[emoji].length;
       if(!cnt) return;
-      var pill = document.createElement("button"); pill.type="button"; pill.className="chat-reaction";
+      var pill = document.createElement("button"); pill.type="button"; pill.className=CHAT_REACTION_CLASS;
       pill.textContent = emoji + " " + cnt; pill.title = reacts[emoji].join(", ");
       var mine = reacts[emoji].indexOf(instanceName)!==-1; pill.setAttribute("data-mine", String(mine));
       pill.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
@@ -3407,7 +3439,7 @@ function buildChatMessage(m) {
   function saveThreads(){ try{ localStorage.setItem("clanker.threads", JSON.stringify(threadStore)); }catch(_){} }
   var threadKey = chatMessageKey(m);
   var replies = threadStore[threadKey] || [];
-  var threadBar = document.createElement("div"); threadBar.className = "chat-thread-bar";
+  var threadBar = document.createElement("div"); threadBar.className = CHAT_THREAD_BAR_CLASS;
   var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary"; upgradePfButton(threadCount);
   function renderThreadBar(){
     if(!replies.length){ threadBar.hidden=true; return; }
@@ -3417,11 +3449,11 @@ function buildChatMessage(m) {
     threadBar.title = replies.slice(-2).map(function(r){return r.from+": "+r.text;}).join("\n");
   }
   threadBar.appendChild(threadCount);
-  var threadList = document.createElement("div"); threadList.className="chat-thread-list"; threadList.hidden=true;
+  var threadList = document.createElement("div"); threadList.className=CHAT_THREAD_LIST_CLASS; threadList.hidden=true;
   function renderThreads(){
     threadList.textContent="";
     replies.forEach(function(r){
-      var row=document.createElement("div"); row.className="chat-thread-reply";
+      var row=document.createElement("div"); row.className=CHAT_THREAD_REPLY_CLASS;
       row.textContent=r.from+": "+r.text; threadList.appendChild(row);
     });
     renderThreadBar();
@@ -3443,7 +3475,8 @@ function buildChatMessage(m) {
   // Slack-like quick actions (copy / emoji), revealed on hover and
   // :focus-within, and exposed to AT, so they are reachable by keyboard too.
   var actions = document.createElement("div");
-  actions.className = "chat-actions";
+  actions.className = CHAT_ACTIONS_CLASS;
+  actions.setAttribute("data-role", "actions");
   var copyBtn = document.createElement("button");
   copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
   copyBtn.setAttribute("aria-label", "Copy message");
@@ -3481,7 +3514,7 @@ function buildChatMessage(m) {
     editBtn.setAttribute("aria-label", "Edit message");
     editBtn.addEventListener("click", function(e){ e.stopPropagation();
       var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
-      var inp = document.createElement("input"); inp.type="text"; inp.className="chat-edit-input"; inp.value=cur;
+      var inp = document.createElement("input"); inp.type="text"; inp.className=CHAT_EDIT_INPUT_CLASS; inp.value=cur;
       text.textContent = ""; text.appendChild(inp); inp.focus();
       function finishEdit(){
         var v = inp.value.trim();
@@ -3490,7 +3523,7 @@ function buildChatMessage(m) {
             body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, text: v })
           }).then(function(r){ return r.json(); }).then(function(d){
             if(d.ok){ m.text = v; m.edited = true; text.textContent = v;
-              var ed = document.createElement("span"); ed.className="chat-edited"; ed.textContent=" (edited)"; text.appendChild(ed);
+              var ed = document.createElement("span"); ed.className=CHAT_EDITED_CLASS; ed.textContent=" (edited)"; text.appendChild(ed);
             } else {
               text.textContent = m.text;
               if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit.";
@@ -3500,10 +3533,10 @@ function buildChatMessage(m) {
             if (el.chatStatus) el.chatStatus.textContent = "Could not save the edit: " + (err && err.message ? err.message : "request failed");
           });
         } else { text.textContent = m.text; if(m.edited){
-          var ed2 = document.createElement("span"); ed2.className="chat-edited"; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
+          var ed2 = document.createElement("span"); ed2.className=CHAT_EDITED_CLASS; ed2.textContent=" (edited)"; text.appendChild(ed2); }}
       }
       inp.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); finishEdit(); } if(ev.key==="Escape"){ text.textContent=m.text; if(m.edited){
-        var ed3=document.createElement("span"); ed3.className="chat-edited"; ed3.textContent=" (edited)"; text.appendChild(ed3); }} });
+        var ed3=document.createElement("span"); ed3.className=CHAT_EDITED_CLASS; ed3.textContent=" (edited)"; text.appendChild(ed3); }} });
       inp.addEventListener("blur", finishEdit);
     });
     actions.appendChild(editBtn);
@@ -3516,7 +3549,7 @@ function buildChatMessage(m) {
         fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
         }).then(function(r){ return r.json(); }).then(function(d){
-          if(d.ok) { wrap.classList.add("chat-msg-deleted"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
+          if(d.ok) { wrap.setAttribute("data-deleted", "true"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
           else if (el.chatStatus) el.chatStatus.textContent = "Could not delete that message.";
         }).catch(function(err){
           if (el.chatStatus) el.chatStatus.textContent = "Could not delete: " + (err && err.message ? err.message : "request failed");
@@ -3901,10 +3934,10 @@ function setTyping(on){
     var name = (window._clankerInstance || "you");
     ind.appendChild(document.createTextNode(name + " is typing"));
     var dots = document.createElement("span");
-    dots.className = "slack-typing-dots";
+    dots.className = TYPING_DOTS_CLASS;
     for (var i = 0; i < 3; i++) {
       var dot = document.createElement("span");
-      dot.className = "slack-typing-dot";
+      dot.className = TYPING_DOT_CLASS;
       dots.appendChild(dot);
     }
     ind.appendChild(dots);

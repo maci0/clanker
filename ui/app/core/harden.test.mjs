@@ -455,8 +455,13 @@ test("rooms composer does not park a leftover hash in the text field", function 
 });
 
 test("rooms message actions stay visible without hover", function () {
-  assert.match(css, /@media \(hover: none\)/);
-  assert.match(css, /\.chat-msg:not\(\.chat-msg-deleted\) \.chat-actions/);
+  // A pointer with no hover cannot reveal them, so the row's actions carry the
+  // sheet's own `hover-none` variant, which compiles to @media (hover: none).
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  const src = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
+  assert.match(src, /@custom-variant hover-none \(@media \(hover: none\)\)/);
+  assert.match(app, /hover-none:flex/);
+  assert.match(app, /CHAT_ACTIONS_CLASS/);
 });
 
 test("rooms channel rows are 44px on coarse pointers", function () {

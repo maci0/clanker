@@ -119,13 +119,17 @@ test("eager JS stays inside its weight budget", function () {
   // 148, raised from 145 on purpose by the Tailwind port: a ported module
   // states its shapes as class strings, so the bytes move out of the sheets
   // and into the eager closure of whichever module is on the critical path.
+  // The message row's class lists live in app.js, so a view that moves over
+  // grows this number while shrinking app.css: at the end of the port the two
+  // cabinet sheets are gone and the strings are the only home for a view's
+  // shapes. 152 is that growth, measured with the message row in.
   // core/usage.js is preloaded (its grid strings), and core/kit.js is reached
   // from core/plugins.js, which every visit loads (the variant tables and the
   // record-row surface, so a plugin styles itself the way the page does). The
   // number comes back down when the port is done and the last sheet is gone;
   // until then a raise here is a deliberate act per this test's instruction,
   // never a quiet one.
-  assert.ok(eagerJsGz <= 149, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 149K`);
+  assert.ok(eagerJsGz <= 152, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 152K`);
 });
 
 test("first paint stays inside its weight budget", function () {
@@ -144,9 +148,9 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 88, raised from 48 eight times, each named in CHANGELOG: the run graph, the
+  // 96, raised from 48 nine times, each named in CHANGELOG: the run graph, the
   // board lane, the card face, its chips, its members, the detail panel, the
-  // tool rows, the rooms sidebar. This is
+  // tool rows, the rooms sidebar, the message row. This is
   // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
   // utilities while both still ship (app.css is still ~150K raw), and phase 6
   // deletes those sheets, leaving this one holding the whole UI. The binding
@@ -158,7 +162,7 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // raises first paint, while an *app.css* port leaves it flat — so the
   // remaining views.css-heavy work (Rooms, the tool rows) should land beside
   // an app.css port (the board, the rail, chat) until the deferred sheet goes.
-  assert.ok(css <= 88, `tailwind.css is ${css.toFixed(1)}K raw; budget is 88K`);
+  assert.ok(css <= 96, `tailwind.css is ${css.toFixed(1)}K raw; budget is 96K`);
 });
 
 test("single large files stay inside their budgets", function () {

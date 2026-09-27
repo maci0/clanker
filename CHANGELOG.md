@@ -435,6 +435,30 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `slack-emoji-option`, `fleet-roster-list`, `fleet-meta`, `fleet-run-link`),
   each replaced by the utilities that say what it meant.
 
+- The rooms message row is utilities: the row and its meta line, the sender
+  mark and hue, the timestamp (with its `data-seen` check), the body and its
+  markdown shapes, the link unfurl, the hover actions, reactions, threads, the
+  edit box, the day and unread dividers and the typing dots. State is an
+  attribute — `data-grouped`, `data-mine`, `data-seen`, `data-md`,
+  `data-action`, `data-deleted` — and a descendant hook is an attribute too
+  (`data-role="meta"`/`"from"`/`"actions"`), because the class a selector named
+  has no rule of its own any more. The day and unread rules are drawn with
+  `before:`/`after:` rather than a component rule; the sender's hue table stays
+  one in the sheet; the typing dots name a theme animation
+  (`--animate-typing-dot`) and stagger with an arbitrary delay.
+- A pointer with no hover is the sheet's own variant now (`@custom-variant
+  hover-none`), not an arbitrary media query at the call site.
+- The phone drawer's declarations moved onto the sidebar's utilities with a
+  `max-[768px]` variant. They lived in a media block selecting `.slack-sidebar`,
+  a class the sidebar no longer carries, so a phone had lost the absolute
+  drawer, its 260px width, its sideways shadow and the collapse that hides it.
+- A rendered markdown body keeps its descendant rule (`[data-md="true"] .md-p`
+  and friends): "a paragraph inside a rendered body" is a relationship, not a
+  class, and saying it in the sheet kept the em margins the utilities had
+  approximated.
+- First paint 59.6K gz; the sheet's accounting figure goes to 96K and the eager
+  JS one to 152K, both named here.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

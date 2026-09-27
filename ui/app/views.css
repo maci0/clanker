@@ -285,41 +285,12 @@
 .slack-dialog-actions .danger { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
 
 /* ── Typing indicator ── */
-.slack-typing-indicator {
-  padding: var(--space-1) 1rem; font-size: var(--step--1); color: var(--fg-muted);
-  min-height: 1.25rem; flex-shrink: 0;
-}
-
-.slack-typing-dots {
-  display: inline-flex; gap: 2px; vertical-align: middle; margin-left: var(--space-1);
-}
-
-.slack-typing-dot {
-  width: 4px; height: 4px; background: var(--fg-muted); border-radius: 50%;
-  animation: slack-typing 1.4s infinite ease-in-out both;
-}
-
-.slack-typing-dot:nth-child(2) { animation-delay: 0.16s; }
-
-.slack-typing-dot:nth-child(3) { animation-delay: 0.32s; }
-
-@keyframes slack-typing {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) { .slack-typing-dot { animation: none; opacity: 0.6; } }
-
 /* ── New messages divider ── */
 .slack-new-divider {
   display: flex; align-items: center; gap: 0.75rem;
   margin: 0.5rem 0; padding: 0 1rem;
   font-size: var(--step--1); font-weight: 700; color: var(--danger);
   text-transform: uppercase; letter-spacing: var(--track-label);
-}
-
-.slack-new-divider::before, .slack-new-divider::after {
-  content: ""; flex: 1; height: 1px; background: var(--danger);
 }
 
 /* ── Mobile responsive ── */
@@ -372,140 +343,19 @@
   padding: var(--space-1) 0; margin: var(--space-1) 0;
 }
 
-.chat-unread-divider::before,
-.chat-unread-divider::after {
-  content: ""; flex: 1; height: 1px;
-  background: var(--danger);
-}
-
-.chat-unread-divider span {
-  font-family: var(--sans); font-size: var(--step--1); font-weight: 700;
-  color: var(--danger); text-transform: uppercase; letter-spacing: var(--track-label);
-  white-space: nowrap;
-}
-
-.chat-msg { position: relative; font-family: var(--sans); font-size: var(--step-0); line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; box-sizing: border-box; }
-
-.chat-msg[data-grouped="true"] { padding-top: 0.2rem; padding-bottom: 0.2rem; }
-
-.chat-msg[data-grouped="true"] .chat-meta { display: none; }
-
 .chat-gutter-time { font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: flex-end; }
-
-.chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
-
-.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem var(--space-1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--lift-low); z-index: 1; }
-
-.chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
-
-@media (hover: none) {
-  .chat-msg:not(.chat-msg-deleted) .chat-actions {
-    display: flex; position: static; top: auto; right: auto;
-    margin-top: var(--space-2); flex-wrap: wrap; box-shadow: none;
-  }
-}
-
-.chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: var(--step--1); border-radius: var(--radius-pill); }
-
-.chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
-
-.chat-reactions:empty { display: none; }
-
-.chat-reaction { font-size: var(--step-0); padding: 0.1rem var(--space-2); border-radius: var(--radius-pill); border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
-
-.chat-reaction:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.chat-reaction[data-mine="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 
 .chat-edited { font-size: var(--step--1); color: var(--fg-muted); font-style: italic; }
 
 .chat-deleted { color: var(--fg-muted); font-style: italic; }
 
-.chat-msg-deleted .chat-actions { display: none; }
-
-.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: var(--step-0); background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--radius-lg); }
-
-.chat-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
 .chat-topic { font-size: var(--step-0); color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
 
-.chat-thread-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-2); font-size: var(--step-0); }
-
-.chat-thread-bar[hidden] { display: none; }
-
 /* 24px is the WCAG 2.5.8 floor; pointer:coarse below raises these to 44px. */
-.chat-thread-bar button { min-height: 24px; padding: 0 0.5rem; font-size: var(--step--1); border-radius: var(--radius-pill); }
-
-.chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; padding-left: var(--space-3); }
-
-.chat-thread-list[hidden] { display: none; }
-
-.chat-thread-reply { font-size: var(--step-0); color: var(--fg); padding: 0.15rem 0; }
-
-.chat-msg:hover { background: color-mix(in srgb, var(--surface-2) 40%, transparent); border-left-color: var(--rule); }
-
-.chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: var(--step--1); font-weight: 600; color: var(--fg-muted); letter-spacing: var(--track-label); text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: var(--space-2); border-top: 0; }
-
-.chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--rule) 60%, transparent); }
-
-.chat-msg.mine { background: transparent; }
-
-.chat-msg.mine:hover { background: color-mix(in srgb, var(--surface-2) 35%, transparent); }
-
-.chat-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; margin-bottom: 0.2rem; min-width: 0; }
-
-.chat-mark { font-size: var(--step-1); line-height: 1; }
-
-.chat-from { color: var(--fg); font-weight: 700; }
-
-.chat-mark { width: 20px; height: 20px; border-radius: var(--radius-pill); display: grid; place-items: center; font-size: var(--step--1); background: var(--surface-2); border: 1px solid var(--rule); }
-
 /* This instance's own messages, so a room reads as a conversation rather
    than a log of indistinguishable lines. */
-.chat-msg.mine .chat-from { color: var(--ok); }
-
-.chat-from[data-color] { padding: 0.05rem var(--space-2); border-radius: var(--radius-pill); font-size: var(--step--1); font-weight: 600; }
-
-.chat-from[data-color="0"] { color: var(--chat-hue-0); border-bottom: 2px solid var(--chat-hue-0); }
-
-.chat-from[data-color="1"] { color: var(--chat-hue-1); border-bottom: 2px solid var(--chat-hue-1); }
-
-.chat-from[data-color="2"] { color: var(--chat-hue-2); border-bottom: 2px solid var(--chat-hue-2); }
-
-.chat-from[data-color="3"] { color: var(--chat-hue-3); border-bottom: 2px solid var(--chat-hue-3); }
-
-.chat-from[data-color="4"] { color: var(--chat-hue-4); border-bottom: 2px solid var(--chat-hue-4); }
-
-.chat-from[data-color="5"] { color: var(--chat-hue-5); border-bottom: 2px solid var(--chat-hue-5); }
-
-.chat-from[data-color="6"] { color: var(--chat-hue-6); border-bottom: 2px solid var(--chat-hue-6); }
-
-.chat-from[data-color="7"] { color: var(--chat-hue-7); border-bottom: 2px solid var(--chat-hue-7); }
-
-.chat-time[data-seen="true"]::after { content: " ✓✓"; color: var(--ok); font-size: var(--step--1); }
-
-.chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-
-.chat-text { white-space: pre-wrap; color: var(--fg); max-width: none; min-width: 0; width: 100%; }
-
-.chat-text.md { white-space: normal; }
-
-.chat-text.md .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: 1.5; }
-
-.chat-text.md .md-p:last-child { margin-bottom: 0; }
-
-.chat-text.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
-
-.chat-text.md ul, .chat-text.md ol { margin: 0.3em 0; }
-
-.chat-text.md .code-block { margin: 0.4em 0; }
-
 /* What a card action reads as: a report of something that happened, not
    something anyone typed. */
-.chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
-
-.chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--step-0); color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
-
 .chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
 
 .chat-composer input[type="text"] {
