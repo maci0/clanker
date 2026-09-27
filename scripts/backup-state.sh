@@ -52,10 +52,22 @@ state_root=$(resolve_path "$repo_root/state")
 storage_root=$(dirname -- "$state_root")
 backup_root="$storage_root/backups"
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-staging="$backup_root/.${timestamp}.incomplete"
+# The staging name carries a per-run random tail. It used to be exactly
+# `.${timestamp}.incomplete`, and a second run starting in the same second
+# (a manual run while the 30-minute timer fires, a retry of a wrapper script,
+# two checkouts sharing one storage root) named the same directory: its `mkdir`
+# failed under `set -e` as intended, but the EXIT trap fired first and
+# `rm -rf`'d the tree the first run was still rsyncing into. That run then
+# promoted a half-copied snapshot, which every later restore reports as
+# healthy. `mktemp -d` fails rather than colliding, so a second run can no
+# longer touch a live staging directory at all.
 snapshot="$backup_root/$timestamp"
 latest="$backup_root/latest"
 copied=""
+
+# How old a leftover staging directory must be before a run is allowed to
+# delete it. See `prune_old_snapshots`.
+staging_stale_minutes=60
 
 # The snapshot root is derived from wherever `state` resolves to. When that
 # is a real directory inside the checkout (state was never pointed at an
@@ -84,9 +96,10 @@ chmod 700 "$backup_root"
 # If the script dies mid-backup, the incomplete staging directory is garbage
 # (the `latest` symlink still points at the last good snapshot). Remove it so
 # failed runs do not accumulate; after a successful `mv` the path no longer
-# exists and this is a no-op.
+# exists and this is a no-op. The name is per-run, so this trap can only ever
+# remove the directory this run created.
+staging=$(mktemp -d "$backup_root/.${timestamp}.incomplete.XXXXXXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
-mkdir "$staging"
 
 # Every SQLite database in the store is WAL-mode (`src/util/sqlite.zig` sets
 # journal_mode=WAL on open) and stays open for the life of a serve/repl: one
@@ -252,8 +265,17 @@ verify_snapshot_dbs() {
 if ! verify_snapshot_dbs; then
     exit 1
 fi
+# A snapshot promoted earlier in this same second already owns the plain
+# timestamp name, and `mv` into an existing directory moves the staging tree
+# *inside* it rather than replacing it. The second run then reports success
+# while its own copy is unreachable and the first run's snapshot carries a
+# stray `.incomplete.XXXX` directory. Disambiguate with the same random tail
+# the staging name used; `latest` follows the name, not the timestamp.
+if [ -e "$snapshot" ]; then
+    snapshot="$backup_root/${timestamp}.${staging##*.}"
+fi
 mv "$staging" "$snapshot"
-ln -sfn "$timestamp" "$latest"
+ln -sfn "${snapshot##*/}" "$latest"
 
 # Prune old snapshots and stale staging dirs. Snapshots are named as ISO-8601
 # timestamps, which sort lexicographically in chronological order, so a string
@@ -263,18 +285,24 @@ ln -sfn "$timestamp" "$latest"
 # a failed prune. CLANKER_BACKUP_RETENTION_DAYS (default 30) is the age after
 # which a snapshot is deleted; 0 keeps every snapshot.
 prune_old_snapshots() {
-    # Stale staging dirs first, and unconditionally: they are the remains of
-    # runs that died before the EXIT trap existed, so nothing else reclaims
-    # them, and each carries a full copy of the store. This used to sit below
-    # the retention guards, so `CLANKER_BACKUP_RETENTION_DAYS=0` (and an
-    # unparseable value) skipped it and the garbage grew without bound, which
-    # is the opposite of what "0 keeps every snapshot" means: it keeps every
-    # *snapshot*, not every failed attempt. The current run's own staging was
-    # already renamed away, so nothing live matches.
+    # Stale staging dirs first: they are the remains of runs that died before
+    # the EXIT trap existed, so nothing else reclaims them, and each carries a
+    # full copy of the store. This used to sit below the retention guards, so
+    # `CLANKER_BACKUP_RETENTION_DAYS=0` (and an unparseable value) skipped it
+    # and the garbage grew without bound, which is the opposite of what "0
+    # keeps every snapshot" means: it keeps every *snapshot*, not every failed
+    # attempt. The current run's own staging was already renamed away, so what
+    # is left is another run's, and it may still be in flight: the removal used
+    # to be unconditional, which deleted a concurrent run's half-copied tree
+    # out from under it and let that run promote the wreckage. A staging
+    # directory older than `staging_stale_minutes` cannot belong to a live run
+    # (a backup of this store takes minutes, not an hour), so the age bound
+    # separates garbage from work in progress instead of guessing from the
+    # name.
     local stale
     while IFS= read -r stale; do
         rm -rf -- "$stale"
-    done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete' 2>/dev/null)
+    done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete.*' -mmin "+$staging_stale_minutes" 2>/dev/null)
 
     local keep_days=${CLANKER_BACKUP_RETENTION_DAYS:-30}
     case "$keep_days" in

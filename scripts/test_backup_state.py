@@ -12,6 +12,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -212,6 +213,54 @@ class BackupStateTest(unittest.TestCase):
         result = self.run_backup()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.latest() / "config").exists())
+
+    def test_a_fresh_staging_directory_is_not_pruned(self) -> None:
+        # A staging dir can only be another run's while that run is copying,
+        # and a run used to delete every one it found. That run then promoted
+        # a half-copied tree. Age is what separates garbage from work in
+        # progress, so a fresh dir survives this run and an hour-old one does
+        # not.
+        self.backups.mkdir(parents=True)
+        live = self.backups / ".20260101T000000Z.incomplete.LIVEONE"
+        dead = self.backups / ".20260101T000000Z.incomplete.DEADONE"
+        for path in (live, dead):
+            (path / "state").mkdir(parents=True)
+        old = time.time() - 7200
+        os.utime(dead, (old, old))
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(live.is_dir(), "pruned a staging directory a live run owns")
+        self.assertFalse(dead.exists(), "left abandoned staging garbage behind")
+        self.assertTrue((self.latest() / "state" / self.session_db("s1")).exists())
+
+    def test_a_snapshot_promoted_in_the_same_second_is_not_overwritten(self) -> None:
+        # The snapshot name is second-granular, so a manual run landing in the
+        # same second as the timer's would `mv` its staging tree *into* the
+        # snapshot already there, report success, and leave the copy
+        # unreachable.
+        self.backups.mkdir(parents=True)
+        occupied = self.backups / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        (occupied / "state").mkdir(parents=True)
+        (occupied / "marker").write_text("first run\n")
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertTrue(self.latest().is_dir())
+        self.assertNotEqual(
+            self.latest().resolve(), occupied.resolve(), "second run reused the name"
+        )
+        self.assertEqual((occupied / "marker").read_text(), "first run\n")
+        self.assertEqual(sorted(p.name for p in occupied.iterdir()), ["marker", "state"])
+        self.assertTrue(
+            (self.latest() / "state" / self.session_db("s1")).exists(),
+            "the second run's own copy is not reachable from latest",
+        )
 
     def test_installed_symlink_launcher_resolves_the_checkout(self) -> None:
         # What the systemd unit runs: `~/.local/bin/clanker-state-backup` is a
