@@ -294,6 +294,18 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
     "preact-boot.js must stay the first module script tag");
 });
 
+test("a deferred sheet that never arrives is reported in the app, not the console", function () {
+  // The second failure still arms the sheet, so the frame comes up in
+  // whatever CSS it still has, and nothing else marks that as a failure. The
+  // boot module runs before app.js exists, so the report has to cross the
+  // boundary as an event; a console.write here is an oxlint error over
+  // ui/app and would also be a line nobody opens.
+  assert.match(bootJs, /new CustomEvent\("clanker:stylesheet-error"/);
+  assert.ok(!/\bconsole\./.test(bootJs), "preact-boot.js must not write to the console");
+  assert.match(appJs, /addEventListener\("clanker:stylesheet-error"/);
+  assert.match(appJs, /uiToast\("Stylesheet did not load: "/);
+});
+
 // Memoized parsing keeps this near a second warm; the budget is headroom for
 // a loaded machine, where the scan used to cross bun's 5s default and read as
 // a failure rather than slowness.

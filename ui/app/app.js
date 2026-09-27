@@ -2197,6 +2197,14 @@ if (el.paramEffort) el.paramEffort.addEventListener("change", updateComposerMode
 // A tab closed or reloaded mid-sentence has no other chance to write.
 window.addEventListener("beforeunload", flushDraft);
 
+// A deferred sheet that failed twice is armed anyway, so the frame renders
+// unstyled in whatever it still has. preact-boot.js sees the failure before
+// this module exists, so it announces it here rather than writing to the
+// console.
+window.addEventListener("clanker:stylesheet-error", function (e) {
+  uiToast("Stylesheet did not load: " + ((e.detail && String(e.detail)) || "unknown") + ".", "bad");
+});
+
 // Voice input — Web Speech API
 (function(){
   var btn = document.getElementById("voice-btn");

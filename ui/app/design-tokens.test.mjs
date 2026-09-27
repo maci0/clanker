@@ -662,7 +662,7 @@ test("inline styles in scripts carry no off-token size", () => {
       else if (/\bfunction buildExportCss\b/.test(line)) inExportCss = "function";
       const exempt = Boolean(inExportCss);
       if (inExportCss === "statement" && /;\s*$/.test(line)) inExportCss = false;
-      else if (inExportCss === "function" && /^\}/.test(line)) inExportCss = false;
+      else if (inExportCss === "function" && line.startsWith("}")) inExportCss = false;
       if (exempt) return;
       for (const m of line.matchAll(sized)) {
         const value = m[2].trim();

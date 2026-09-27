@@ -50,7 +50,10 @@ window.signals = { signal: signal, computed: computed, effect: effect, batch: ba
       node.addEventListener("error", function () {
         if (retried) {
           arm();
-          if (window.console && console.warn) console.warn("clanker: stylesheet did not load:", node.getAttribute("href"));
+          // no-console is an error over ui/app, and this module runs before
+          // app.js can be reached, so the notice leaves as an event the app
+          // turns into a toast rather than a console line nobody opens.
+          try { window.dispatchEvent(new CustomEvent("clanker:stylesheet-error", { detail: node.getAttribute("href") })); } catch (_) {}
           return;
         }
         retried = true;
