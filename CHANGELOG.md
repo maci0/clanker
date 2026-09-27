@@ -827,6 +827,18 @@ internal.
 
 ### Fixed
 
+- The state-backup timer and drill read their settings from
+  `~/.config/clanker/backup.env` and from nowhere else.
+  `scripts/install-state-backup.sh` wrote that file under
+  `$XDG_CONFIG_HOME`, and a unit expands no variable in `EnvironmentFile=`
+  (both units name `-%h/.config/clanker/backup.env` literally, and the `-`
+  tolerates the miss), so on a host with a custom `XDG_CONFIG_HOME` every
+  setting in it configured nothing: a `CLANKER_BACKUP_OFFSITE_DEST` named a
+  second failure domain the scheduled run never wrote to, and
+  `clanker doctor` read the same wrong path, so it reported the mirror as
+  configured. `doctor` reads the units' path now, and the installer warns
+  about a file left under `$XDG_CONFIG_HOME` and tells the operator to move
+  its settings.
 - Importing a chat file in the web UI no longer turns a `system` or `tool`
   message into a user turn. The normalizer rewrote every role that was not
   `user` or `assistant` to `"user"` before the server filtered it, and a

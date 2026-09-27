@@ -126,19 +126,27 @@ jobs:
 
       # Smoke-tests scripts/sbom.py against every manifest it reads, so a
       # format change in build.zig.zon, the lockfile, or a vendored README
-      # surfaces here instead of at release time.
+      # surfaces here instead of at release time. The scratch file goes to
+      # $RUNNER_TEMP, not /tmp: on the ubuntu image /tmp is a tmpfs, so the
+      # document is written to RAM for no benefit, and the project's own rule
+      # (AGENTS.md, the reason scripts/verify.sh writes under .scratch/) is the
+      # same one.
       - name: Check SBOM generation
         run: |
           python3 -B -m unittest scripts.test_sbom
-          python3 scripts/sbom.py -o /tmp/sbom.cdx.json
+          python3 scripts/sbom.py -o "${RUNNER_TEMP}/sbom.cdx.json"
 
       # `state/` is the only copy of every conversation, goal and ledger this
       # harness keeps, and scripts/backup-state.sh + scripts/verify-backup.sh
       # are the only things that make it recoverable. Nothing else in the
       # build runs their tests, so a regression here would reach a machine as
-      # the first sign of an incident.
+      # the first sign of an incident. The installer is here for the same
+      # reason: it decides where both units read their settings from, and a
+      # path no unit reads configures nothing while looking configured.
       - name: Check state backup and restore drills
-        run: python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup
+        run: |
+          python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup \
+            scripts.test_install_state_backup
 
       # Python is a secondary language here (sbom.py, gen_frames.py, ...),
       # and nothing in CI executes most of it, so a defect would merge unseen.

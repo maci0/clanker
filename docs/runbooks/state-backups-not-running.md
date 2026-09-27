@@ -79,12 +79,14 @@ The script's own diagnostics are one line each and name the entry at fault:
 - local runs all succeed, no `mirrored backup root` line ever appears, and
   `CLANKER_BACKUP_OFFSITE_DEST` looks set — the variable is in a shell, or in a
   file no unit reads. Both units read
-  `${XDG_CONFIG_HOME:-~/.config}/clanker/backup.env` (`EnvironmentFile=`),
-  written by `scripts/install-state-backup.sh`; a timer-run service inherits
+  `~/.config/clanker/backup.env` (`EnvironmentFile=-%h/.config/clanker/backup.env`,
+  written by `scripts/install-state-backup.sh`); a timer-run service inherits
   systemd's environment, so an export in an interactive shell never reached
-  it. A `state-backup.env` beside it is read by nothing: an older installer
-  created it and the docs pointed there, so a destination set in it silently
-  did nothing. Move the setting into `backup.env`,
+  it, and a unit expands no variable in `EnvironmentFile=`, so a copy of the
+  file under a custom `$XDG_CONFIG_HOME` is read by neither unit nor
+  `clanker doctor`. A `state-backup.env` beside it is read by nothing: an
+  older installer created it and the docs pointed there, so a destination set
+  in it silently did nothing. Move the setting into `backup.env`,
   `systemctl --user daemon-reload`, and re-run `./scripts/backup-state.sh` to
   see the mirror line.
 

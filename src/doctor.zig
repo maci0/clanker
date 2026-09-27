@@ -461,21 +461,30 @@ fn serviceOffsiteDest(
 /// what `EnvironmentFile=` accepts; the written template ships every setting
 /// commented, so a commented key must read as unset rather than as an empty
 /// destination.
+///
+/// The path is `$HOME/.config/clanker/backup.env` and deliberately not
+/// `$XDG_CONFIG_HOME/...`: both units name `EnvironmentFile=-%h/.config/clanker/backup.env`
+/// literally, because a unit expands no variable there. Reading a different
+/// file than the timer reads is how doctor came to report an off-site mirror
+/// as configured while the scheduled run never wrote one.
 fn backupEnvFileValue(
     io: std.Io,
     arena: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
     key: []const u8,
 ) ?[]const u8 {
-    const config_home = environ_map.get("XDG_CONFIG_HOME");
-    const home = environ_map.get("HOME") orelse return null;
-    const base = if (config_home != null and config_home.?.len > 0)
-        config_home.?
-    else
-        std.fmt.allocPrint(arena, "{s}/.config", .{home}) catch return null;
-    const path = std.fmt.allocPrint(arena, "{s}/clanker/backup.env", .{base}) catch return null;
+    const path = backupEnvPath(arena, environ_map) orelse return null;
     const text = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_backup_env_bytes)) catch return null;
     return envFileLookup(arena, text, key);
+}
+
+/// The `EnvironmentFile=` path both backup units name, or null when there is
+/// no `HOME` to anchor it to. It ignores `XDG_CONFIG_HOME` on purpose; see
+/// `backupEnvFileValue`.
+fn backupEnvPath(arena: std.mem.Allocator, environ_map: *std.process.Environ.Map) ?[]const u8 {
+    const home = environ_map.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    return std.fmt.allocPrint(arena, "{s}/.config/clanker/backup.env", .{home}) catch null;
 }
 
 const max_backup_env_bytes = 64 * 1024;
@@ -1488,4 +1497,33 @@ test "backup service env file wins over a shell export" {
     // reported as a destination.
     try std.testing.expect(envFileLookup(arena, "CLANKER_BACKUP_OFFSITE_DEST=\n", "CLANKER_BACKUP_OFFSITE_DEST") == null);
     try std.testing.expectEqualStrings("\"/unterminated", envFileLookup(arena, "CLANKER_BACKUP_OFFSITE_DEST=\"/unterminated\n", "CLANKER_BACKUP_OFFSITE_DEST").?);
+}
+
+test "the backup env file is the one the units read, not the XDG one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("HOME", "/home/op");
+    try std.testing.expectEqualStrings(
+        "/home/op/.config/clanker/backup.env",
+        backupEnvPath(arena, &env).?,
+    );
+
+    // A unit expands no variable in EnvironmentFile=, so both units name
+    // %h/.config/clanker/backup.env literally. Reading the XDG path here is
+    // what let doctor report an off-site mirror as configured while the
+    // scheduled run never wrote one.
+    try env.put("XDG_CONFIG_HOME", "/home/op/.custom-config");
+    try std.testing.expectEqualStrings(
+        "/home/op/.config/clanker/backup.env",
+        backupEnvPath(arena, &env).?,
+    );
+
+    // No HOME means no path, rather than a file rooted at "/".
+    var bare = std.process.Environ.Map.init(std.testing.allocator);
+    defer bare.deinit();
+    try std.testing.expect(backupEnvPath(arena, &bare) == null);
 }

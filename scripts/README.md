@@ -122,13 +122,22 @@ copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
 The scheduled runs read that variable, and every other backup knob
 (`CLANKER_BACKUP_RETENTION_DAYS`, `CLANKER_BACKUP_MAX_AGE_SECONDS`,
 `CLANKER_BACKUP_ROOT`, `CLANKER_VERIFY_SCRATCH_DIR`), from
-`~/.config/clanker/backup.env` (`$XDG_CONFIG_HOME/clanker/backup.env`), which
-`scripts/install-state-backup.sh` writes as a commented template on first run
-and never rewrites. It is a systemd `EnvironmentFile`: `KEY=value`, one per
-line, no `export`. A shell export is not enough and does not reach the timer,
-because a user service inherits the user manager's environment, not the login
-shell's; `clanker doctor` reads the same file, so a shell whose export
-disagrees with it is reported rather than believed.
+`~/.config/clanker/backup.env`, which `scripts/install-state-backup.sh`
+writes as a commented template on first run and never rewrites. It is a
+systemd `EnvironmentFile`: `KEY=value`, one per line, no `export`. A shell
+export is not enough and does not reach the timer, because a user service
+inherits the user manager's environment, not the login shell's; `clanker
+doctor` reads the same file, so a shell whose export disagrees with it is
+reported rather than believed.
+
+That path is fixed at `~/.config`, not `$XDG_CONFIG_HOME/clanker`, and
+`XDG_CONFIG_HOME` cannot change it: both units name
+`EnvironmentFile=-%h/.config/clanker/backup.env` literally, since a unit
+expands no variable there, and `EnvironmentFile=-` tolerates a missing file.
+An installer that wrote the template under a custom `XDG_CONFIG_HOME` left
+every setting in it read by nothing, and the off-site mirror it named
+configured a second failure domain that silently never existed; the installer
+now names such a file and tells the operator to move its settings.
 
 `backup.env` is the only file either unit reads (both name it in
 `EnvironmentFile=-`). An earlier installer also wrote a sibling

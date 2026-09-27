@@ -63,10 +63,12 @@ fi
 # The backup and restore-drill scripts are the only thing standing between
 # `state/` and an incident, and nothing else executes their tests, so a change
 # to either that stops checkpointing, refusing a corrupt store, or restoring
-# cleanly would otherwise merge unseen.
+# cleanly would otherwise merge unseen. The installer is covered for the same
+# reason: it decides where both units read their settings from.
 step "State backup and restore drills (CI: Check state backup drills)"
 if command -v python3 >/dev/null 2>&1; then
-    python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup || status=1
+    python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup \
+        scripts.test_install_state_backup || status=1
 else
     echo "python3 not installed; skipping state backup drills (CI will run them)"
 fi

@@ -100,7 +100,17 @@ fi
 # CLANKER_BACKUP_OFFSITE_DEST or CLANKER_BACKUP_RETENTION_DAYS for a scheduled
 # run. Written once, never overwritten: this is the operator's file, and a
 # reinstall must not drop a destination they set.
-backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
+#
+# The path is `$HOME/.config/clanker`, not `$XDG_CONFIG_HOME/clanker`, and that
+# is the whole point: a unit cannot expand a variable in `EnvironmentFile=`
+# (no shell, no `$XDG_CONFIG_HOME`), so the two units name
+# `-%h/.config/clanker/backup.env` literally. Honoring XDG here wrote the
+# operator's file somewhere no unit reads, and `EnvironmentFile=-` tolerates
+# the miss, so a destination set in it configured a second failure domain that
+# silently never existed. `clanker doctor` reads this same path for the same
+# reason. The unit *directory* below still follows XDG, because the systemd
+# user manager does resolve that one.
+backup_env_dir="$HOME/.config/clanker"
 backup_env="$backup_env_dir/backup.env"
 mkdir -p "$backup_env_dir"
 if [ ! -e "$backup_env" ]; then
@@ -147,6 +157,18 @@ fi
 if [ -e "$backup_env_dir/state-backup.env" ]; then
     printf 'warning: %s/state-backup.env is not read by any unit; move any setting from it into %s\n' \
         "$backup_env_dir" "$backup_env" >&2
+fi
+
+# An installer that honored $XDG_CONFIG_HOME wrote the file there. No unit ever
+# read it (see above), so on a host with XDG_CONFIG_HOME set to a non-default
+# path every backup setting was configured and inert. Name it rather than
+# deleting it: it may hold the only copy of a destination the operator set.
+if [ -n "${XDG_CONFIG_HOME:-}" ] && [ "$XDG_CONFIG_HOME" != "$HOME/.config" ]; then
+    xdg_backup_env="$XDG_CONFIG_HOME/clanker/backup.env"
+    if [ -e "$xdg_backup_env" ]; then
+        printf 'warning: %s is not read by any unit or by clanker doctor; move any setting from it into %s\n' \
+            "$xdg_backup_env" "$backup_env" >&2
+    fi
 fi
 if [ "$have_systemd" -eq 1 ]; then
     systemctl --user daemon-reload
