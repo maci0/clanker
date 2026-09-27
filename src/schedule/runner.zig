@@ -86,7 +86,7 @@ pub const Error = error{Busy};
 /// The window that makes `entry` due at `now`, or null when it is not due.
 /// Pure apart from the warning: a disabled entry, an unparseable spec, and a
 /// spec whose next window is still ahead all answer the same way.
-pub fn dueAt(entry: store.Entry, now: i64) ?i64 {
+fn dueAt(entry: store.Entry, now: i64) ?i64 {
     if (!entry.enabled) return null;
     const spec = cron.parse(entry.cron) catch {
         // Hand-edited into the file, most likely. Warn every sweep rather
@@ -113,7 +113,7 @@ pub fn dueAt(entry: store.Entry, now: i64) ?i64 {
 /// nothing is left owing. Counting `now` would make an every-minute entry
 /// fired by an every-minute cron report one skipped window on every single
 /// run, which is a number that means nothing.
-pub fn skippedSince(entry: store.Entry, due: i64, now: i64) u32 {
+fn skippedSince(entry: store.Entry, due: i64, now: i64) u32 {
     const spec = cron.parse(entry.cron) catch return 0;
     return cron.countBetween(spec, due, now - 1, entry.tz_offset_minutes, max_skipped_count);
 }

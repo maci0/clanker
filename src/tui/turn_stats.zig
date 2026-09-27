@@ -61,7 +61,7 @@ pub const TurnStats = struct {
 /// Completion tokens per second of wall time. Wall time, not model time: a
 /// turn that spent 40 seconds in tool calls really did produce its tokens
 /// that slowly from where the user is sitting.
-pub fn tokensPerSecond(completion_tokens: u64, wall_ms: u64) f64 {
+fn tokensPerSecond(completion_tokens: u64, wall_ms: u64) f64 {
     if (wall_ms == 0) return 0;
     return @as(f64, @floatFromInt(completion_tokens)) / (@as(f64, @floatFromInt(wall_ms)) / 1000.0);
 }
@@ -76,7 +76,7 @@ pub fn cacheHitRate(hit: u64, miss: u64) ?f64 {
 
 /// How much of the model's context window the conversation now occupies, or
 /// null when the window is unknown (nothing useful to be a percentage of).
-pub fn contextPercent(used: usize, window: u32) ?f64 {
+fn contextPercent(used: usize, window: u32) ?f64 {
     if (window == 0) return null;
     return @as(f64, @floatFromInt(used)) / @as(f64, @floatFromInt(window)) * 100.0;
 }
@@ -95,7 +95,7 @@ pub fn compactCount(buf: []u8, n: u64) []const u8 {
 /// Byte counts, in the units and rounding the web UI's `fmtBytes` uses
 /// (`ui/app/core/utils.js`), so "freed 48.2 KB" here and the size
 /// the browser shows for the same conversation are the same number.
-pub fn compactBytes(buf: []u8, n: usize) []const u8 {
+fn compactBytes(buf: []u8, n: usize) []const u8 {
     const f: f64 = @floatFromInt(n);
     if (n >= 1024 * 1024) return std.fmt.bufPrint(buf, "{d:.1} MB", .{f / (1024.0 * 1024.0)}) catch "?";
     if (n >= 1024) return std.fmt.bufPrint(buf, "{d:.0} KB", .{f / 1024.0}) catch "?";
@@ -105,7 +105,7 @@ pub fn compactBytes(buf: []u8, n: usize) []const u8 {
 /// Wall time at one significant unit: milliseconds under a second, seconds
 /// under a minute, then minutes and seconds. A turn is either quick enough to
 /// count in ms or long enough that the ms are noise.
-pub fn compactDuration(buf: []u8, ms: u64) []const u8 {
+fn compactDuration(buf: []u8, ms: u64) []const u8 {
     if (ms < 1000) return std.fmt.bufPrint(buf, "{d}ms", .{ms}) catch "?";
     if (ms < 60_000) return std.fmt.bufPrint(buf, "{d:.1}s", .{@as(f64, @floatFromInt(ms)) / 1000.0}) catch "?";
     return std.fmt.bufPrint(buf, "{d}m{d:0>2}s", .{ ms / 60_000, (ms % 60_000) / 1000 }) catch "?";
@@ -119,7 +119,7 @@ const dot = " \xc2\xb7 ";
 /// cache 82% · $0.0031 · ctx 12.1k/128k (9%)]`. Bracketed so it reads as
 /// harness metadata rather than model prose; errors use the CLI-compatible
 /// `error: ...` prefix instead.
-pub fn writeTurn(w: *std.Io.Writer, s: TurnStats) !void {
+fn writeTurn(w: *std.Io.Writer, s: TurnStats) !void {
     var num: [32]u8 = undefined;
     var num2: [32]u8 = undefined;
     try w.print("[turn: {d} in / {d} out", .{ s.prompt_tokens, s.completion_tokens });
@@ -162,7 +162,7 @@ pub const SessionStats = struct {
 };
 
 /// Writes `21 turns · 1588 steps | LLM 4m25s · Tool call 2m10s | TTFT avg 3.0s · 143 tok/s | Cache hit 100% | Input 1.0M tok · Output 1.6M tok`.
-pub fn writeSession(w: *std.Io.Writer, s: SessionStats) !void {
+fn writeSession(w: *std.Io.Writer, s: SessionStats) !void {
     if (s.empty()) return;
     var a: [32]u8 = undefined;
     var b: [32]u8 = undefined;

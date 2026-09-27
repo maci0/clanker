@@ -27,7 +27,7 @@ pub const Next = enum { done, headless };
 
 /// Hang / missing ACP / refused capability / handshake failure all take the
 /// headless path. Success is done. Not "headless or an error".
-pub fn afterAcp(outcome: AcpOutcome) Next {
+fn afterAcp(outcome: AcpOutcome) Next {
     return switch (outcome) {
         .success => .done,
         .hang, .handshake_failed, .missing, .capability_refused => .headless,
@@ -264,7 +264,7 @@ fn persistGraph(
 /// Map ACP-shaped updates onto existing NodeKind values. This is the one
 /// builder for the ACP success path: runAcp calls it, so the tests below
 /// exercise the same code production runs.
-pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []const acp_client.Update, answer: []const u8, stop_reason: []const u8) !void {
+fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []const acp_client.Update, answer: []const u8, stop_reason: []const u8) !void {
     var iteration: u32 = 0;
     for (updates) |u| {
         iteration += 1;
@@ -298,7 +298,7 @@ pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []
 
 /// The degraded pair a headless fallback writes: the child's exit status is
 /// what lands in `ok`, not a constant.
-pub fn nodesFromHeadless(gpa: std.mem.Allocator, g: *graph_mod.Graph, stdout: []const u8, term_ok: bool) !void {
+fn nodesFromHeadless(gpa: std.mem.Allocator, g: *graph_mod.Graph, stdout: []const u8, term_ok: bool) !void {
     try g.add(gpa, .{
         .kind = .llm,
         .iteration = 1,

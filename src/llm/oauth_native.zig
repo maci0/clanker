@@ -72,7 +72,7 @@ pub fn authorizationUrl(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, pkc
     return std.fmt.allocPrint(alloc, "{s}?{s}", .{ plugin.authorize_url, query.items });
 }
 
-pub fn refreshBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, refresh_token: []const u8) ![]const u8 {
+fn refreshBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, refresh_token: []const u8) ![]const u8 {
     if (refresh_token.len == 0) return error.MissingRefreshToken;
     var body: std.ArrayList(u8) = .empty;
     try appendFormField(&body, alloc, "grant_type", "refresh_token");
@@ -81,7 +81,7 @@ pub fn refreshBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, refresh_
     return body.toOwnedSlice(alloc);
 }
 
-pub fn codeExchangeBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, code: []const u8, verifier: []const u8) ![]const u8 {
+fn codeExchangeBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, code: []const u8, verifier: []const u8) ![]const u8 {
     var body: std.ArrayList(u8) = .empty;
     try appendFormField(&body, alloc, "grant_type", "authorization_code");
     try appendFormField(&body, alloc, "client_id", plugin.client_id);
@@ -102,7 +102,7 @@ fn exchangeRequestBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, code
     return std.fmt.allocPrint(alloc, "{{\"grant_type\":\"authorization_code\",\"client_id\":{f},\"code\":{f},\"redirect_uri\":{f},\"code_verifier\":{f},\"state\":{f}}}", .{ std.json.fmt(plugin.client_id, .{}), std.json.fmt(code, .{}), std.json.fmt(plugin.redirect_uri, .{}), std.json.fmt(verifier, .{}), std.json.fmt(state, .{}) });
 }
 
-pub fn tokenRecord(alloc: std.mem.Allocator, raw: []const u8, previous_refresh: []const u8, now_ms: i64) !store.Record {
+fn tokenRecord(alloc: std.mem.Allocator, raw: []const u8, previous_refresh: []const u8, now_ms: i64) !store.Record {
     const root = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .allocate = .alloc_always });
     if (root != .object) return error.BadTokenResponse;
     const access = jsonString(root.object.get("access_token")) orelse return error.BadTokenResponse;
@@ -248,7 +248,7 @@ pub const CodexDeviceAuthorization = struct {
 
 pub const CodexGrant = struct { code: []const u8, verifier: []const u8 };
 
-pub fn parseDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8) !DeviceAuthorization {
+fn parseDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8) !DeviceAuthorization {
     const root = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .allocate = .alloc_always });
     if (root != .object) return error.BadDeviceResponse;
     const device_code = jsonString(root.object.get("device_code")) orelse return error.BadDeviceResponse;
@@ -266,7 +266,7 @@ pub fn parseDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8) !Devi
     };
 }
 
-pub fn parseCodexDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8, fallback_uri: []const u8) !CodexDeviceAuthorization {
+fn parseCodexDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8, fallback_uri: []const u8) !CodexDeviceAuthorization {
     const root = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .allocate = .alloc_always });
     if (root != .object) return error.BadDeviceResponse;
     return .{
@@ -277,7 +277,7 @@ pub fn parseCodexDeviceAuthorization(alloc: std.mem.Allocator, raw: []const u8, 
     };
 }
 
-pub fn parseCodexGrant(alloc: std.mem.Allocator, raw: []const u8) !CodexGrant {
+fn parseCodexGrant(alloc: std.mem.Allocator, raw: []const u8) !CodexGrant {
     const root = try std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .allocate = .alloc_always });
     if (root != .object) return error.BadDeviceResponse;
     return .{
@@ -286,7 +286,7 @@ pub fn parseCodexGrant(alloc: std.mem.Allocator, raw: []const u8) !CodexGrant {
     };
 }
 
-pub fn deviceCodeBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin) ![]const u8 {
+fn deviceCodeBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin) ![]const u8 {
     var scopes: std.ArrayList(u8) = .empty;
     try appendScopes(&scopes, alloc, plugin.scopes);
     var body: std.ArrayList(u8) = .empty;
@@ -295,7 +295,7 @@ pub fn deviceCodeBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin) ![]co
     return body.toOwnedSlice(alloc);
 }
 
-pub fn devicePollBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, device_code: []const u8) ![]const u8 {
+fn devicePollBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, device_code: []const u8) ![]const u8 {
     var body: std.ArrayList(u8) = .empty;
     try appendFormField(&body, alloc, "grant_type", "urn:ietf:params:oauth:grant-type:device_code");
     try appendFormField(&body, alloc, "client_id", plugin.client_id);
@@ -305,7 +305,7 @@ pub fn devicePollBody(alloc: std.mem.Allocator, plugin: plugin_api.Plugin, devic
 
 pub const PollError = enum { pending, slow_down, expired, denied, rejected };
 
-pub fn parsePollError(alloc: std.mem.Allocator, raw: []const u8) PollError {
+fn parsePollError(alloc: std.mem.Allocator, raw: []const u8) PollError {
     const root = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .allocate = .alloc_always }) catch return .rejected;
     if (root != .object) return .rejected;
     const name = jsonString(root.object.get("error")) orelse return .rejected;

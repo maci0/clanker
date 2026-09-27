@@ -18,7 +18,7 @@ var buckets: std.array_hash_map.String(std.ArrayList(i64)) = .empty;
 /// How long to sleep before the next send is allowed. `0` means go now.
 /// `stamps` is oldest-first and may still contain entries older than the
 /// window; those are ignored, not required to be pruned first.
-pub fn waitNs(now_ns: i64, stamps: []const i64, rpm: u32) u64 {
+fn waitNs(now_ns: i64, stamps: []const i64, rpm: u32) u64 {
     if (rpm == 0) return 0;
     const cutoff = now_ns - window_ns;
     var first: usize = 0;
@@ -81,7 +81,7 @@ fn waitKey(io: std.Io, gpa: std.mem.Allocator, key: []const u8, rpm: u32) !void 
 /// name, so every alias of one SKU (`grok4.6-coding` / `grok4.6-general`,
 /// both `id = "grok-4.6"`) draws from the same budget — the upstream limit
 /// is on the SKU, whatever the config calls it locally.
-pub fn modelKey(buf: []u8, provider: *const config.Provider) ![]const u8 {
+fn modelKey(buf: []u8, provider: *const config.Provider) ![]const u8 {
     return std.fmt.bufPrint(buf, "m:{s}/{s}", .{ provider.name, provider.wireModelName() }) catch
         error.RateLimitKeyTooLong;
 }

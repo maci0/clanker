@@ -19,7 +19,7 @@ pub fn load(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Enviro
     loadFromDir(io, gpa, environ_map, std.Io.Dir.cwd());
 }
 
-pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Environ.Map, base: std.Io.Dir) void {
+fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Environ.Map, base: std.Io.Dir) void {
     const path: ?[]const u8 = if (environ_map.get("CLANKER_ENV_FILE")) |p| (if (p.len > 0) p else null) else null;
 
     const data = if (path) |p|

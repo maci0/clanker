@@ -135,7 +135,7 @@ pub fn unusableReason(
 /// providers, so without the probe a stopped vllm/ollama still lists.
 pub const LoopbackEndpoint = struct { port: u16 };
 
-pub fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
+fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
     const rest = if (std.mem.find(u8, base_url, "://")) |i| base_url[i + 3 ..] else base_url;
     var host_end: usize = rest.len;
     for (rest, 0..) |c, i| {
@@ -159,7 +159,7 @@ pub fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
 /// endpoint over a network. Errors other than an outright refusal keep the
 /// provider listed: the probe exists to drop what is provably not running,
 /// never to hide what it cannot judge.
-pub fn loopbackAlive(io: std.Io, port: u16) bool {
+fn loopbackAlive(io: std.Io, port: u16) bool {
     const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch return true;
     // Retry once on refusal: a local server restarting after a crash (the
     // common transient failure for ollama/vllm) answers within a second or

@@ -222,7 +222,7 @@ fn activeLocked() usize {
 /// Live-job count for admission checks made before the caller has spawned
 /// anything worth unwinding (the background-subagent thread). The
 /// authoritative check runs again under `mu` in `startExec`/`registerSub`.
-pub fn activeJobCount() usize {
+fn activeJobCount() usize {
     mu.lock();
     defer mu.unlock();
     return activeLocked();

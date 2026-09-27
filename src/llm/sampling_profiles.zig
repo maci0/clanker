@@ -22,7 +22,7 @@ pub fn hasThinking(caps: []const []const u8) bool {
     return false;
 }
 
-pub fn useCase(tools: ?[]const types.ToolDef) UseCase {
+fn useCase(tools: ?[]const types.ToolDef) UseCase {
     return if (tools != null and tools.?.len > 0) .tool_use else .chat;
 }
 

@@ -92,7 +92,7 @@ fn inRanges(cp: u21, ranges: []const [2]u21) bool {
 }
 
 /// Display width of one codepoint: 0, 1, or 2 terminal columns.
-pub fn codepointWidth(cp: u21) u2 {
+fn codepointWidth(cp: u21) u2 {
     if (cp == 0) return 0;
     if (cp < 0x20 or (cp >= 0x7F and cp < 0xA0)) return 0; // C0/C1 controls
     if (inRanges(cp, &zero_width_ranges)) return 0;

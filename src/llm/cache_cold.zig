@@ -12,7 +12,7 @@ const std = @import("std");
 pub const default_ttl_ms: u64 = 300_000;
 
 /// True when there is no prior success, or idle time is at least `ttl_ms`.
-pub fn isCold(last_ok_ms: u64, now_ms: u64, ttl_ms: u64) bool {
+fn isCold(last_ok_ms: u64, now_ms: u64, ttl_ms: u64) bool {
     if (last_ok_ms == 0) return true;
     if (now_ms < last_ok_ms) return false;
     return now_ms - last_ok_ms >= ttl_ms;
@@ -27,12 +27,12 @@ pub fn shouldWarn(last_ok_ms: u64, now_ms: u64, ttl_ms: u64) bool {
 }
 
 /// Warm was expected and the provider reported no cache hit.
-pub fn unexpectedMiss(expected_warm: bool, cache_hit: u32) bool {
+fn unexpectedMiss(expected_warm: bool, cache_hit: u32) bool {
     return expected_warm and cache_hit == 0;
 }
 
 /// Usage carries cache accounting when the provider reported a hit or a miss.
-pub fn hasCacheAccounting(cache_hit: u32, cache_miss: u32) bool {
+fn hasCacheAccounting(cache_hit: u32, cache_miss: u32) bool {
     return cache_hit > 0 or cache_miss > 0;
 }
 

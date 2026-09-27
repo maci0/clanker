@@ -64,7 +64,7 @@ fn backfillFailed(comptime stage: []const u8, owner: []const u8, peer: []const u
 
 /// Opens (creating if needed) the replica database for `owner`'s session
 /// `<id>`, with the append-only events table.
-pub fn replicaStore(io: std.Io, arena: std.mem.Allocator, owner: []const u8, id: []const u8) !session_events.Store {
+fn replicaStore(io: std.Io, arena: std.mem.Allocator, owner: []const u8, id: []const u8) !session_events.Store {
     const rel = try std.fmt.allocPrint(arena, "{s}/{s}/sessions/{s}.db", .{ replica_root, owner, id });
     const path = try arena.dupeZ(u8, rel);
     // SQLite cannot create parent directories; the whole replica tree must
@@ -522,7 +522,7 @@ const TranscriptResponse = struct {
 /// only means resume happens from an older snapshot, so every one of them is
 /// counted and named rather than dropped, or a replica silently resumes from
 /// a stale conversation with no record of why.
-pub fn pullTranscript(
+fn pullTranscript(
     io: std.Io,
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,

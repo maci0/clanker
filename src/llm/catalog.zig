@@ -102,7 +102,7 @@ fn firstEnv(obj: std.json.ObjectMap) []const u8 {
 }
 
 /// Classify one models.dev provider object (`npm`, `api`, `env`).
-pub fn classifyEntry(entry: std.json.Value) ?Support {
+fn classifyEntry(entry: std.json.Value) ?Support {
     if (entry != .object) return null;
     const npm = fieldStr(entry.object, "npm") orelse return null;
     const api = fieldStr(entry.object, "api") orelse "";
@@ -133,7 +133,7 @@ pub const SearchHit = struct {
     capabilities: []const []const u8 = &.{},
 };
 
-pub fn queryMatches(query: []const u8, provider_id: []const u8, model_id: []const u8, family: []const u8) bool {
+fn queryMatches(query: []const u8, provider_id: []const u8, model_id: []const u8, family: []const u8) bool {
     if (query.len == 0) return false;
     return std.ascii.findIgnoreCase(provider_id, query) != null or
         std.ascii.findIgnoreCase(model_id, query) != null or

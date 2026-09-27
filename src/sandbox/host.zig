@@ -533,7 +533,7 @@ fn isBoardTool(name: []const u8) bool {
 /// Adds `"room": "ws:<id>"` to a board tool's descriptor config so board.zig
 /// picks the project's `#general` room when the caller does not name one. The
 /// descriptor's own keys (the pinned `op`) are kept; only `room` is overridden.
-pub fn boardConfig(
+fn boardConfig(
     arena: std.mem.Allocator,
     tool_config: []const u8,
     workspace_id: []const u8,
@@ -554,7 +554,7 @@ pub fn boardConfig(
 /// policy for exec-capable tools, the project board room for the kanban tools,
 /// and the descriptor's own config otherwise. One function so the sequential
 /// sandbox and the parallel worker inject the same thing.
-pub fn toolConfigFor(
+fn toolConfigFor(
     arena: std.mem.Allocator,
     tool: *const registry.Tool,
     cfg: *const config_mod.Config,
@@ -4715,7 +4715,7 @@ fn stateWritePermissions(state_dir: []const u8, rel: []const u8) std.Io.File.Per
 /// in parallel here, so two of them appending to one file both read the same
 /// end and the second write lands on top of the first. The lock makes the pair
 /// atomic between cooperating writers.
-pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8, permissions: std.Io.File.Permissions) u32 {
+fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8, permissions: std.Io.File.Permissions) u32 {
     // Through the retrying create: racing creates of a not-yet-existing log
     // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
     // silently dropped the append (file_lock.createFileRetry has the story).
@@ -5429,7 +5429,7 @@ const shell_op_deny_tokens = [_][]const u8{ "&&", "||", ";", ">", "<", "`" };
 /// Returns null (falls back to the bare name) if `cmd` already looks like a
 /// path, PATH is unset, or nothing on it matches, never a hard failure, so
 /// exec_allow commands that behave fine today keep behaving the same way.
-pub fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
+fn resolveExecPath(gpa: std.mem.Allocator, io: std.Io, environ_map: *std.process.Environ.Map, cmd: []const u8) ?[]u8 {
     if (std.mem.findScalar(u8, cmd, '/') != null) return null;
     const path_val = environ_map.get("PATH") orelse return null;
     var it = std.mem.splitScalar(u8, path_val, ':');
@@ -5490,7 +5490,7 @@ pub const ExecDenial = union(enum) {
 /// (`src/tui/repl.zig`): a line typed at the prompt is refused by
 /// exactly the rules that refuse a tool, rather than by a second, drifting
 /// copy of them.
-pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?ExecDenial {
+fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?ExecDenial {
     // exec_pattern_allow decides whether the deny list even applies. A command
     // with a pattern is strict: only an argv matching one of its patterns runs,
     // and a match also overrides the deny tokens for the args it grants. A

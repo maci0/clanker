@@ -31,7 +31,7 @@ pub fn spawn(
     return spawnArgv(io, gpa, arena, argv, cwd);
 }
 
-pub fn spawnArgv(
+fn spawnArgv(
     io: std.Io,
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,

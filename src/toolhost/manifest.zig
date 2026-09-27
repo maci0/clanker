@@ -475,7 +475,7 @@ fn prefixOf(name: []const u8) []const u8 {
     return name;
 }
 
-pub fn isKnownCategory(name: []const u8) bool {
+fn isKnownCategory(name: []const u8) bool {
     for (categories) |c| {
         if (std.mem.eql(u8, c, name)) return true;
     }

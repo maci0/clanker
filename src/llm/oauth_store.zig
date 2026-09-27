@@ -22,7 +22,7 @@ pub const Record = struct {
     }
 };
 
-pub fn validProviderName(name: []const u8) bool {
+fn validProviderName(name: []const u8) bool {
     if (name.len == 0 or name.len > 64) return false;
     for (name) |c| if (!(std.ascii.isLower(c) or std.ascii.isDigit(c) or c == '-' or c == '_')) return false;
     return true;

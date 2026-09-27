@@ -77,7 +77,7 @@ pub fn validName(name: []const u8) bool {
 
 /// A root name is either empty (the single unnamed root) or a short component
 /// label with the same separators forbidden as a workspace id.
-pub fn validRootName(name: []const u8) bool {
+fn validRootName(name: []const u8) bool {
     if (name.len == 0) return true;
     if (name.len > max_name_len) return false;
     if (!std.unicode.utf8ValidateSlice(name)) return false;
@@ -88,7 +88,7 @@ pub fn validRootName(name: []const u8) bool {
     return true;
 }
 
-pub fn validPath(path: []const u8) bool {
+fn validPath(path: []const u8) bool {
     if (path.len == 0 or path.len > max_path_bytes) return false;
     return std.mem.findScalar(u8, path, 0) == null;
 }
@@ -100,7 +100,7 @@ pub fn find(list: []const Workspace, id: []const u8) ?*const Workspace {
     return null;
 }
 
-pub fn findMut(list: []Workspace, id: []const u8) ?*Workspace {
+fn findMut(list: []Workspace, id: []const u8) ?*Workspace {
     for (list) |*w| {
         if (std.mem.eql(u8, w.id, id)) return w;
     }
@@ -215,7 +215,7 @@ pub fn save(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, list: []cons
 }
 
 /// Turns a typed path into an absolute real path that names a directory.
-pub fn resolveDir(io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
+fn resolveDir(io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (!validPath(path)) return Error.BadPath;
     const abs = std.Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch return Error.NotADirectory;
     if (!std.unicode.utf8ValidateSlice(abs)) return Error.BadPath;

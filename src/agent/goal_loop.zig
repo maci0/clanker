@@ -144,7 +144,7 @@ pub fn run(
 /// The prompt after a turn that errored instead of answering. The work may be
 /// partially done (tools ran before the failure), so the next turn is told to
 /// re-check state before redoing anything rather than assume a clean slate.
-pub fn failedTurnTask(alloc: std.mem.Allocator, condition: []const u8, next_turn: u32, err_name: []const u8) ![]const u8 {
+fn failedTurnTask(alloc: std.mem.Allocator, condition: []const u8, next_turn: u32, err_name: []const u8) ![]const u8 {
     return std.fmt.allocPrint(
         alloc,
         "Goal-loop turn {d}. The previous turn failed with error {s} before producing an answer; its work may be partially done. Re-check the current state before redoing anything, then continue toward the completion condition.\n\nCompletion condition:\n{s}",
@@ -172,7 +172,7 @@ fn escapeEvidence(alloc: std.mem.Allocator, text: []const u8) ![]const u8 {
 /// The prompt for the follow-up agent turn. It names the evaluator's reason
 /// as evidence, not an instruction source, so a bad prior answer cannot turn
 /// into a new operating policy merely by being quoted back to the agent.
-pub fn continuationTask(alloc: std.mem.Allocator, condition: []const u8, next_turn: u32, reason: []const u8) ![]const u8 {
+fn continuationTask(alloc: std.mem.Allocator, condition: []const u8, next_turn: u32, reason: []const u8) ![]const u8 {
     const capped = utf8.cap(reason, evaluator_reason_cap);
     const clip_note: []const u8 = if (capped.len < reason.len) "\n[evaluator reason truncated for length]" else "";
     const escaped = try escapeEvidence(alloc, capped);

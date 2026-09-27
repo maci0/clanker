@@ -1634,7 +1634,7 @@ pub fn printUsageHint(io: std.Io) void {
 /// the first argv token, so aliases resolve through the same table as
 /// `clanker help <name>`; flags and unknown spellings fall back to the full
 /// command list.
-pub fn renderUsageHintFor(buf: []u8, name: []const u8) []const u8 {
+fn renderUsageHintFor(buf: []u8, name: []const u8) []const u8 {
     const cmd = commandForHelp(name) orelse return "Run `clanker --help` for the command list.\n";
     const spec = specFor(cmd) orelse return "Run `clanker --help` for the command list.\n";
     const end = std.mem.findAny(u8, spec.usage, " [") orelse spec.usage.len;
@@ -1709,7 +1709,7 @@ pub fn printUsageError(io: std.Io, comptime fmt: []const u8, args: anytype) void
 /// Returns the closest public command spelling for a short mistyped token.
 /// Keeping this beside the generated help table means suggestions cannot
 /// drift toward internal enum names or compatibility aliases.
-pub fn suggestCommand(input: []const u8) ?[]const u8 {
+fn suggestCommand(input: []const u8) ?[]const u8 {
     if (input.len == 0 or input.len > 32) return null;
     var best: ?[]const u8 = null;
     var best_distance: usize = 3;
@@ -1730,7 +1730,7 @@ pub fn suggestCommand(input: []const u8) ?[]const u8 {
 /// deferred verdict (`clanker <typo>`), where no installed plugin claimed
 /// the name. `hint` says whether the usage hint should follow the line:
 /// once a did-you-mean names the next keystroke, the hint only restates it.
-pub fn formatUnknownCommand(buf: []u8, name: []const u8) struct { line: []const u8, hint: bool } {
+fn formatUnknownCommand(buf: []u8, name: []const u8) struct { line: []const u8, hint: bool } {
     if (suggestCommand(name)) |suggestion| {
         if (std.fmt.bufPrint(buf, "unknown command '{s}'; did you mean `clanker {s}`?", .{ name, suggestion })) |line| {
             return .{ .line = line, .hint = false };

@@ -84,7 +84,7 @@ pub fn capBuildCache(
 
 /// A path is a build cache when its last component is `.zig-cache` and it
 /// contains no traversal.
-pub fn isBuildCachePath(rel: []const u8) bool {
+fn isBuildCachePath(rel: []const u8) bool {
     if (rel.len == 0) return false;
     if (std.mem.find(u8, rel, "..") != null) return false;
     if (rel[0] == '/') return false;

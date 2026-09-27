@@ -595,7 +595,7 @@ pub fn titleFromTask(out: []u8, task: []const u8) []const u8 {
 
 /// A renamed title, a fork/branch label, or an already-short summary stays.
 /// Long auto prefixes (the old first-60-chars titles) are replaced.
-pub fn keepTitle(existing: []const u8) bool {
+fn keepTitle(existing: []const u8) bool {
     const t = std.mem.trim(u8, existing, " \t\r\n");
     if (t.len == 0) return false;
     if (std.mem.startsWith(u8, t, "fork of ") or std.mem.startsWith(u8, t, "branch of ")) return true;
@@ -844,7 +844,7 @@ fn rawMayContainQuery(raw: []const u8, query: []const u8) bool {
 /// The text around `at`, trimmed to a word boundary where one is close, with
 /// ellipses marking each end that was cut. Newlines and tabs collapse to
 /// spaces so a hit renders as one line whatever the message looked like.
-pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, match_len: usize) []const u8 {
+fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, match_len: usize) []const u8 {
     const start_raw = if (at > snippet_radius) at - snippet_radius else 0;
     const end_raw = @min(text.len, at + match_len + snippet_radius);
     // Never cut inside the match itself while hunting for a space.

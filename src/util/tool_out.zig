@@ -14,7 +14,7 @@ const std = @import("std");
 const log = @import("log.zig");
 
 /// True when `out` opens like JSON and does not parse.
-pub fn looksLikeBrokenJson(allocator: std.mem.Allocator, out: []const u8) bool {
+fn looksLikeBrokenJson(allocator: std.mem.Allocator, out: []const u8) bool {
     const text = std.mem.trimStart(u8, out, " \t\r\n");
     if (text.len == 0) return false;
     if (text[0] != '{' and text[0] != '[') return false;

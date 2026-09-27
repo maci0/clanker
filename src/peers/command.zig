@@ -39,7 +39,7 @@ pub fn controlHost(bind_host: []const u8) []const u8 {
     return bind_host;
 }
 
-pub fn controlUrl(arena: std.mem.Allocator, host: []const u8, port: u16, path: []const u8) ![]const u8 {
+fn controlUrl(arena: std.mem.Allocator, host: []const u8, port: u16, path: []const u8) ![]const u8 {
     const h = controlHost(host);
     if (std.mem.findScalar(u8, h, ':') != null)
         return std.fmt.allocPrint(arena, "http://[{s}]:{d}{s}", .{ h, port, path });
@@ -189,7 +189,7 @@ fn jsonError(arena: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     return if (err == .string) err.string else null;
 }
 
-pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const u8 {
+fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     const listening = if (obj.get("listening")) |v| (v == .bool and v.bool) else false;
     const listen = json_util.strFieldOrEmpty(obj, "listen");
@@ -219,7 +219,7 @@ pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const 
     return out.toOwnedSlice();
 }
 
-pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const u8 {
+fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     const rows = if (obj.get("pending")) |v| (if (v == .array) v.array.items else &.{}) else &.{};
     if (rows.len == 0) {

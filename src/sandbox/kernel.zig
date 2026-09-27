@@ -157,7 +157,7 @@ pub const Response = struct {
     sandboxed: bool = true,
 };
 
-pub fn encodeRequest(arena: std.mem.Allocator, req: Request) ![]u8 {
+fn encodeRequest(arena: std.mem.Allocator, req: Request) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     try s.beginObject();

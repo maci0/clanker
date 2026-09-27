@@ -53,7 +53,7 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, _: bool) anyer
 /// An OAuth access token is not an API key: `/v1/messages` rejects it on
 /// `x-api-key`. It authenticates as `Authorization: Bearer` and additionally
 /// requires the oauth beta header.
-pub fn isOauthToken(key: []const u8) bool {
+fn isOauthToken(key: []const u8) bool {
     return std.mem.startsWith(u8, key, oauth_token_prefix);
 }
 

@@ -49,7 +49,7 @@ pub fn loadEnabled(
 
 /// The parsed enabled-list, or null when the bytes are not the state file's
 /// shape. Split from `loadEnabled` so the corrupt-file fallback is testable.
-pub fn parseEnabled(arena: std.mem.Allocator, raw: []const u8) ?[]const []const u8 {
+fn parseEnabled(arena: std.mem.Allocator, raw: []const u8) ?[]const []const u8 {
     const st = std.json.parseFromSliceLeaky(EnabledState, arena, raw, .{ .ignore_unknown_fields = true }) catch return null;
     return st.enabled;
 }

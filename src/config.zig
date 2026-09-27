@@ -20,6 +20,7 @@ const atomic_write = @import("util/atomic_write.zig");
 const utf8 = @import("util/utf8.zig");
 const models_dev = @import("llm/models_dev.zig");
 const llm_registry = @import("llm/registry.zig");
+const acp_vendor = @import("acp/vendor.zig");
 const test_env = @import("util/test_env.zig");
 
 /// A schema failure is reported before it reaches the command dispatcher.
@@ -2951,8 +2952,12 @@ pub const Config = struct {
         }
         if (obj.get("backend")) |k| {
             const s = try jsonStr(k, "backend");
-            if (s.len > 0 and std.meta.stringToEnum(enum { grok, claude, codex }, s) == null) {
-                cfgLog(.error_, "agent: backend \"{s}\" is not one of \"grok\", \"claude\", \"codex\"", .{s});
+            // The name set is `acp_vendor.Name`, not a literal spelled again
+            // here: a second copy of the closed set drifts the moment a
+            // backend lands.
+            if (s.len > 0 and acp_vendor.Name.parse(s) == null) {
+                const known = comptime enumSpellingList(acp_vendor.Name, true);
+                cfgLog(.error_, "agent: backend \"{s}\" is not one of {s}", .{ s, known });
                 return error.UnknownBackend;
             }
             a.backend = s;
@@ -5805,6 +5810,16 @@ test "agent.backend accepts grok/claude/codex and refuses unknown names" {
         ,
     });
     try std.testing.expectError(error.UnknownBackend, Config.load(io, arena, tmp2.dir, "config.toml", "config.local.toml"));
+}
+
+test "agent.backend accepts exactly the acp_vendor.Name set" {
+    // The parser and the refusal message read the same enum, so a backend
+    // added to `acp_vendor.Name` is accepted here with no second edit.
+    for (std.enums.values(acp_vendor.Name)) |n| {
+        try std.testing.expectEqual(n, acp_vendor.Name.parse(n.cliName()).?);
+        try std.testing.expect(std.mem.indexOf(u8, comptime enumSpellingList(acp_vendor.Name, true), n.cliName()) != null);
+    }
+    try std.testing.expect(acp_vendor.Name.parse("openai") == null);
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {

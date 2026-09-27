@@ -86,7 +86,7 @@ pub const Change = struct {
 /// only looks like code. `src/improve/engine.zig` holds the improve prompt as
 /// a multiline string containing `"changes": [` and a literal `{`; counted as
 /// code, those braces close a block that was never opened.
-pub fn blankNonCode(gpa: std.mem.Allocator, src: []const u8) ![]u8 {
+fn blankNonCode(gpa: std.mem.Allocator, src: []const u8) ![]u8 {
     const out = try gpa.alloc(u8, src.len);
     @memcpy(out, src);
 
@@ -158,7 +158,7 @@ pub const Span = struct { start: usize, end: usize };
 ///
 /// Takes text already run through `blankNonCode`, so a brace inside a string
 /// cannot close a block and the word `test` inside a comment cannot open one.
-pub fn testSpans(gpa: std.mem.Allocator, code: []const u8) ![]Span {
+fn testSpans(gpa: std.mem.Allocator, code: []const u8) ![]Span {
     var out: std.ArrayList(Span) = .empty;
     errdefer out.deinit(gpa);
 
@@ -208,7 +208,7 @@ fn matchBrace(code: []const u8, open: usize) ?usize {
 
 /// The code with every `test` block removed, so what is left is the part that
 /// decides how the program behaves.
-pub fn nonTestCode(gpa: std.mem.Allocator, src: []const u8) ![]u8 {
+fn nonTestCode(gpa: std.mem.Allocator, src: []const u8) ![]u8 {
     const code = try blankNonCode(gpa, src);
     defer gpa.free(code);
     const spans = try testSpans(gpa, code);

@@ -180,7 +180,7 @@ pub fn logPanic(msg: []const u8) void {
 /// `logPanic`'s body with the destination named, so a test can capture the
 /// bytes off a pipe and prove they came from the raw write rather than from
 /// `std.Io`.
-pub fn writePanicLine(fd: std.posix.fd_t, msg: []const u8) void {
+fn writePanicLine(fd: std.posix.fd_t, msg: []const u8) void {
     var buf: [record_buf_bytes]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("[ERROR] ts_ms={d}", .{unixMilliseconds()}) catch {};

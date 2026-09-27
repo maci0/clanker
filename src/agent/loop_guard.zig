@@ -38,7 +38,7 @@ pub const LoopGuard = struct {
     }
 };
 
-pub fn canonicalize(arena: std.mem.Allocator, raw: []const u8) ![]const u8 {
+fn canonicalize(arena: std.mem.Allocator, raw: []const u8) ![]const u8 {
     const value = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{});
     var out: std.Io.Writer.Allocating = .init(arena);
     var stringify = std.json.Stringify{ .writer = &out.writer, .options = .{} };

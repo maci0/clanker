@@ -33,7 +33,7 @@ pub const Classification = struct {
 var no_provider_warned = std.atomic.Value(bool).init(false);
 
 /// Cheapest configured provider by `cost_per_1m_input`, then first name.
-pub fn cheapestProvider(cfg: *const config.Config) ?*const config.Provider {
+fn cheapestProvider(cfg: *const config.Config) ?*const config.Provider {
     var best: ?*const config.Provider = null;
     var best_cost: f64 = std.math.inf(f64);
     var best_name: []const u8 = "";

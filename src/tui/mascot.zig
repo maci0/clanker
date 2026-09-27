@@ -583,7 +583,7 @@ pub const State = struct {
 /// Wraps through `[-cols, width)`, so the robot walks fully on from the left
 /// edge and fully off the right before reappearing rather than popping in and
 /// out at the boundaries.
-pub fn loopColumn(v: Variant, travel: u32, width: u16) i32 {
+fn loopColumn(v: Variant, travel: u32, width: u16) i32 {
     const span: u32 = @as(u32, width) + v.cols;
     return @as(i32, @intCast(travel % span)) - @as(i32, v.cols);
 }
@@ -592,7 +592,7 @@ pub fn loopColumn(v: Variant, travel: u32, width: u16) i32 {
 /// is longer than the space available. Clamped rather than wrapped: a long
 /// task should leave the robot waiting at the edge, not teleporting back to
 /// the start mid-sentence.
-pub fn typeColumn(v: Variant, typed_len: usize, width: u16) i32 {
+fn typeColumn(v: Variant, typed_len: usize, width: u16) i32 {
     const limit: i32 = @as(i32, @intCast(width)) - @as(i32, v.cols);
     if (limit <= 0) return 0;
     const want: i32 = @intCast(@min(typed_len, @as(usize, @intCast(limit))));
@@ -630,7 +630,7 @@ pub fn fits(v: Variant, width: u16, avail_rows: u16) bool {
 ///
 /// `.input` is excluded on purpose: it grows the box instead of reserving
 /// transcript, so it has its own budget (see `inputBoxHeight`).
-pub fn minTerminal(v: Variant) struct { cols: u16, rows: u16 } {
+fn minTerminal(v: Variant) struct { cols: u16, rows: u16 } {
     // 1 status row + 3-row input box + 1 for the transcript's own top offset.
     const chrome: u16 = 5;
     return .{ .cols = v.cols + 2, .rows = v.rows + min_transcript_rows + chrome };
@@ -703,7 +703,7 @@ const lower_half = "\xe2\x96\x84"; // U+2584
 /// (`col0`, `row0`). Cells where both halves are transparent are left
 /// untouched, so whatever is underneath shows through around the robot instead
 /// of being boxed out by a rectangle of background.
-pub fn drawCells(
+fn drawCells(
     v: Variant,
     surface: vxfw.Surface,
     frame: u8,
@@ -754,7 +754,7 @@ pub fn drawCells(
 /// by hiding it, so the left-edge entry matches what the half-block path does.
 /// The clip rectangle is in *source png pixels*, not cells, and is applied
 /// before the row/col scaling.
-pub fn drawKitty(
+fn drawKitty(
     v: Variant,
     surface: vxfw.Surface,
     ids: [frame_count]u32,
@@ -787,7 +787,7 @@ pub fn drawKitty(
 /// A partly-off-screen robot is clipped in *raster pixels*, which is why the
 /// measured cell width is carried alongside the ids -- a column clip means
 /// nothing to a raster until it is multiplied out.
-pub fn drawSixel(
+fn drawSixel(
     v: Variant,
     surface: vxfw.Surface,
     s: Sixel,

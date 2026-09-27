@@ -393,7 +393,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// because only there can the id repeat. Wire-delivered messages keep going
 /// through `append` (and its dedup), because a redelivery can repeat an id
 /// another process appended.
-pub fn appendLocal(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
+fn appendLocal(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
     _ = try appendInner(base, io, gpa, arena, state_dir, cfg, msg, false);
 }
 
@@ -903,7 +903,7 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
 /// mint: 1..64 ASCII alphanumerics, dashes, or underscores, the same fragment
 /// rule session ids obey. `makeId` output is inside it; a caller's own id is
 /// refused before it can reach the log or a peer's dedup check.
-pub fn validMessageId(id: []const u8) bool {
+fn validMessageId(id: []const u8) bool {
     if (id.len == 0 or id.len > 64) return false;
     for (id) |c| {
         if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;

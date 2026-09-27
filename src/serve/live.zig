@@ -60,11 +60,11 @@ const Spin = struct {
 var mutex: Spin = .{};
 var slots: [max_subs]Slot = @splat(.{});
 
-pub fn topicBit(t: Topic) u8 {
+fn topicBit(t: Topic) u8 {
     return @as(u8, 1) << @intFromEnum(t);
 }
 
-pub fn allTopics() u8 {
+fn allTopics() u8 {
     return topicBit(.chat) | topicBit(.mesh) | topicBit(.arena) | topicBit(.run) | topicBit(.metrics) | topicBit(.plugin);
 }
 
@@ -77,7 +77,7 @@ pub fn topicsFromTarget(target: []const u8) []const u8 {
     return "";
 }
 
-pub fn parseTopics(s: []const u8) u8 {
+fn parseTopics(s: []const u8) u8 {
     if (s.len == 0) return allTopics();
     var mask: u8 = 0;
     var it = std.mem.splitScalar(u8, s, ',');
@@ -104,7 +104,7 @@ pub fn subscribe(mask: u8) ?usize {
     return null;
 }
 
-pub fn unsubscribe(id: usize) void {
+fn unsubscribe(id: usize) void {
     if (id >= max_subs) return;
     mutex.lock();
     defer mutex.unlock();
@@ -186,7 +186,7 @@ pub fn take(id: usize, buf: *[event_cap]u8) ?Taken {
 }
 
 /// `event: live\ndata: <json>\n\n`
-pub fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
+fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
     const prefix = "event: live\ndata: ";
     const suffix = "\n\n";
     if (out.len < prefix.len + json.len + suffix.len) return null;
@@ -242,7 +242,7 @@ pub fn noteMetrics(json: []const u8) void {
 /// Wrap a guest or UI-plugin payload as `{"t":"plugin","from":...,"data":...}`.
 /// `from` is JSON-stringified (so a quote in a tool name cannot break the
 /// frame); `data_json` is already a JSON value and is spliced in raw.
-pub fn pluginEvent(buf: []u8, from: []const u8, data_json: []const u8) ?[]const u8 {
+fn pluginEvent(buf: []u8, from: []const u8, data_json: []const u8) ?[]const u8 {
     if (from.len == 0 or data_json.len == 0) return null;
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll("{\"t\":\"plugin\",\"from\":") catch return null;

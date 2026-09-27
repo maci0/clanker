@@ -104,7 +104,7 @@ pub fn parseHeader(arena: std.mem.Allocator, payload: []const u8) !Header {
 }
 
 /// Major must match. Minor may advance; unknown optional fields are ignored.
-pub fn compatibleVersion(v: []const u8) bool {
+fn compatibleVersion(v: []const u8) bool {
     if (v.len == 0) return false;
     const dot = std.mem.findScalar(u8, v, '.') orelse return false;
     const major = v[0..dot];

@@ -160,7 +160,7 @@ fn nowNs(rt: *Runtime) i64 {
     return @intCast(std.Io.Timestamp.now(rt.io, .awake).nanoseconds);
 }
 
-pub fn pendingTimedOut(arrived_ns: i64, now_ns: i64, timeout_ns: i64) bool {
+fn pendingTimedOut(arrived_ns: i64, now_ns: i64, timeout_ns: i64) bool {
     return now_ns - arrived_ns >= timeout_ns;
 }
 
@@ -321,7 +321,7 @@ fn parseAddr(host: []const u8, port: u16) !std.Io.net.IpAddress {
     return std.Io.net.IpAddress.parseIp4(host, port);
 }
 
-pub fn parseHostPort(s: []const u8) !struct { host: []const u8, port: u16 } {
+fn parseHostPort(s: []const u8) !struct { host: []const u8, port: u16 } {
     if (s.len == 0) return error.BadAddress;
     if (s[0] == '[') {
         const end = std.mem.findScalar(u8, s, ']') orelse return error.BadAddress;

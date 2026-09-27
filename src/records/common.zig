@@ -708,7 +708,7 @@ pub fn renderStatusRows(
 /// Sort predicate over search matches: by their `file` field, then by
 /// `line`, so a record's hits render as one contiguous group whatever order
 /// the tool's grep walked the store in.
-pub fn matchBefore(_: void, a: std.json.Value, b: std.json.Value) bool {
+fn matchBefore(_: void, a: std.json.Value, b: std.json.Value) bool {
     const fa = if (a == .object) json_util.strFieldOrEmpty(a.object, "file") else "";
     const fb = if (b == .object) json_util.strFieldOrEmpty(b.object, "file") else "";
     switch (std.mem.order(u8, fa, fb)) {

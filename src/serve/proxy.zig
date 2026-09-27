@@ -176,7 +176,7 @@ pub fn tokenInEffect(serve: *const config.Serve, environ_map: *std.process.Envir
     return token(serve, environ_map) != null;
 }
 
-pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
+fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
     const rest = v1Rest(v1_path);
     if (anthropicOnly(rest)) return .anthropic;
     if (sharedPath(rest) and headerValue(headers_raw, "anthropic-version") != null) return .anthropic;
@@ -185,7 +185,7 @@ pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
 
 /// Protocol a provider kind speaks upstream. Read off the vtable so a new
 /// kind does not need a row here.
-pub fn upstreamFamily(kind: config.ProviderKind) Family {
+fn upstreamFamily(kind: config.ProviderKind) Family {
     return familyOfProxy(providers.forKind(kind).proxy.family);
 }
 
@@ -196,7 +196,7 @@ fn familyOfProxy(f: providers.api.ProxyFamily) Family {
     };
 }
 
-pub fn joinUpstream(gpa: std.mem.Allocator, base_url: []const u8, inbound_v1_path: []const u8, query: []const u8) ![]u8 {
+fn joinUpstream(gpa: std.mem.Allocator, base_url: []const u8, inbound_v1_path: []const u8, query: []const u8) ![]u8 {
     const base = std.mem.trimEnd(u8, base_url, "/");
     const rest = if (std.mem.endsWith(u8, base, "/v1") and std.mem.startsWith(u8, inbound_v1_path, "/v1"))
         inbound_v1_path["/v1".len..]
@@ -233,7 +233,7 @@ pub fn lookup(cfg: *const config.Config, family: ?Family, model: ?[]const u8) Lo
     return uniqueProvider(cfg, family);
 }
 
-pub fn spliceModel(gpa: std.mem.Allocator, body: []const u8, new_id: []const u8) ![]u8 {
+fn spliceModel(gpa: std.mem.Allocator, body: []const u8, new_id: []const u8) ![]u8 {
     const span = findTopLevelStringField(body, "model") orelse return error.MissingModel;
     if (std.mem.eql(u8, span.value, new_id)) return gpa.dupe(u8, body);
     var out: std.ArrayList(u8) = .empty;

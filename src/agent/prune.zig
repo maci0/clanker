@@ -15,7 +15,7 @@ fn tailStart(content: []const u8, want: usize) usize {
     return start;
 }
 
-pub fn replacementLen(content: []const u8, threshold: usize, head_bytes: usize, tail_bytes: usize) ?usize {
+fn replacementLen(content: []const u8, threshold: usize, head_bytes: usize, tail_bytes: usize) ?usize {
     if (threshold == 0 or content.len <= threshold) return null;
     const head = utf8.cap(content, @min(head_bytes, content.len));
     const tail_start = tailStart(content, @min(tail_bytes, content.len - head.len));

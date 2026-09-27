@@ -78,7 +78,7 @@ pub const RsaKey = struct {
 /// Strips the PEM armor and pulls (n, d) out of a PKCS#8 RSA private key.
 /// Layout: PrivateKeyInfo { version, algorithm, privateKey OCTET STRING },
 /// whose contents are RSAPrivateKey { version, n, e, d, p, q, ... }.
-pub fn parsePkcs8(arena: std.mem.Allocator, pem: []const u8) Error!RsaKey {
+fn parsePkcs8(arena: std.mem.Allocator, pem: []const u8) Error!RsaKey {
     const body = try pemBody(arena, pem);
 
     const info = der.Element.parse(body, 0) catch return error.PrivateKeyMalformed;

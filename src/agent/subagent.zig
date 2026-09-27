@@ -21,7 +21,7 @@ const sub_max_iterations: u32 = 6;
 pub const Brief = host.Brief;
 
 /// Renders the brief and the task into the sub-agent's opening message.
-pub fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]const u8 {
+fn briefedTask(arena: std.mem.Allocator, task: []const u8, brief: Brief) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     if (brief.parent_task.len > 0) {
         try buf.appendSlice(arena, "You are a sub-agent. The work you are part of: ");

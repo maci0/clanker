@@ -1934,7 +1934,7 @@ fn scanSkillsDir(gpa: std.mem.Allocator, io: std.Io, scope: std.Io.Dir) !GateRes
 /// section is absent or opens with something else ("Resolved on <date>. …"
 /// and bare "Open." both parse). Null means skip: the gate compares only what
 /// it can parse, so legacy records without the section pass untouched.
-pub fn recordStatusWord(record: []const u8) ?[]const u8 {
+fn recordStatusWord(record: []const u8) ?[]const u8 {
     const marker = "\n## Status\n";
     const at = std.mem.find(u8, record, marker) orelse return null;
     var lines = std.mem.splitScalar(u8, record[at + marker.len ..], '\n');

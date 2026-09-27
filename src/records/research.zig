@@ -342,7 +342,7 @@ fn columnWidth(rows: []const std.json.Value, field: []const u8) usize {
 /// Everything the sweep gathered, one section per source, each hit with the
 /// URL to open it. The closing line is not decoration: these are strangers'
 /// words, and a terminal is where they are most easily mistaken for findings.
-pub fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8 {
+fn renderSweep(arena: std.mem.Allocator, result: std.json.Value) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
 
