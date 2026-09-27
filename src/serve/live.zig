@@ -489,6 +489,25 @@ test "pluginEvent wraps data and escapes from" {
 
 test "plugin payload bound is half an event so the envelope fits" {
     try std.testing.expectEqual(@as(usize, 4 * 1024), event_cap / 2);
+    // The half-event rule only earns its keep if a payload of exactly the cap
+    // still frames. pluginEvent splices `data_json` raw, so a run of filler is
+    // a valid worst case: the envelope is the constant overhead around it.
+    const payload_cap: usize = 4 * 1024;
+    const data = try std.testing.allocator.alloc(u8, event_cap);
+    defer std.testing.allocator.free(data);
+    @memset(data, 'a');
+
+    var buf: [event_cap]u8 = undefined;
+    const got = pluginEvent(&buf, "schedule", data[0..payload_cap]) orelse return error.EnvelopeOverflow;
+    try std.testing.expect(got.len <= buf.len);
+    const prefix = "{\"t\":\"plugin\",\"from\":\"schedule\",\"data\":";
+    try std.testing.expect(std.mem.startsWith(u8, got, prefix));
+    try std.testing.expectEqual(@as(u8, '}'), got[got.len - 1]);
+    try std.testing.expectEqualStrings("a" ** payload_cap, got[prefix.len .. got.len - 1]);
+
+    // Past the event's own room the fixed writer refuses rather than
+    // truncating: a half-written frame would hand a subscriber broken JSON.
+    try std.testing.expect(pluginEvent(&buf, "schedule", data) == null);
 }
 
 test "notePlugin publishes on the plugin topic" {

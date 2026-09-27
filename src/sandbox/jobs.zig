@@ -788,6 +788,20 @@ test "makeId is 16 hex and unique at the same timestamp" {
     }
 }
 
+test "startExec refuses an empty argv before spawning anything" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    // The documented refusal: no argv means no child, no registry row, and no
+    // waiter thread, so the table stays empty and a leak checker sees nothing.
+    try std.testing.expectError(error.InvalidArg, startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{}));
+    try std.testing.expectEqual(@as(usize, 0), reg.count());
+}
+
 test "startExec reaps true and wait returns exit 0" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -796,10 +810,7 @@ test "startExec reaps true and wait returns exit 0" {
     defer reg.deinit();
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
-    const id = startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{"true"}) catch |err| switch (err) {
-        error.InvalidArg => return error.SkipZigTest,
-        else => return err,
-    };
+    const id = try startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{"true"});
     defer std.testing.allocator.free(id);
     defer testingClear(std.testing.allocator);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

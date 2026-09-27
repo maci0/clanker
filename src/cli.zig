@@ -13108,7 +13108,7 @@ fn forgetSessionArtifacts(
     // and the rewrite is native. Each holds the user's task text and a model
     // trace that quotes it, so leaving them behind is the same leak the spill
     // and export ops above close.
-    agent.forgetReasoningForSession(std.Io.Dir.cwd(), io, gpa, id);
+    agent.Agent.forgetReasoningForSession(std.Io.Dir.cwd(), io, gpa, id);
 }
 
 fn forgetVia(
@@ -20355,11 +20355,16 @@ test "no webui module file exists that the asset route has never heard of" {
     var root = std.Io.Dir.cwd().openDir(io, "ui/app", .{}) catch return error.SkipZigTest;
     defer root.close(io);
 
+    // A missing subdir is a failure, not a skip: these three are the webui
+    // source layout, and `catch continue` here once made a rename of `core`
+    // turn the whole sweep into a green no-op. Only the repo-root absence
+    // above is a skip. Same for a read error mid-iteration, which would
+    // truncate the walk and hide an unrouted module below the failure point.
     for ([_][]const u8{ "core", "lib", "features" }) |sub| {
-        var d = root.openDir(io, sub, .{ .iterate = true }) catch continue;
+        var d = try root.openDir(io, sub, .{ .iterate = true });
         defer d.close(io);
         var it = d.iterate();
-        while (it.next(io) catch null) |entry| {
+        while (try it.next(io)) |entry| {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.name, ".js")) continue;
             var buf: [128]u8 = undefined;
@@ -20493,10 +20498,39 @@ test "runStreamTodos frames the private list as one \\x01 todos event" {
     try std.testing.expectEqualStrings("</script><img src=x onerror=alert(1)>", todos.items[1].object.get("title").?.string);
 }
 
-test "runStreamTodos with no stream and no allocator is a no-op, not a crash" {
+test "runStreamTodos writes nothing without a stream or an allocator" {
+    // The two refusals are separate: no socket (the REPL, where a run has no
+    // browser) and no allocator (serve_gpa is installed at serve start, a run
+    // stream can only exist after that, so the pair is defensive). Neither may
+    // write a partial line, and neither may leave the globals behind for the
+    // next test to inherit.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
+    const prev_socket = run_stream_socket;
+    const prev_gpa = serve_gpa;
+    defer {
+        run_stream_socket = prev_socket;
+        serve_gpa = prev_gpa;
+    }
+
     run_stream_socket = null;
+    serve_gpa = env.arena();
+    runStreamTodos("[]");
+
+    run_stream_socket = sink.handle;
     serve_gpa = null;
     runStreamTodos("[]");
+
+    run_stream_socket = null;
+    serve_gpa = env.arena();
+    runStreamTodos("[]");
+
+    sink.close(io);
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", env.arena(), .limited(64 * 1024));
+    try std.testing.expectEqualStrings("", line);
 }
 
 test "chatCounts groups every session by workspace in one pass" {
@@ -20554,9 +20588,24 @@ test "runStreamLlmStart frames the serving model as one \\x01 llm_start event" {
     try std.testing.expectEqual(@as(i64, 2), parsed.value.object.get("iteration").?.integer);
 }
 
-test "runStreamLlmStart without a stream is a no-op, not a crash" {
+test "runStreamLlmStart without a stream writes nothing" {
+    // The early return is the whole behaviour here, so the assertion is the
+    // absence of a byte: a socket-less run must not fall through to a
+    // formatting path that formats into nothing.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
+    const prev_socket = run_stream_socket;
+    defer run_stream_socket = prev_socket;
+
     run_stream_socket = null;
     runStreamLlmStart("openai", "gpt-5", 0);
+
+    sink.close(io);
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", env.arena(), .limited(64 * 1024));
+    try std.testing.expectEqualStrings("", line);
 }
 
 test "reports --help states the caps the reports tool enforces" {
