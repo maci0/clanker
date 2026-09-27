@@ -6001,12 +6001,14 @@ const SubagentCall = struct {
     /// calls it when the thread never started and no worker exists to do it.
     /// `brief.context`/`brief.files` are gpa-owned by the time a background
     /// call reaches the worker -- the starter dupes them out of the caller's
-    /// arena, which dies with the call -- so they are freed here too.
+    /// arena, which dies with the call -- so they are freed here too, and so
+    /// is `brief.parent_task` on the same terms.
     fn freeOwned(self: *SubagentCall) void {
         const gpa = self.gpa;
         gpa.free(self.task);
         if (self.provider_name) |p| gpa.free(p);
         gpa.free(self.parent_run_id);
+        if (self.brief.parent_task.len > 0) gpa.free(self.brief.parent_task);
         if (self.brief.context.len > 0) freeStringArray(gpa, self.brief.context);
         if (self.brief.files.len > 0) freeStringArray(gpa, self.brief.files);
         gpa.destroy(self);
@@ -6167,6 +6169,20 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
                 gpa.free(heap.parent_run_id);
                 if (heap.brief.context.len > 0) freeStringArray(gpa, heap.brief.context);
                 gpa.destroy(heap);
+                return Err.invalid;
+            };
+        }
+        // Same for `parent_task`. The brief's own `context`/`files` were
+        // duped out of the caller's arena above for exactly this reason, and
+        // `parent_task` rides in the same borrow: it is `Agent.current_task`,
+        // an arena slice of the run that spawned this child. On the serve path
+        // that arena is the per-request one, so it dies with the connection
+        // thread's `handleRun` frame while this worker is still running, and
+        // `briefedTask` would read freed memory. `len == 0` is left alone: an
+        // empty brief borrows the `""` literal, which must not be freed.
+        if (heap.brief.parent_task.len > 0) {
+            heap.brief.parent_task = gpa.dupe(u8, heap.brief.parent_task) catch {
+                heap.freeOwned();
                 return Err.invalid;
             };
         }

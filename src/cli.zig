@@ -10028,9 +10028,10 @@ var ask_cond: std.c.pthread_cond_t = .{};
 var ask_slots: [max_connection_threads]PendingAsk = @splat(.{});
 var ask_next_id: u64 = 1;
 
-/// Nanoseconds serveAsk waits for the browser before giving up. Set from
-/// agent.ask_timeout_seconds when a streaming run starts; a global rather
-/// than a parameter because AskFn is a bare function pointer.
+/// Nanoseconds serveAsk waits for the browser before giving up. A global
+/// rather than a parameter because AskFn is a bare function pointer, written
+/// once from the loaded config before the listener accepts, so every
+/// connection thread reads a value that is never written again.
 var serve_ask_timeout_ns: u64 = 120 * std.time.ns_per_s;
 
 /// Registers a question and returns its id, or null when every slot is taken

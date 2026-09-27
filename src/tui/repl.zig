@@ -725,6 +725,7 @@ fn askOnRunThread(kind: AskKind, question: []const u8, options: []const []const 
     // One question at a time: the agent's tool path is sequential, so a
     // second concurrent asker is a bug somewhere else; refuse, don't queue.
     const refused = made < options.len or pending_ask.active;
+    var picked: ?usize = null;
     if (!refused) {
         pending_ask = .{ .active = true, .kind = kind, .question = q, .options = opts };
         // Absolute CLOCK_REALTIME deadline, serve's pattern: a broadcast
@@ -740,14 +741,23 @@ fn askOnRunThread(kind: AskKind, question: []const u8, options: []const []const 
         while (!pending_ask.answered) {
             if (std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline) == .TIMEDOUT) break;
         }
+        // Only the asker that published the question may read it back or
+        // clear the slot. A refused caller did not publish anything, so
+        // touching `pending_ask` on that path would destroy the *other*
+        // thread's pending question: the render thread's tick then closes the
+        // modal unanswered, `answerAsk` finds the slot inactive and never
+        // broadcasts, and the real asker sits in `cond_timedwait` until its
+        // full timeout and returns "declined" for a question the human did
+        // answer. Both halves of `refused` reach here without having
+        // published: a short dupe failed, or a question was already active.
+        picked = if (pending_ask.answered) pending_ask.picked else null;
+        pending_ask = .{};
     }
-    const picked = if (pending_ask.answered) pending_ask.picked else null;
-    pending_ask = .{};
     _ = std.c.pthread_mutex_unlock(&ask_mutex);
     for (opts[0..made]) |o| bridge_gpa.free(@constCast(o));
     bridge_gpa.free(opts);
     bridge_gpa.free(q);
-    return if (refused) null else picked;
+    return picked;
 }
 
 /// Wakes a run thread parked in askOnRunThread with "declined". The render

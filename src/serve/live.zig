@@ -573,3 +573,84 @@ test "noteChat publishes both a chat and a mesh event without reusing a complete
     try std.testing.expectEqual(Topic.mesh, mesh_ev.topic);
     try std.testing.expect(std.mem.find(u8, mesh_ev.json, "\"t\":\"talk\"") != null);
 }
+
+test "concurrent publishers and one subscriber lose and duplicate nothing" {
+    // The bus is process-global and every publisher in `clanker serve` runs on
+    // whatever thread produced the event (a mesh fan-out worker, a connection
+    // thread, the run thread), so `publish` and `take` really do contend. The
+    // single-threaded tests above cannot see that: a lost update to `tail`, a
+    // `head`/`tail` pair that overshoots `queue_cap`, or a payload copied out
+    // of a slot another thread has already overwritten all need two threads to
+    // interleave, and each of them is silent — the SSE stream just skips a
+    // line or emits a half-written frame that the browser's JSON.parse drops.
+    //
+    // The identity asserted is the one that makes those failures visible:
+    // everything published is either taken or dropped, and nothing is both.
+    // `taken + dropped == published` cannot hold if a slot is overwritten
+    // before the consumer reads it (lost), read twice (duplicated), or if the
+    // queue overflows without the drop counter moving.
+    //
+    // The drop baseline is taken after subscribing, so a subscriber left over
+    // from another test on the shared bus cannot skew the accounting the way
+    // the `>=` in the overflow test above has to allow for.
+    const publishers = 6;
+    const per_publisher = 400;
+
+    const a = subscribe(topicBit(.chat)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    const drops_before = snapshotMetrics().dropped_total;
+
+    const Publisher = struct {
+        id: usize,
+        fn run(self: *@This()) void {
+            var i: usize = 0;
+            while (i < per_publisher) : (i += 1) {
+                var tmp: [64]u8 = undefined;
+                // A per-publisher tag and a per-event index, so a duplicated
+                // or half-copied payload is identifiable rather than merely
+                // counted wrong.
+                publish(.chat, std.fmt.bufPrint(&tmp, "{{\"p\":{d},\"i\":{d}}}", .{ self.id, i }) catch unreachable);
+            }
+        }
+    };
+    var workers: [publishers]Publisher = undefined;
+    var threads: [publishers]std.Thread = undefined;
+    var started: usize = 0;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .id = i };
+        threads[i] = std.Thread.spawn(.{}, Publisher.run, .{w}) catch break;
+        started += 1;
+    }
+    // A spawn that failed leaves only the first `started` handles live, so
+    // every join below is bounded by that count rather than by `publishers`.
+
+    var taken: usize = 0;
+    var buf: [event_cap]u8 = undefined;
+    // Drain while the publishers run, so most events are delivered rather than
+    // dropped: an all-drop run would satisfy the identity without ever
+    // copying a payload out of a contended slot.
+    var joined: usize = 0;
+    while (taken < publishers * per_publisher) {
+        if (take(a, &buf)) |ev| {
+            try std.testing.expectEqual(Topic.chat, ev.topic);
+            // A torn payload would fail the brace check: `publish` memcpy's
+            // the bytes, `take` memcpy's them back out, and a slot reused
+            // mid-copy yields a frame that is neither this event nor the next.
+            try std.testing.expect(ev.json.len > 0 and ev.json[0] == '{' and ev.json[ev.json.len - 1] == '}');
+            taken += 1;
+            continue;
+        }
+        if (joined < started) {
+            threads[joined].join();
+            joined += 1;
+            continue;
+        }
+        // Queue empty and every publisher joined: whatever is left was dropped.
+        break;
+    }
+    while (joined < started) : (joined += 1) threads[joined].join();
+
+    const drops_after = snapshotMetrics().dropped_total;
+    try std.testing.expectEqual(@as(u64, started * per_publisher), @as(u64, @intCast(taken)) + (drops_after - drops_before));
+    try std.testing.expect(take(a, &buf) == null);
+}
