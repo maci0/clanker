@@ -72,7 +72,15 @@ fn toolRefusalIsMissing(out: []const u8) bool {
     const start = std.mem.find(u8, out, key) orelse return false;
     const rest = out[start + key.len ..];
     const end = std.mem.findScalar(u8, rest, '"') orelse return false;
-    const msg = rest[0..end];
+    return refusalMessageIsMissing(rest[0..end]);
+}
+
+/// True when a guest's refusal *message* names a missing resource rather than a
+/// malformed request. Public because a handler that relays only the message
+/// (the graph tool behind `GET /api/runs/<id>`, whose success body is the
+/// guest's `text` field and so cannot travel the whole JSON body) has to
+/// classify it the same way `toolRefusalStatus` does.
+pub fn refusalMessageIsMissing(msg: []const u8) bool {
     return std.mem.startsWith(u8, msg, "no such") or
         std.mem.eql(u8, msg, "not found") or
         std.mem.endsWith(u8, msg, " not found");
@@ -307,6 +315,18 @@ test "toolRefusalStatus maps missing resources to 404 and other refusals to 400"
     try std.testing.expectEqual(@as(u16, 404), toolRefusalStatus("{\"ok\":false,\"error\":\"not found\"}"));
     try std.testing.expectEqual(@as(u16, 400), toolRefusalStatus("{\"ok\":false,\"error\":\"need a title\"}"));
     try std.testing.expectEqual(@as(u16, 400), toolRefusalStatus("{\"ok\":false,\"error\":\"pick must be A, B or C\"}"));
+}
+
+test "refusalMessageIsMissing is the message half of toolRefusalStatus" {
+    try std.testing.expect(refusalMessageIsMissing("no such run"));
+    try std.testing.expect(refusalMessageIsMissing("not found"));
+    try std.testing.expect(refusalMessageIsMissing("model not found"));
+    try std.testing.expect(!refusalMessageIsMissing("need a title"));
+    // The three body forms agree with what it decides on the message alone.
+    try std.testing.expectEqual(
+        @as(u16, 404),
+        toolRefusalStatus("{\"ok\":false,\"error\":\"no such run\"}"),
+    );
 }
 
 test "percentDecode handles dm room names" {

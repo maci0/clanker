@@ -5654,6 +5654,10 @@ fn appendMemoryHits(mem_buf: *std.ArrayList(u8), arena: std.mem.Allocator, resul
     }
 }
 
+/// Runs `tool_name` and returns its `text` field. A refusal is `error.ToolFailed`
+/// either way; `refusal_detail` receives the guest's own message so a caller
+/// answering over HTTP can pick 404 for a missing resource and 500 for a real
+/// failure, the way `respondTool` does from the whole body.
 fn toolText(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -5662,6 +5666,7 @@ fn toolText(
     environ_map: *std.process.Environ.Map,
     tool_name: []const u8,
     args: []const u8,
+    refusal_detail: ?*?[]const u8,
 ) ![]const u8 {
     var ibuf: [8192]u8 = undefined;
     var iw: std.Io.Writer = .fixed(&ibuf);
@@ -5681,6 +5686,7 @@ fn toolText(
     }
     if (!ok) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
+        if (refusal_detail) |out| out.* = detail;
         if (std.mem.eql(u8, detail, "no such run")) return error.ToolFailed;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
@@ -5694,7 +5700,7 @@ fn toolText(
 fn printInternalTool(init: std.process.Init, cfg: *const config.Config, tool_name: []const u8, args: []const u8) !void {
     var arena_state = std.heap.ArenaAllocator.init(init.gpa);
     defer arena_state.deinit();
-    const text = try toolText(init.io, init.gpa, arena_state.allocator(), cfg, init.environ_map, tool_name, args);
+    const text = try toolText(init.io, init.gpa, arena_state.allocator(), cfg, init.environ_map, tool_name, args, null);
     const out = std.Io.File.stdout();
     try out.writeStreamingAll(init.io, text);
     if (!std.mem.endsWith(u8, text, "\n")) try out.writeStreamingAll(init.io, "\n");
@@ -5817,7 +5823,7 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
         const name = opts.plugin_target orelse
             usageExitFor(io, "plugins", "plugins {s} needs a plugin name: clanker plugins {s} <name>", .{ sub, sub });
         const args = try std.fmt.allocPrint(arena, "{s} {s}", .{ sub, name });
-        const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "plugins", args);
+        const text = try toolText(io, init.gpa, arena, &cfg, init.environ_map, "plugins", args, null);
         if (pluginToggleFailed(text)) {
             try writeStdErr(io, text);
             if (!std.mem.endsWith(u8, text, "\n")) try writeStdErr(io, "\n");
@@ -11275,7 +11281,23 @@ fn handleRuns(
         return;
     }
 
-    const body = toolText(io, gpa, arena, cfg, environ_map, "graph", args) catch |err| {
+    // A run id that names nothing is a 404, exactly as every other relayed
+    // route answers a missing resource; the guest's message says so
+    // ("no such run"), and this handler used to discard it and report 500 for
+    // a client mistake.
+    var refusal: ?[]const u8 = null;
+    const body = toolText(io, gpa, arena, cfg, environ_map, "graph", args, &refusal) catch |err| {
+        if (refusal) |detail| {
+            const status: u16 = if (serve_http.refusalMessageIsMissing(detail)) 404 else 500;
+            respondErrorDetail(
+                stream,
+                status,
+                httpReason(status),
+                detail,
+                "{\"ok\":false,\"error\":\"graph read failed\"}",
+            );
+            return;
+        }
         log.log(.error_, "GET /api/runs args={s}: {s}", .{ args, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"graph read failed\"}");
         return;
@@ -11887,7 +11909,7 @@ fn handleConfigTableRemove(io: std.Io, gpa: std.mem.Allocator, body: []const u8,
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"body must be {header}\"}");
         return;
     };
-    if (req.header.len == 0 or req.header.len > 256) {
+    if (req.header.len == 0 or !toml_edit.validTableHeaderName(req.header)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"header must name a [table] to remove\"}");
         return;
     }
@@ -12027,7 +12049,18 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
         return;
     };
 
-    const written = std.fmt.allocPrint(arena, "default_provider = \"{s}\"\ndefault_model = \"{s}\"\n", .{ provider, model }) catch {
+    // The two lines the writes above actually spliced in, escaped the same
+    // way: a provider or model holding a quote reaches the file escaped, and
+    // reporting the raw value here described bytes that were never written.
+    const provider_line = toml_edit.topLevelStringLine(arena, "default_provider", provider) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const model_line = toml_edit.topLevelStringLine(arena, "default_model", model) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const written = std.fmt.allocPrint(arena, "{s}{s}", .{ provider_line, model_line }) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
@@ -13712,7 +13745,8 @@ const dir_listing_cap: usize = 2000;
 /// requested path is resolved component-wise and any attempt to escape above
 /// it (`..`) is clamped to the workspace root. Dotenv files (`.env` and
 /// variants) are refused outright, the same rule the sandbox applies to its
-/// guests. A missing directory is 404.
+/// guests. A missing directory is 404, and so is a `?workspace=` id that names
+/// no registered workspace (the same 404 `GET /api/workspaces/<id>` gives).
 fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -13739,9 +13773,15 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid workspace\"}");
         return;
     }
-    var root_dir = openWorkspaceRoot(io, arena, ws_id) catch {
-        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"workspace folder missing\"}");
-        return;
+    var root_dir = openWorkspaceRoot(io, arena, ws_id) catch |err| switch (err) {
+        error.NoSuchWorkspace => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such workspace\"}");
+            return;
+        },
+        else => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"workspace folder missing\"}");
+            return;
+        },
     };
     defer if (root_dir.owned) root_dir.dir.close(io);
 
@@ -14610,7 +14650,7 @@ fn handlePlugins(
         return;
     }
 
-    const out = toolText(io, gpa, arena, cfg, environ_map, "plugins", "json") catch {
+    const out = toolText(io, gpa, arena, cfg, environ_map, "plugins", "json", null) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugin read failed\"}");
         return;
     };
@@ -14684,6 +14724,11 @@ fn workspaceSandboxRoots(io: std.Io, arena: std.mem.Allocator, id: []const u8) ?
     return out.toOwnedSlice(arena) catch &.{};
 }
 
+/// Resolves a `?workspace=` id to the root it names. A syntactically valid id
+/// that is not registered answers `error.NoSuchWorkspace` rather than falling
+/// back to the serve cwd: the fallback served one directory's listing under
+/// another directory's name, and `handleWorkspaces` already answers 404 for the
+/// same id on `GET /api/workspaces/<id>`.
 fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !WorkspaceRoot {
     if (id.len == 0) {
         return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = workspaceName(io, arena) };
@@ -14700,7 +14745,7 @@ fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !Work
         const dir = std.Io.Dir.cwd().openDir(io, p, .{ .iterate = true }) catch return error.NotFound;
         return .{ .dir = dir, .owned = true, .label = ws.name };
     }
-    return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = id };
+    return error.NoSuchWorkspace;
 }
 
 const WorkspaceBody = struct {
@@ -16317,6 +16362,17 @@ fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, p
 // would turn into malformed JSON clients cannot parse. `fallback` is the body
 // used when even the escaped form does not fit.
 fn respondRunError(stream: std.Io.net.Stream, detail: []const u8, fallback: []const u8) void {
+    respondErrorDetail(stream, 500, "Internal Server Error", detail, fallback);
+}
+
+/// `{"ok":false,"error":<detail>}` at whatever status the caller picked.
+fn respondErrorDetail(
+    stream: std.Io.net.Stream,
+    status: u16,
+    reason: []const u8,
+    detail: []const u8,
+    fallback: []const u8,
+) void {
     var ebuf: [8192]u8 = undefined;
     var ew: std.Io.Writer = .fixed(&ebuf);
     var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
@@ -16329,7 +16385,7 @@ fn respondRunError(stream: std.Io.net.Stream, detail: []const u8, fallback: []co
         es.endObject() catch break :err_body false;
         break :err_body true;
     };
-    respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else fallback);
+    respond(stream, status, reason, if (built) ebuf[0..ew.end] else fallback);
 }
 
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {

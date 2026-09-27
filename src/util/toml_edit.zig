@@ -25,10 +25,48 @@ pub fn removeTable(arena: std.mem.Allocator, src: []const u8, header: []const u8
     return splice(arena, src, span.start, span.end, "");
 }
 
+/// Longest table-header name a caller may name, matching a path a config file
+/// can plausibly hold.
+pub const header_name_cap = 128;
+
+/// True when `name` is a table-header name: dot-separated bare keys or
+/// double-quoted keys, none of them carrying a bracket, a newline or an
+/// unterminated quote.
+///
+/// `removeTable` takes a header *line*, so its caller builds one by bracketing
+/// a name the client typed. Without this check a name carrying a newline can
+/// never match (the spliced line is not one line) and a name carrying a
+/// bracket matches a table the client did not name, both answered as a silent
+/// no-op.
+pub fn validTableHeaderName(name: []const u8) bool {
+    if (name.len == 0 or name.len > header_name_cap) return false;
+    if (std.mem.indexOfAny(u8, name, "[]\n\r") != null) return false;
+    var it = std.mem.splitScalar(u8, name, '.');
+    while (it.next()) |segment| {
+        if (segment.len == 0) return false;
+        if (segment[0] == '"') {
+            if (segment.len < 2 or segment[segment.len - 1] != '"') return false;
+            if (std.mem.indexOfAny(u8, segment[1 .. segment.len - 1], "\"\\") != null) return false;
+            continue;
+        }
+        for (segment) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '-') return false;
+        }
+    }
+    return true;
+}
+
+/// The exact line `setTopLevelString` writes for `key = "value"`, escaped the
+/// same way. A caller that reports what it wrote reports the bytes that landed
+/// rather than the value it was handed.
+pub fn topLevelStringLine(arena: std.mem.Allocator, key: []const u8, value: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s} = \"{s}\"\n", .{ key, try escapeTomlString(arena, value) });
+}
+
 /// Replace or insert a top-level `key = "value"` line. A new key is inserted
 /// immediately before the first table header so it stays at the root.
 pub fn setTopLevelString(arena: std.mem.Allocator, src: []const u8, key: []const u8, value: []const u8) ![]const u8 {
-    const line = try std.fmt.allocPrint(arena, "{s} = \"{s}\"\n", .{ key, escapeTomlString(arena, value) });
+    const line = try topLevelStringLine(arena, key, value);
     if (findTopLevelKey(src, key)) |span| {
         return splice(arena, src, span.start, span.end, line);
     }
@@ -140,13 +178,13 @@ fn ensureTrailingNewline(block: []const u8) []const u8 {
     return block;
 }
 
-fn escapeTomlString(arena: std.mem.Allocator, value: []const u8) []const u8 {
+fn escapeTomlString(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
     var need: usize = 0;
     for (value) |c| {
         need += if (c == '"' or c == '\\') @as(usize, 2) else 1;
     }
     if (need == value.len) return value;
-    var out = arena.alloc(u8, need) catch return value;
+    const out = try arena.alloc(u8, need);
     var i: usize = 0;
     for (value) |c| {
         if (c == '"' or c == '\\') {
@@ -280,4 +318,34 @@ test "replaceTable last matching header wins" {
     try std.testing.expect(std.mem.find(u8, out, "provider = \"first\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "provider = \"second\"") == null);
     try std.testing.expect(std.mem.find(u8, out, "provider = \"third\"") != null);
+}
+
+test "validTableHeaderName accepts the headers a config file actually holds" {
+    try std.testing.expect(validTableHeaderName("agent"));
+    try std.testing.expect(validTableHeaderName("providers.openai"));
+    try std.testing.expect(validTableHeaderName("models.\"vendor/model\""));
+    try std.testing.expect(validTableHeaderName("mcp_servers.\"github\""));
+    try std.testing.expect(validTableHeaderName("a-b_c.1"));
+}
+
+test "validTableHeaderName refuses a name that would name a different line" {
+    try std.testing.expect(!validTableHeaderName(""));
+    try std.testing.expect(!validTableHeaderName("agent]"));
+    try std.testing.expect(!validTableHeaderName("[agent"));
+    try std.testing.expect(!validTableHeaderName("agent\nmax_iterations = 99"));
+    try std.testing.expect(!validTableHeaderName("providers."));
+    try std.testing.expect(!validTableHeaderName("\"unterminated"));
+    try std.testing.expect(!validTableHeaderName("models.\"a\"x"));
+    try std.testing.expect(!validTableHeaderName("a b"));
+    try std.testing.expect(!validTableHeaderName("a" ** (header_name_cap + 1)));
+}
+
+test "topLevelStringLine reports the bytes setTopLevelString writes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectEqualStrings("k = \"plain\"\n", try topLevelStringLine(arena, "k", "plain"));
+    try std.testing.expectEqualStrings("k = \"a\\\"b\"\n", try topLevelStringLine(arena, "k", "a\"b"));
+    const src = try setTopLevelString(arena, "", "k", "a\"b");
+    try std.testing.expectEqualStrings(src, try topLevelStringLine(arena, "k", "a\"b"));
 }
