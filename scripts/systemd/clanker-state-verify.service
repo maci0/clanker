@@ -8,4 +8,9 @@ Type=oneshot
 # reads a different destination than the backup run writes would report on a
 # mirror the run never touches.
 EnvironmentFile=-%h/.config/clanker/backup.env
+# Same reason as the backup unit: a `oneshot` has no start timeout by default,
+# and the drill copies a whole store, so a wedged read would leave the drill
+# running forever and its journal entry, the artifact an incident reads,
+# unwritten.
+TimeoutStartSec=2h
 ExecStart=%h/.local/bin/clanker-state-verify

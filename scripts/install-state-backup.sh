@@ -94,9 +94,6 @@ if [ "$have_systemd" -eq 1 ]; then
     link_unit clanker-state-verify.timer
 fi
 
-backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
-mkdir -p "$backup_env_dir"
-
 # Both units read their configuration from here (EnvironmentFile=). A user
 # service does not inherit the login shell's environment, so an export in a
 # profile never reaches the timer; writing the file is the only way to set
@@ -107,7 +104,12 @@ backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
 backup_env="$backup_env_dir/backup.env"
 mkdir -p "$backup_env_dir"
 if [ ! -e "$backup_env" ]; then
-    cat >"$backup_env" <<'EOF'
+    # Owner-only, like every other file here that names a machine: the
+    # destination it carries can be `user@host:/vol/...`, which is a hostname
+    # and a username, and the drill's exit code says whether the second failure
+    # domain exists. Written through a umask-tightened subshell so the file is
+    # never briefly world-readable, not just chmod-ed after the fact.
+    ( umask 077 && cat >"$backup_env" ) <<'EOF'
 # Configuration for clanker-state-backup.service / clanker-state-verify.service.
 # Read by systemd (EnvironmentFile=); a shell export does NOT reach the timer.
 # KEY=value, one per line, no `export`. See scripts/README.md.
@@ -123,6 +125,16 @@ if [ ! -e "$backup_env" ]; then
 # How old the newest snapshot may be before the weekly restore drill fails.
 # Four missed 30-minute intervals. Default 7200.
 #CLANKER_BACKUP_MAX_AGE_SECONDS=7200
+
+# Where the drill looks for snapshots when the usual
+# <storage_root>/backups is not where they are. Only the drill reads it;
+# backup-state.sh derives the root from where `state` resolves to.
+#CLANKER_BACKUP_ROOT=/mnt/second-disk/backups
+
+# Where the drill copies a snapshot out to while checking it. Empty means a
+# `restore-verify` directory beside the store: the copy is store-sized, and
+# $TMPDIR is a tmpfs on a stock Linux box, so a restore staged there is RAM.
+#CLANKER_VERIFY_SCRATCH_DIR=
 EOF
     printf 'wrote %s\n' "$backup_env"
 fi

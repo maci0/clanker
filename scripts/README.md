@@ -120,7 +120,8 @@ retention prunes do not propagate, so one deletion path cannot destroy both
 copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
 
 The scheduled runs read that variable, and every other backup knob
-(`CLANKER_BACKUP_RETENTION_DAYS`, `CLANKER_BACKUP_MAX_AGE_SECONDS`), from
+(`CLANKER_BACKUP_RETENTION_DAYS`, `CLANKER_BACKUP_MAX_AGE_SECONDS`,
+`CLANKER_BACKUP_ROOT`, `CLANKER_VERIFY_SCRATCH_DIR`), from
 `~/.config/clanker/backup.env` (`$XDG_CONFIG_HOME/clanker/backup.env`), which
 `scripts/install-state-backup.sh` writes as a commented template on first run
 and never rewrites. It is a systemd `EnvironmentFile`: `KEY=value`, one per
@@ -171,6 +172,12 @@ intervals); a drill of a snapshot you chose on purpose skips the age check.
 When `CLANKER_BACKUP_OFFSITE_DEST` names a directory on this host, the drill
 also warns if that mirror holds no `latest`, so a second failure domain that
 stopped following the local root is not read as a healthy copy.
+
+The drill stages its copy in `restore-verify/` beside the store (override with
+`CLANKER_VERIFY_SCRATCH_DIR`), not in `$TMPDIR`: the copy is store-sized, and
+`/tmp` is a tmpfs on a stock Linux box, so a restore written there is RAM and
+takes the machine down before the drill can report. `CLANKER_BACKUP_ROOT`
+points the drill at snapshots that are not under `<storage_root>/backups`.
 
 **RPO / RTO.** RPO is bounded by the timer interval: at most 30 minutes of
 writes are lost, and `Persistent=true` runs a catch-up snapshot after downtime.

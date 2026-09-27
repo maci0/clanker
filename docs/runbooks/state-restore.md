@@ -169,7 +169,11 @@ this runbook can manufacture a snapshot that does not exist.
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
   entry byte-for-byte, opens each restored database
-  (`PRAGMA quick_check`), and reports the copy time. The install schedules it
+  (`PRAGMA quick_check`), and reports the copy time. The scratch is
+  `restore-verify/` beside the storage root (`CLANKER_VERIFY_SCRATCH_DIR`
+  overrides it), never `$TMPDIR`, so a store-sized copy does not land in
+  tmpfs; expect that directory to grow to roughly the snapshot's size during
+  a run and to be empty after it. The install schedules it
   weekly (`clanker-state-verify.timer`, catch-up run after downtime), so the
   journal holds recent drill artifacts; run it once more before this
   procedure on the exact snapshot you picked. The drill's own tests

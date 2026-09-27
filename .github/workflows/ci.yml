@@ -59,15 +59,24 @@ jobs:
           # redundant.
           use-cache: true
 
-      # bun-version mirrors `packageManager` in package.json (bun@1.4.2), the
-      # pin the local toolchain is verified against; bump both together. Left
-      # implicit, every job installs whatever bun released that morning, so
-      # lint, audit and the AssemblyScript rebuild can all change result on an
-      # unchanged tree.
+      # The bun version comes from `packageManager` in package.json (read, not
+      # restated), the same one-place pin the Zig version gets above: a bun
+      # bump in package.json used to leave the two `bun-version: 1.4.2`
+      # literals in this file installing the previous release, so CI verified
+      # a toolchain the project no longer claims. Left implicit, every job
+      # installs whatever bun released that morning, so lint, audit and the
+      # AssemblyScript rebuild can all change result on an unchanged tree.
+      - name: Resolve Bun version
+        id: bunpin
+        run: |
+          version=$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"bun@\([^"]*\)".*/\1/p' package.json)
+          [ -n "$version" ] || { echo "package.json has no packageManager bun pin" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ steps.bunpin.outputs.version }}
 
       # Extract the pinned dependency trees and re-apply patches/*.patch
       # (patches/README.md). build.zig refuses to configure against pristine
@@ -197,11 +206,19 @@ jobs:
           use-cache: true
 
       # `zig build test` runs the ~20 bun test suites under ui/app, so bun must
-      # be on PATH here too, like the linux verify job, on the same pin.
+      # be on PATH here too, like the linux verify job, on the pin package.json
+      # carries.
+      - name: Resolve Bun version
+        id: bunpin
+        run: |
+          version=$(sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"bun@\([^"]*\)".*/\1/p' package.json)
+          [ -n "$version" ] || { echo "package.json has no packageManager bun pin" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ steps.bunpin.outputs.version }}
 
       # Same reason as the verify job: build.zig refuses pristine upstream
       # dependencies, and the patches must land after extraction.

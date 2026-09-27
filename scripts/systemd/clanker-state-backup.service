@@ -8,4 +8,10 @@ Type=oneshot
 # place the service reads its configuration from; `-` keeps a missing file
 # from failing the unit (every setting has a default in backup-state.sh).
 EnvironmentFile=-%h/.config/clanker/backup.env
+# `Type=oneshot` disables TimeoutStartSec by default, so a run wedged on an
+# unanswered mount (an off-site destination that stopped answering) never
+# exits, never fails, and the timer reports `active` for the whole outage.
+# Twice the timer interval: a real backup of a multi-gigabyte store takes
+# minutes, so exceeding this means the run is not going to finish.
+TimeoutStartSec=1h
 ExecStart=%h/.local/bin/clanker-state-backup

@@ -184,6 +184,19 @@ internal.
 
 ### Changed
 
+- The weekly restore drill (`scripts/verify-backup.sh`) stages its copy in
+  `restore-verify/` beside the storage root instead of `$TMPDIR`, and
+  `CLANKER_VERIFY_SCRATCH_DIR` overrides that. The copy is store-sized and
+  `/tmp` is a tmpfs on a stock Linux box, so the drill could take the machine
+  down with RAM before it reported on the backup it was proving. Expect a
+  store-sized directory beside the store during a drill; it is removed when
+  the run ends.
+- The backup configuration `scripts/install-state-backup.sh` writes on first
+  run (`~/.config/clanker/backup.env`) is created mode 0600, since it names
+  the off-site destination and that destination can be `user@host:/path`. Its
+  template also documents `CLANKER_BACKUP_ROOT` and
+  `CLANKER_VERIFY_SCRATCH_DIR`, which the drill reads and the file never
+  mentioned.
 - The release SBOM (`scripts/sbom.py`) covers both committed lockfiles. It
   read only `tools/ts/bun.lock`, so `oxlint`, `tailwindcss` and
   `@tailwindcss/cli` with their transitive tree were absent from

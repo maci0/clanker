@@ -157,13 +157,22 @@ if [ "$verify_newest" = 1 ]; then
     check_freshness "${CLANKER_BACKUP_MAX_AGE_SECONDS:-7200}" || exit 1
 fi
 
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/clanker-restore-verify.XXXXXX")
+# The restore copies a whole store, which is gigabytes on a real install.
+# $TMPDIR is /tmp on a stock Linux box, and /tmp is a tmpfs there, so the copy
+# lands in RAM and takes the machine down before it can report on the backup
+# it was proving. Stage it beside the store instead: the same volume the
+# snapshot came off, on a real disk, outside the checkout (a restore-in-place
+# inside the tree would look like one to the backup script's own refusal).
+# CLANKER_VERIFY_SCRATCH_DIR overrides it; a caller who genuinely has a large
+# tmpfs can say so.
+scratch_parent=${CLANKER_VERIFY_SCRATCH_DIR:-$(dirname -- "$state_root")/restore-verify}
+mkdir -p -- "$scratch_parent"
+scratch=$(mktemp -d "${scratch_parent}/clanker-restore-verify.XXXXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 
 start=$(date +%s)
 kib=0
 for entry in $entries; do
-    mkdir -p "$scratch"
     rsync -a "$snapshot/$entry/" "$scratch/$entry/"
 done
 elapsed=$(($(date +%s) - start))
