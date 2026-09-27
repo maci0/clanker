@@ -218,10 +218,36 @@ pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: 
     const ok = parsed.object.get("ok");
     if (ok == null or ok.? != .bool or !ok.?.bool) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
-        diag.errorLine("{s}: {s}", .{ store, detail });
+        // A path that is not there is the one refusal whose next step is the
+        // same in all five stores: ask the listing. Without it these were the
+        // only list-style commands in the CLI that ended on a bare "not
+        // found", while `clanker graph` and `clanker schedule remove` both
+        // name the command that shows the ids.
+        if (mentionsNotFound(detail)) {
+            diag.errorLine("{s}: {s}; run `clanker {s} list` for the paths", .{ store, detail, store });
+        } else {
+            diag.errorLine("{s}: {s}", .{ store, detail });
+        }
         return Error.ToolFailed;
     }
     return parsed;
+}
+
+/// Whether a tool's refusal is about a record that is not there. The guest
+/// builds these sentences (`lib.failErr`), so this matches on the wording
+/// rather than a code the tool JSON does not carry.
+fn mentionsNotFound(detail: []const u8) bool {
+    return std.ascii.findIgnoreCase(detail, "not found") != null;
+}
+
+test "a missing record's refusal is the one that names the listing" {
+    // The guest words it "opening the report or runbook: not found"; the
+    // listing hint is what turns that from a dead end into a next keystroke.
+    try std.testing.expect(mentionsNotFound("opening the report or runbook: not found"));
+    try std.testing.expect(mentionsNotFound("opening the ADR before update: Not Found"));
+    // A refusal about something else must not claim a record is missing.
+    try std.testing.expect(!mentionsNotFound("path must be a markdown file below docs/adrs/"));
+    try std.testing.expect(!mentionsNotFound("the inventory changed concurrently"));
 }
 
 // The three readers take a whole `std.json.Value` rather than its `.object`,

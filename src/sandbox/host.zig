@@ -933,7 +933,14 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     if (std.mem.eql(u8, op, "get")) {
         const id = json_util.strFieldOrNull(req.object, "id") orelse return Err.invalid;
         if (!session_mod.validSessionId(id)) return Err.invalid;
-        const s = session_mod.loadSession(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, id) catch return Err.invalid;
+        // A session that is not on disk is not_found, not invalid: the guest
+        // turns the two into different sentences, and Err.invalid made
+        // `clanker session export <typo>` say "the arguments were rejected"
+        // and exit through the generic tool-failed hint.
+        const s = session_mod.loadSession(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, id) catch |err| switch (err) {
+            error.FileNotFound, error.InvalidSessionId => return Err.not_found,
+            else => return Err.invalid,
+        };
         w.beginObject() catch return Err.invalid;
         w.objectField("id") catch return Err.invalid;
         w.write(s.id) catch return Err.invalid;

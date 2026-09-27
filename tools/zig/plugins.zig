@@ -108,7 +108,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (std.mem.eql(u8, p.name, name)) target = p;
     }
     const plugin = target orelse
-        return textJson(out, alloc, "error: no such tool: ", name);
+        return noSuchTool(out, alloc, name);
     if (plugin.core)
         return textJson(out, alloc, "error: core tool, cannot be switched off: ", name);
     if (plugin.enabled == want_enabled)
@@ -272,7 +272,7 @@ fn configure(out: *lib.Out, alloc: std.mem.Allocator, input: std.json.ObjectMap,
         if (std.mem.eql(u8, p.name, name_value.string)) target = p;
     }
     const plugin = target orelse
-        return lib.fail(out, try std.fmt.allocPrint(alloc, "no such tool: {s}", .{name_value.string}));
+        return lib.fail(out, try std.fmt.allocPrint(alloc, "no such tool: {s}; run `clanker plugins list` for the registered names", .{name_value.string}));
 
     // A file that exists but cannot be read or parsed is not an empty one: the
     // write below replaces the whole document, so treating either failure as
@@ -439,6 +439,19 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
 
 fn textJson(out: *lib.Out, alloc: std.mem.Allocator, prefix: []const u8, name: []const u8) !void {
     try writeText(out, try std.fmt.allocPrint(alloc, "{s}{s}", .{ prefix, name }));
+}
+
+/// A toggle naming a tool that is not registered. The listing is the only
+/// place the registered names live, so a bare refusal leaves the reader
+/// guessing whether the tool is spelled differently or was never built.
+/// `error: ` is kept first: `pluginToggleFailed` reads it to decide this is a
+/// failure and put it on stderr, and the test on that prefix pins the shape.
+fn noSuchTool(out: *lib.Out, alloc: std.mem.Allocator, name: []const u8) !void {
+    return writeText(out, try std.fmt.allocPrint(
+        alloc,
+        "error: no such tool: {s}; run `clanker plugins list` for the registered names",
+        .{name},
+    ));
 }
 
 fn writeText(out: *lib.Out, text: []const u8) !void {

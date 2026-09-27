@@ -454,12 +454,20 @@ pub fn nowNanos() u64 {
     return ck_now();
 }
 
-pub const HostError = error{ SandboxDenied, NoAccess, TooLarge, NetworkError, InvalidArg };
+pub const HostError = error{ SandboxDenied, NoAccess, TooLarge, NetworkError, InvalidArg, NotFound };
 
+/// `Err.not_found` (2) has to reach the guest as `error.NotFound`, not as the
+/// `else` arm's `InvalidArg`: a host that answers not_found for a path that is
+/// not there is not rejecting the arguments, and failErr's NotFound arm
+/// ("not found") was unreachable while this fell through. `clanker session
+/// export <typo>` therefore printed "reading session: the arguments were
+/// rejected" and exited through the generic ToolFailed hint instead of the
+/// "no saved conversation by that id" one.
 fn hostResult(rc: u32) HostError![]const u8 {
     return switch (rc) {
         0 => readResult() orelse error.InvalidArg,
         1 => error.SandboxDenied,
+        2 => error.NotFound,
         7 => error.NoAccess,
         3 => error.TooLarge,
         4 => error.NetworkError,
