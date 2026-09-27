@@ -1521,7 +1521,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 |----------|--------|-------------|
 | `/`, `/webui` | GET | Web UI (rendered by the internal `webui` WASM tool). Both paths serve it; the URL `serve` prints is `/webui` |
 | `/webui/app.css`, `/webui/views.css`, `/webui/tailwind.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheets, each on its own route. `tailwind.css` is compiled from `ui/app/tailwind.src.css` by `bun run css:build` and committed, because the `webui` guest embeds it at comptime and the serve path runs no build step |
-| `/webui/vendor/*` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid`, `three` (`vendor_files` in `src/serve/webui_assets.zig` is the one list) |
+| `/webui/vendor/*` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid`, `three` (`vendor_assets` in `src/cli.zig` is the one list: route, bytes, gzip cache) |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
 | `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |
 | `/api/metrics` | GET | Process-local RED: HTTP request/error/4xx counters, latency buckets, in-flight connections, plus LLM, tool, and schedule request/error counters (JSON, no high-cardinality labels) |

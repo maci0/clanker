@@ -2361,8 +2361,8 @@ fn collectEagerWebuiUrls(arena: std.mem.Allocator, html: []const u8, urls: *std.
 }
 
 /// Request path to repo path. Vendored files route differently than
-/// first-party ones (`isVendorFile` serves them from `ui/vendor/`), so the
-/// mapping mirrors that split.
+/// first-party ones (they are embedded from `ui/vendor/` rather than rendered
+/// by the webui tool), so the mapping mirrors that split.
 fn webuiUrlToPath(arena: std.mem.Allocator, url: []const u8) ![]const u8 {
     const rest = url["/webui/".len..];
     if (std.mem.startsWith(u8, rest, "vendor/")) return std.fmt.allocPrint(arena, "ui/{s}", .{rest});

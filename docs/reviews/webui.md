@@ -158,8 +158,8 @@ block.
 - **Vendor:** official `mermaid@11.16.1` UMD (`dist/mermaid.min.js`, 3.5 MB,
   `globalThis.mermaid`, no `import.meta` — classic-script safe) vendored at
   `ui/app/vendor/mermaid.min.js`, embedded + routed the same way the other
-  vendor assets are (`webui_vendor_mermaid` const, `is_webui` allow-list
-  entry, `respondJs` branch with its own `gzip_mermaid` cache — gzip + ETag +
+  vendor assets are (a `vendor_assets` table row carrying the bytes and that
+  file's gzip cache — gzip + ETag +
   `public,max-age=3600` for free). Lazy: `loadMermaid()` in
   `core/vendor.js` fetches it only when an answer actually contains a
   `mermaid` fence. The binary grows ~7 MB (Debug); the page pays nothing

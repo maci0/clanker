@@ -171,10 +171,12 @@ pub fn apply(
             lineOffset(lines, r.start + r.hunk.old_count)
         else
             src.len;
-        const text_len = src.len + higher_delta;
+        // Signed: the spliced text shrinks as often as it grows, and the
+        // comparison below is against an offset in it.
+        const text_len: i64 = @as(i64, @intCast(src.len)) + higher_delta;
         const needs_sep = r.hunk.new_text.len > 0 and
             r.hunk.new_text[r.hunk.new_text.len - 1] != '\n' and
-            end_off < text_len;
+            @as(i64, @intCast(end_off)) < text_len;
         const inserted: i64 = @as(i64, @intCast(r.hunk.new_text.len)) + @intFromBool(needs_sep);
         higher_delta += inserted - @as(i64, @intCast(end_off - start_off));
         try edits.append(alloc, .{

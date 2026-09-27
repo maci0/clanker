@@ -247,27 +247,6 @@ pub fn isAssetPath(path: []const u8) bool {
     return false;
 }
 
-/// Vendored third-party JS under `ui/vendor/`, embedded in `ui/vendor.zig` and
-/// served from `/webui/vendor/*`. One list: a file added here without a route
-/// (or the reverse) ships bytes the browser cannot fetch.
-pub const vendor_files = [_][]const u8{
-    "preact.module.js",
-    "htm.module.js",
-    "signals-core.module.js",
-    "d3-dag.min.js",
-    "hljs.min.js",
-    "mermaid.min.js",
-    "three.module.min.js",
-    "three.core.min.js",
-};
-
-pub fn isVendorFile(name: []const u8) bool {
-    for (vendor_files) |p| {
-        if (std.mem.eql(u8, p, name)) return true;
-    }
-    return false;
-}
-
 pub const PathNorm = struct {
     path: []const u8,
     tagged: bool,

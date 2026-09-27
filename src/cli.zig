@@ -99,14 +99,6 @@ const session_sync = @import("peers/session_sync.zig");
 // far smaller than these). Vendored rather than CDN-loaded so the page has
 // zero runtime network dependencies and needs no change to the webui CSP.
 const ui_vendor = @import("vendor");
-const webui_vendor_preact = ui_vendor.preact;
-const webui_vendor_htm = ui_vendor.htm;
-const webui_vendor_signals = ui_vendor.signals;
-const webui_vendor_d3dag = ui_vendor.d3dag;
-const webui_vendor_hljs = ui_vendor.hljs;
-const webui_vendor_mermaid = ui_vendor.mermaid;
-const webui_vendor_three = ui_vendor.three;
-const webui_vendor_three_core = ui_vendor.three_core;
 const edit_distance = @import("util/edit_distance.zig");
 const error_hint = @import("util/error_hint.zig");
 const no_color = @import("util/no_color.zig");
@@ -133,9 +125,7 @@ const etagFor = serve_http.etagFor;
 const WebuiAssetKind = webui_assets.Kind;
 const webuiAssetKind = webui_assets.kindFor;
 const webui_asset_paths = webui_assets.asset_paths;
-const webui_vendor_files = webui_assets.vendor_files;
 const isWebuiAssetPath = webui_assets.isAssetPath;
-const isWebuiVendorFile = webui_assets.isVendorFile;
 const normalizeWebuiPath = webui_assets.normalizePath;
 const RenderCache = webui_assets.RenderCache;
 const GzipCache = webui_assets.GzipCache;
@@ -8335,14 +8325,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = isWebuiIndexPath(path) or
             isWebuiAssetPath(path) or
-            std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
+            vendorAsset(path) != null or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.startsWith(u8, path, "/webui/themes/") or
-            std.mem.startsWith(u8, path, "/webui/commands/") or
-            std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js") or std.mem.eql(u8, path, "/webui/vendor/hljs.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/three.module.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/three.core.min.js");
+            std.mem.startsWith(u8, path, "/webui/commands/");
+        // The vendored file this path answers, read form: the route below serves
+        // it from the same table the cache-bust tag hashes.
+        const vendored: ?*VendorAsset = if (isWebuiRead(method)) vendorAsset(path) else null;
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
@@ -8447,27 +8436,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (isWebuiRead(method) and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
-            respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
-            respondJs(gpa, stream, webui_vendor_htm, &gzip_htm, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js")) {
-            respondJs(gpa, stream, webui_vendor_signals, &gzip_signals, acceptsGzip(headers_raw), headers_raw);
         } else if (isWebuiRead(method) and isWebuiAssetPath(path)) {
             // Same tool, same comptime size guard, one file per language.
             // Use the stripped path: a `/webui/~<tag>/` prefix is only for the
             // browser cache key and must not reach the webui tool's asset table.
             handleWebuiAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
-            respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
-            respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js")) {
-            respondJs(gpa, stream, webui_vendor_mermaid, &gzip_mermaid, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/three.module.min.js")) {
-            respondJs(gpa, stream, webui_vendor_three, &gzip_three, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/three.core.min.js")) {
-            respondJs(gpa, stream, webui_vendor_three_core, &gzip_three_core, acceptsGzip(headers_raw), headers_raw);
+        } else if (vendored) |asset| {
+            respondStatic(gpa, stream, asset.body, &asset.cache, "text/javascript; charset=utf-8", acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
@@ -11077,8 +11052,19 @@ fn streamingReadRoute(path: []const u8) bool {
 var webui_asset_tag_buf: [8]u8 = undefined;
 var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, computing, ready, failed }) = .init(.idle);
 
-/// Every vendored file the page can fetch, paired with its embedded bytes.
-///
+/// Every vendored file the page can fetch: the name it sits under in
+/// `ui/vendor/`, its embedded bytes, and the one compression cache those bytes
+/// are kept in. One list answers all three questions the server has about a
+/// vendored file (which path answers it, what the answer is, which cache holds
+/// the gzipped form) and the fourth one `webuiAssetTag` asks (which bytes must
+/// bust the cache-bust tag), so a file added to one role and not the others
+/// cannot happen.
+const VendorAsset = struct {
+    name: []const u8,
+    body: []const u8,
+    cache: GzipCache,
+};
+
 /// The cache-bust tag is the *whole* vendor set, not just the two files the
 /// page's head names: the import map (`webuiImportMapJson`) routes preact, htm
 /// and signals to tagged URLs, and `loadVendor` resolves the lazy libs
@@ -11090,21 +11076,35 @@ var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, computing, ready, f
 /// vendor file changing must change the tag, and then the old URL is simply
 /// unreachable — `normalizePath` serves the live bytes under any well-formed
 /// tag, and the served HTML always carries the current one.
-///
-/// `webui_assets.vendor_files` is the route list (what the server will answer);
-/// this tuple is the hash list (what a change to those bytes must bust). A test
-/// below pins the two to the same set, so adding a vendored file to one list
-/// without the other fails the build instead of shipping a stale-cache hole.
-const vendor_tag_files = .{
-    .{ "preact.module.js", webui_vendor_preact },
-    .{ "htm.module.js", webui_vendor_htm },
-    .{ "signals-core.module.js", webui_vendor_signals },
-    .{ "d3-dag.min.js", webui_vendor_d3dag },
-    .{ "hljs.min.js", webui_vendor_hljs },
-    .{ "mermaid.min.js", webui_vendor_mermaid },
-    .{ "three.module.min.js", webui_vendor_three },
-    .{ "three.core.min.js", webui_vendor_three_core },
+var vendor_assets = [_]VendorAsset{
+    .{ .name = "preact.module.js", .body = ui_vendor.preact, .cache = .{} },
+    .{ .name = "htm.module.js", .body = ui_vendor.htm, .cache = .{} },
+    .{ .name = "signals-core.module.js", .body = ui_vendor.signals, .cache = .{} },
+    .{ .name = "d3-dag.min.js", .body = ui_vendor.d3dag, .cache = .{} },
+    .{ .name = "hljs.min.js", .body = ui_vendor.hljs, .cache = .{} },
+    .{ .name = "mermaid.min.js", .body = ui_vendor.mermaid, .cache = .{} },
+    .{ .name = "three.module.min.js", .body = ui_vendor.three, .cache = .{} },
+    .{ .name = "three.core.min.js", .body = ui_vendor.three_core, .cache = .{} },
 };
+
+/// The request path a vendored file is answered at: the name under
+/// `ui/vendor/`, prefixed with the route directory.
+const vendor_path_prefix = "/webui/vendor/";
+
+/// The vendored file with this `ui/vendor/` file name, or null when the table
+/// has no such row.
+fn vendorAssetByName(name: []const u8) ?*VendorAsset {
+    for (&vendor_assets) |*asset| {
+        if (std.mem.eql(u8, asset.name, name)) return asset;
+    }
+    return null;
+}
+
+/// The vendored file `path` asks for, or null when it names none.
+fn vendorAsset(path: []const u8) ?*VendorAsset {
+    if (!std.mem.startsWith(u8, path, vendor_path_prefix)) return null;
+    return vendorAssetByName(path[vendor_path_prefix.len..]);
+}
 
 fn webuiAssetTag(
     io: std.Io,
@@ -11147,8 +11147,8 @@ fn webuiAssetTag(
     // but a change to any covered byte flips the tag with certainty, which is
     // all the cache key needs.
     var mixed = std.hash.Crc32.hash(wasm_bytes);
-    inline for (vendor_tag_files) |entry| {
-        mixed ^= std.hash.Crc32.hash(entry[1]);
+    inline for (vendor_assets) |entry| {
+        mixed ^= std.hash.Crc32.hash(entry.body);
     }
     _ = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
         webui_asset_tag_state.store(.failed, .release);
@@ -17520,21 +17520,12 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// Per-asset render and gzip caches, and the page's own pair. The bodies of
-/// the vendored files get theirs below; both structs and the kind-indexed
-/// arrays behind `webuiRenderCache` / `webuiGzipCache` live in
+/// The page's own render and gzip pair. Every other asset's pair is
+/// kind-indexed behind `webuiRenderCache` / `webuiGzipCache`, and the vendored
+/// files carry theirs in `vendor_assets`; both structs live in
 /// `serve/webui_assets.zig`.
 var render_page: RenderCache = .{};
 var gzip_page: GzipCache = .{};
-
-var gzip_preact: GzipCache = .{};
-var gzip_htm: GzipCache = .{};
-var gzip_signals: GzipCache = .{};
-var gzip_d3dag: GzipCache = .{};
-var gzip_hljs: GzipCache = .{};
-var gzip_mermaid: GzipCache = .{};
-var gzip_three: GzipCache = .{};
-var gzip_three_core: GzipCache = .{};
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
@@ -17594,8 +17585,9 @@ fn respondRevalidatable(arena: std.mem.Allocator, stream: std.Io.net.Stream, hea
     raw_http.writeAllFd(stream.socket.handle, hdr);
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
-/// gzipped when the client asks, they are the two largest bodies this server
-/// sends, and the page is routinely opened from another machine on the LAN.
+/// One of the vendored files, which are the largest bodies this server sends
+/// and are opened from another machine on the LAN, so gzipped when the client
+/// asks.
 ///
 /// The cache lifetime depends on the URL, not the asset: every fetch the
 /// shipped page makes goes through the cache-bust tag (the import map for
@@ -17608,14 +17600,6 @@ fn respondRevalidatable(arena: std.mem.Allocator, stream: std.Io.net.Stream, hea
 /// instead: it is not content-hashed, so revalidation after an hour is what
 /// stops a vendored library upgrade from leaving that browser serving the old
 /// file for up to a year.
-fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
-    respondStatic(gpa, stream, body, cache, "text/javascript; charset=utf-8", accepts_gzip, headers_raw);
-}
-
-fn respondCss(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
-    respondStatic(gpa, stream, body, cache, "text/css; charset=utf-8", accepts_gzip, headers_raw);
-}
-
 fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, content_type: []const u8, accepts_gzip: bool, headers_raw: []const u8) void {
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
@@ -20344,17 +20328,17 @@ test "no vendored JS file exists that the vendor routes have never heard of" {
             std.debug.print("ui/vendor/{s} is not a vendored .js or .css file\n", .{entry.name});
             return error.UnlistedVendorFile;
         }
-        if (!isWebuiVendorFile(entry.name)) {
-            std.debug.print("ui/vendor/{s} is not in webui_vendor_files; add embed + route\n", .{entry.name});
+        if (vendorAssetByName(entry.name) == null) {
+            std.debug.print("ui/vendor/{s} is not in vendor_assets; add embed + route\n", .{entry.name});
             return error.UnlistedVendorFile;
         }
     }
 
-    for (webui_vendor_files) |name| {
+    for (vendor_assets) |asset| {
         var path_buf: [64]u8 = undefined;
-        const rel = try std.fmt.bufPrint(&path_buf, "ui/vendor/{s}", .{name});
+        const rel = try std.fmt.bufPrint(&path_buf, "ui/vendor/{s}", .{asset.name});
         var f = std.Io.Dir.cwd().openFile(io, rel, .{}) catch {
-            std.debug.print("ui/vendor/{s} is listed but missing on disk\n", .{name});
+            std.debug.print("ui/vendor/{s} is listed but missing on disk\n", .{asset.name});
             return error.MissingVendorFile;
         };
         f.close(io);
@@ -20784,26 +20768,26 @@ test "the document CSP carries the import map's own hash" {
     try std.testing.expect(std.mem.find(u8, csp, "; style-src 'self' 'unsafe-inline';") != null);
 }
 
-test "the cache-bust tag hashes every servable vendor file" {
+test "every vendored file is reachable at the path it is served from" {
     // The tag is the cache key for `immutable, max-age=31536000` on every
     // /webui/~<tag>/ response, and the import map plus `loadVendor`'s
     // import.meta.url resolution send every vendored file — the lazy d3/hljs/
     // mermaid/three included — to tagged URLs. A vendored file the tag does
     // not hash can change on disk while its URL stays the same, and returning
     // browsers then serve the old bytes for up to a year, unvalidated (the
-    // hole the untagged max-age=3600 fallback exists to close). `vendor_tag_files`
-    // must therefore name exactly the files the routes serve.
-    try std.testing.expectEqual(webui_vendor_files.len, vendor_tag_files.len);
-    var covered: usize = 0;
-    for (webui_vendor_files) |name| {
-        inline for (vendor_tag_files) |entry| {
-            if (std.mem.eql(u8, name, entry[0])) {
-                covered += 1;
-                break;
-            }
+    // hole the untagged max-age=3600 fallback exists to close). The route, the
+    // bytes and the tag are one table, so what this pins is that every row is
+    // findable by its own path (a duplicated name would shadow the second row
+    // and leave those bytes unserved and untagged).
+    for (vendor_assets, 0..) |asset, i| {
+        var buf: [96]u8 = undefined;
+        const at = try std.fmt.bufPrint(&buf, "{s}{s}", .{ vendor_path_prefix, asset.name });
+        try std.testing.expect(vendorAssetByName(asset.name).? == vendorAsset(at).?);
+        for (vendor_assets[0..i]) |earlier| {
+            try std.testing.expect(!std.mem.eql(u8, earlier.name, asset.name));
         }
+        try std.testing.expect(vendorAsset(try std.fmt.bufPrint(&buf, "/webui/vendor/nope-{s}", .{asset.name})) == null);
     }
-    try std.testing.expectEqual(webui_vendor_files.len, covered);
 }
 
 test "no webui module file exists that the asset route has never heard of" {
