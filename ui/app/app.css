@@ -480,37 +480,9 @@ form[hidden] { display: none; }
    way — a settled row replaces both with its duration. */
 /* A question the run is blocked on (ask_user over the stream): the blue
    strip marks it as the one thing on the panel waiting for the operator. */
-.event-ask {
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--rule));
-  border-radius: var(--radius-lg);
-  padding: var(--space-3);
-  margin: var(--space-2) 0;
-  background: var(--surface);
-  box-shadow: var(--lift-low);
-}
-.event-ask .ask-question {
-  font-family: var(--sans); font-size: var(--step-0);
-  max-width: var(--measure);
-}
-.event-ask .ask-options {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.event-ask .ask-answered {
-  display: flex; align-items: center; gap: var(--space-1);
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  margin-top: var(--space-2);
-}
 /* The truncated arguments of a tool call awaiting confirm-before-write:
    code, so mono, and scrollable rather than page-widening when one long
    line arrives (the server caps the preview, not its line length). */
-.event-confirm .confirm-preview {
-  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-  margin: var(--space-2) 0 0; padding: var(--space-2);
-  background: var(--surface-2); border-radius: var(--radius-sm);
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  max-width: var(--measure); max-height: 20rem; overflow-y: auto;
-}
 /* Notes about a turn's own outcome — stopped, or never answered. Real text
    rather than generated content, so they survive Copy answer and reach a
    screen reader the same way the answer does. */

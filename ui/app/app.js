@@ -246,6 +246,15 @@ var controller = null;
 var elapsedTimer = null;
 var runWaitLabel = "thinking";
 var sessionId = loadSession();
+/* The ask card: the run is blocked on a question, so its plate is the one
+   thing on the panel waiting for the operator. The confirm-before-write shape
+   says `data-role=confirm`; the options one says `data-role=options`. */
+var ASK_CARD_CLASS = "my-1 rounded-plate-lg border border-[color-mix(in_srgb,var(--accent)_18%,var(--rule))] bg-surface p-2 shadow-[var(--lift-low)]";
+var ASK_QUESTION_CLASS = "max-w-measure font-sans text-sm";
+var ASK_OPTIONS_CLASS = "mt-1 flex flex-wrap gap-1";
+var ASK_ANSWERED_CLASS = "mt-1 flex items-center gap-1 font-mono text-sm text-fg-muted";
+var CONFIRM_PREVIEW_CLASS = "mt-1 max-h-80 max-w-measure overflow-y-auto rounded-plate-sm bg-surface-2 p-1 font-mono text-xs whitespace-pre-wrap text-fg-muted wrap-anywhere";
+
 function loadCurrentWorkspace() {
   try { return window.localStorage.getItem("clanker.workspace") || ""; } catch (e) { return ""; }
 }
@@ -1813,7 +1822,8 @@ function addToolEvent(turn, names, calls) {
    nothing else on the page the user can usefully do first. */
 function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   var group = document.createElement("div");
-  group.className = "ask-options";
+  group.className = ASK_OPTIONS_CLASS;
+    group.setAttribute("data-role", "options");
   group.setAttribute("role", "group");
   group.setAttribute("aria-label", ariaLabel);
   evt.options.forEach(function (opt) {
@@ -1888,12 +1898,12 @@ function notifyTurnDone(task) {
 function addAskEvent(turn, evt) {
   if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
   var row = document.createElement("div");
-  row.className = "event-ask";
+  row.className = ASK_CARD_CLASS;
   row.setAttribute("role", "alertdialog");
   row.setAttribute("aria-live", "assertive");
   row.setAttribute("aria-label", evt.question || "Choose an option");
   var q = document.createElement("div");
-  q.className = "ask-question";
+  q.className = ASK_QUESTION_CLASS;
   q.textContent = evt.question || "";
   row.appendChild(q);
   addAskOptionsGroup(turn, row, evt, evt.question || "Choose an option");
@@ -1908,18 +1918,19 @@ function addAskEvent(turn, evt) {
 function addConfirmEvent(turn, evt) {
   if (typeof evt.id !== "number" || !Array.isArray(evt.options)) return;
   var row = document.createElement("div");
-  row.className = "event-ask event-confirm";
+  row.className = ASK_CARD_CLASS;
+  row.setAttribute("data-role", "confirm");
   row.setAttribute("role", "alertdialog");
   row.setAttribute("aria-live", "assertive");
   var label = "Allow this " + (evt.tool || "tool") + " call?";
   row.setAttribute("aria-label", label);
   var q = document.createElement("div");
-  q.className = "ask-question";
+  q.className = ASK_QUESTION_CLASS;
   q.textContent = label;
   row.appendChild(q);
   if (evt.args_preview) {
     var pre = document.createElement("pre");
-    pre.className = "confirm-preview";
+    pre.className = CONFIRM_PREVIEW_CLASS;
     pre.textContent = evt.args_preview;
     row.appendChild(pre);
   }
@@ -1947,7 +1958,7 @@ function answerAsk(row, id, opt) {
    outcome stays in the transcript where the question was. `iconName` marks
    which option was chosen with the drawn icon set, not a typed arrow. */
 function settleAsk(row, text, iconName) {
-  var group = row.querySelector(".ask-options");
+  var group = row.querySelector("[data-role=options]");
   if (group) group.remove();
   // The focused choice was inside the group that was just removed. Keep the
   // keyboard and screen-reader position at the resolved prompt instead of
@@ -1957,7 +1968,7 @@ function settleAsk(row, text, iconName) {
   row.removeAttribute("aria-live");
   row.removeAttribute("aria-label");
   var done = document.createElement("div");
-  done.className = "ask-answered";
+  done.className = ASK_ANSWERED_CLASS;
   done.tabIndex = -1;
   if (iconName) done.appendChild(icon(iconName, 12));
   done.appendChild(document.createTextNode(text));

@@ -1168,6 +1168,12 @@
   --tw-border-style: dashed;
   border-style: dashed;
 }
+.border-\[color-mix\(in_srgb\,var\(--accent\)_18\%\,var\(--rule\)\)\] {
+  border-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in srgb,var(--accent) 18%,var(--rule));
+  }
+}
 .border-\[color-mix\(in_srgb\,var\(--accent\)_45\%\,var\(--rule\)\)\] {
   border-color: var(--accent);
   @supports (color: color-mix(in lab, red, red)) {

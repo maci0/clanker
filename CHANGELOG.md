@@ -613,6 +613,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   it has no page import map to resolve `ui.js`'s vendored import through.
   `core/palette.js` joins the ledger. First paint 59.1K gz.
 
+- The ask card is utilities: the plate a blocked run shows, its question, the
+  option row group, the answered line and the confirm-before-write argument
+  preview. The options group and the confirm shape are `data-role` marks, so
+  the sheet reads what the script writes. First paint 59.0K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`
