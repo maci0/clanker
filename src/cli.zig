@@ -5139,6 +5139,31 @@ const CliGoalLoopContext = struct {
     condition: []const u8,
 };
 
+/// One goal-loop turn: the configured backend when there is one, else a plain
+/// agent turn. Both adapters box a different context, so this lives here once
+/// and each only surfaces the answer its caller expects.
+fn goalLoopRunTurn(a: *agent.Agent, messages: *std.ArrayList(types.Message), ctx: *client.Ctx, arena: std.mem.Allocator, task: []const u8, err_detail: *?[]const u8) anyerror!struct { answer: []const u8, from_backend: bool } {
+    if (try acp_driver.runIfBackend(.{
+        .io = ctx.io,
+        .gpa = ctx.gpa,
+        .arena = arena,
+        .name = .grok,
+        .prompt = task,
+        .timeout_ms = a.cfg.agent.backend_timeout_ms,
+        .acp_argv = a.cfg.agent.backend_acp_argv,
+        .cfg = a.cfg,
+        .environ_map = ctx.environ_map,
+        .reg = a.reg,
+        .session_id = if (a.session_id.len > 0) a.session_id else "backend",
+    }, a.cfg.agent.backend)) |got| {
+        var backend_result = got;
+        defer backend_result.graph.deinit(ctx.gpa);
+        return .{ .answer = backend_result.answer, .from_backend = true };
+    }
+    const resp = try a.run(messages, task, err_detail);
+    return .{ .answer = resp.message.content orelse "", .from_backend = false };
+}
+
 fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
     // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
     const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
@@ -5147,30 +5172,10 @@ fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     run_answer_started = false;
     run_md = .{};
     const started = std.Io.Timestamp.now(loop_ctx.ctx.io, .awake);
-    var used_backend = false;
-    const content = if (try acp_driver.runIfBackend(.{
-        .io = loop_ctx.ctx.io,
-        .gpa = loop_ctx.ctx.gpa,
-        .arena = loop_ctx.arena,
-        .name = .grok,
-        .prompt = task,
-        .timeout_ms = loop_ctx.a.cfg.agent.backend_timeout_ms,
-        .acp_argv = loop_ctx.a.cfg.agent.backend_acp_argv,
-        .cfg = loop_ctx.a.cfg,
-        .environ_map = loop_ctx.ctx.environ_map,
-        .reg = loop_ctx.a.reg,
-        .session_id = if (loop_ctx.a.session_id.len > 0) loop_ctx.a.session_id else "backend",
-    }, loop_ctx.a.cfg.agent.backend)) |got| blk: {
-        used_backend = true;
-        var backend_result = got;
-        defer backend_result.graph.deinit(loop_ctx.ctx.gpa);
-        break :blk backend_result.answer;
-    } else blk: {
-        const resp = try loop_ctx.a.run(loop_ctx.messages, task, &err_detail);
-        break :blk resp.message.content orelse "";
-    };
+    const turn = try goalLoopRunTurn(loop_ctx.a, loop_ctx.messages, loop_ctx.ctx, loop_ctx.arena, task, &err_detail);
+    const content = turn.answer;
     const streamed = loop_ctx.a.on_token != null and loop_ctx.a.cfg.modules.streaming;
-    if (used_backend or !streamed) {
+    if (turn.from_backend or !streamed) {
         if (run_stdout_color) try out.interface.writeAll("\x1b[1;35m› \x1b[0m");
         if (run_stdout_color) {
             run_md.feed(&out.interface, content);
@@ -5236,26 +5241,7 @@ const ServerGoalLoopContext = struct {
 fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
     // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
-    const answer = if (try acp_driver.runIfBackend(.{
-        .io = loop_ctx.ctx.io,
-        .gpa = loop_ctx.ctx.gpa,
-        .arena = loop_ctx.arena,
-        .name = .grok,
-        .prompt = task,
-        .timeout_ms = loop_ctx.a.cfg.agent.backend_timeout_ms,
-        .acp_argv = loop_ctx.a.cfg.agent.backend_acp_argv,
-        .cfg = loop_ctx.a.cfg,
-        .environ_map = loop_ctx.ctx.environ_map,
-        .reg = loop_ctx.a.reg,
-        .session_id = if (loop_ctx.a.session_id.len > 0) loop_ctx.a.session_id else "backend",
-    }, loop_ctx.a.cfg.agent.backend)) |got| blk: {
-        var backend_result = got;
-        defer backend_result.graph.deinit(loop_ctx.ctx.gpa);
-        break :blk backend_result.answer;
-    } else blk: {
-        const resp = try loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail);
-        break :blk resp.message.content orelse "";
-    };
+    const answer = (try goalLoopRunTurn(loop_ctx.a, loop_ctx.messages, loop_ctx.ctx, loop_ctx.arena, task, &loop_ctx.last_err_detail)).answer;
     if (loop_ctx.answers.items.len > 0) try loop_ctx.answers.appendSlice(loop_ctx.arena, "\n\n");
     try loop_ctx.answers.appendSlice(loop_ctx.arena, answer);
     return answer;
