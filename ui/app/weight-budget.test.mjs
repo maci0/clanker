@@ -145,17 +145,18 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 60, raised from 48 by the run graph's port and again by the board lane's.
-  // This number is accounting, not the ceiling: the sheet is absorbing the
-  // cabinet sheets' rules as utilities while both of those still ship, so it
-  // grows by design until phase 6 deletes them — the board's cards, the rail
-  // and the chat are still to come, and each raise names its step here. The binding number is first paint (asserted above), which
+  // 64, raised from 48 three times: the run graph, the board lane, and the card
+  // face. This is accounting, not a ceiling — the sheet absorbs the cabinet
+  // sheets' rules as utilities while both still ship, and phase 6 deletes those
+  // sheets, leaving this one holding the whole UI. What the number is good for
+  // is catching growth that is *not* a view moving over: an `@source` glob
+  // reaching beyond ui/ turns prose in docs or .scratch into rules. The binding number is first paint (asserted above), which
   // counts this sheet plus app.css plus index.html and is what a visitor pays.
   // Watch it there: a *views.css* port moves rules into the blocking sheet and
   // raises first paint, while an *app.css* port leaves it flat — so the
   // remaining views.css-heavy work (Rooms, the tool rows) should land beside
   // an app.css port (the board, the rail, chat) until the deferred sheet goes.
-  assert.ok(css <= 60, `tailwind.css is ${css.toFixed(1)}K raw; budget is 60K`);
+  assert.ok(css <= 64, `tailwind.css is ${css.toFixed(1)}K raw; budget is 64K`);
 });
 
 test("single large files stay inside their budgets", function () {

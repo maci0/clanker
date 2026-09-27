@@ -113,7 +113,7 @@ test("the last column has nowhere to move to, and says so by doing nothing", fun
 test("the actions are a sibling of the card button, not a child of it", function () {
   // The card's <li> carries them, so the accessibility tree sees two ordinary
   // buttons instead of presentational children of a button.
-  assert.match(js, /T\.li\(\{ class: "board-card-item" \}, cardNode\(c\), cardMemberControl\(c\), cardQuickActions\(c\)\)/);
+  assert.match(js, /T\.li\(\{ class: CARD_ITEM_CLASS \}, cardNode\(c\), cardMemberControl\(c\), cardQuickActions\(c\)\)/);
   const cardNodeSrc = js.slice(js.indexOf("function cardNode(c) {"), js.indexOf("function memberInitials(name) {"));
   assert.ok(!/card-quick-actions/.test(cardNodeSrc), "cardNode must not build the actions overlay itself");
   assert.ok(!/card-quick-edit-btn/.test(js), "the occluded duplicate pencil is gone from board.js");
@@ -293,12 +293,17 @@ test("app.css paints the reassign button where the card's own avatar sits", func
   assert.match(css, /\.card-member-slot \{ visibility: hidden; \}/);
   assert.match(css, /\.card-members-overlay \{[^}]*position: absolute/);
   assert.match(css, /\.card-members-overlay \{[^}]*bottom: calc\(0\.5rem \+ 1px\)/);
-  assert.match(css, /\.card-body \{ padding: 0\.55rem 0\.65rem 0\.5rem;/, "that offset is the card body's own padding");
-  assert.match(css, /\.card \{[^}]*overflow: hidden/);
+  // The card body's padding and the card's own clipping are utilities on the
+  // markup now; the offset above still has to agree with that padding.
+  assert.match(js, /var CARD_BODY_CLASS = "[^"]*px-3 pb-2 pt-2/, "that offset is the card body's own padding");
+  assert.match(js, /var CARD_CLASS = "[^"]*overflow-hidden/);
 });
 
 test("app.css positions the actions against the list item that holds them", function () {
-  assert.match(css, /\.board-card-item \{ position: relative; \}/);
+  // The list item is the positioning context: `relative` is a utility on it,
+  // and the hover rule that reveals the actions is still the sheet's until the
+  // actions themselves move over.
+  assert.match(js, /var CARD_ITEM_CLASS = "relative"/);
   assert.match(css, /\.board-card-item:hover \.card-quick-actions, \.board-card-item:focus-within \.card-quick-actions \{ display: flex; \}/);
   // A `.card ... .card-quick-actions` descendant rule would mean they had been
   // put back inside the button.

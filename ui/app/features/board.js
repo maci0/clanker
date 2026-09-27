@@ -348,7 +348,7 @@ function boardColumn(col, s) {
 
   // Trello-style empty lane placeholder — with quick-add affordance
   var items = shown.map(function (c) {
-    return T.li({ class: "board-card-item" }, cardNode(c), cardMemberControl(c), cardQuickActions(c));
+    return T.li({ class: CARD_ITEM_CLASS }, cardNode(c), cardMemberControl(c), cardQuickActions(c));
   });
   if (!shown.length) {
     var emptySlot = document.createElement("li");
@@ -698,10 +698,25 @@ function dismissOnOutside(node, extra) {
   return closePop;
 }
 
+/* The card face — shell and its states, body, title, description preview,
+   progress bar, flag and meta row — as Tailwind utilities over the cabinet
+   tokens. The card is a `group`: the title's hover and current colours read the
+   card's own state, and the states it carries are data attributes. */
+var CARD_ITEM_CLASS = "relative";
+var CARD_CLASS = "group relative flex w-full cursor-pointer flex-col overflow-hidden rounded-plate border border-rule bg-surface p-0 text-left font-sans text-sm leading-normal text-fg shadow-[var(--lift)] transition duration-150 hover:z-1 hover:border-border hover:shadow-[var(--lift-high)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 active:translate-y-0 aria-[current=true]:shadow-[inset_3px_0_0_var(--accent),var(--lift-low)] data-[dragging=true]:rotate-1 data-[dragging=true]:scale-[0.97] data-[dragging=true]:opacity-85 data-[dragging=true]:shadow-[var(--lift-high)]";
+var CARD_BODY_CLASS = "flex flex-col gap-1 px-3 pb-2 pt-2";
+var CARD_TITLE_CLASS = "font-medium leading-snug wrap-anywhere group-hover:text-accent-text group-focus-visible:text-accent-text group-aria-[current=true]:text-accent-text";
+var CARD_DESC_PREVIEW_CLASS = "mt-px line-clamp-2 text-xs leading-snug text-fg-muted";
+var CARD_PROGRESS_CLASS = "text-xs text-fg-muted";
+var CARD_PROGRESS_BAR_CLASS = "mt-1 h-1 overflow-hidden rounded-capsule bg-surface-2 [&>span]:block [&>span]:h-full [&>span]:rounded-capsule [&>span]:bg-accent [&[data-done=true]>span]:bg-ok-fill";
+var CARD_BOTTOM_CLASS = "mt-px flex items-center justify-between gap-1";
+var CARD_FLAG_CLASS = "rounded-capsule border border-rule px-2 py-1 text-xs font-medium data-[priority=high]:border-danger data-[priority=high]:bg-danger data-[priority=high]:text-on-danger data-[priority=low]:bg-[color-mix(in_srgb,var(--surface-2)_85%,transparent)] data-[priority=low]:text-fg-muted data-[due=soon]:border-warn data-[due=soon]:bg-warn data-[due=soon]:text-on-danger data-[due=late]:border-danger data-[due=late]:bg-danger data-[due=late]:text-on-danger data-[blocked=true]:bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] data-[blocked=true]:text-fg-muted data-[goal=true]:bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] data-[goal=true]:text-accent-text";
+var CARD_META_CLASS = "flex flex-wrap gap-x-2 gap-y-1 text-xs leading-snug text-fg-muted tabular-nums";
+
 function cardNode(c) {
   var b = document.createElement("button");
   b.type = "button";
-  b.className = "card";
+  b.className = CARD_CLASS;
   if (c.priority && c.priority !== "normal") b.setAttribute("data-priority", c.priority);
   b.draggable = true;
   b.setAttribute("data-card", c.id);
@@ -727,7 +742,7 @@ function cardNode(c) {
 
   // Card body wrapper (inside padding)
   var body = document.createElement("div");
-  body.className = "card-body";
+  body.className = CARD_BODY_CLASS;
 
   // The only way to move a card without a pointer, so it says so rather than
   // living in a source comment.
@@ -750,7 +765,7 @@ function cardNode(c) {
   }
 
   var title = document.createElement("span");
-  title.className = "card-title";
+  title.className = CARD_TITLE_CLASS;
   title.textContent = c.title;
   body.appendChild(title);
 
@@ -760,7 +775,7 @@ function cardNode(c) {
   // card ever showed a preview.
   if (c.body && c.body.trim()) {
     var descPrev = document.createElement("span");
-    descPrev.className = "card-desc-preview";
+    descPrev.className = CARD_DESC_PREVIEW_CLASS;
     descPrev.textContent = clip(c.body.trim(), 120);
     body.appendChild(descPrev);
   }
@@ -857,7 +872,7 @@ function cardNode(c) {
     var totalN2 = c.subtasks.length;
     var pct2 = totalN2 ? Math.round(doneN2 / totalN2 * 100) : 0;
     var bar = document.createElement("div");
-    bar.className = "card-progress-bar";
+    bar.className = CARD_PROGRESS_BAR_CLASS;
     bar.setAttribute("data-done", String(doneN2 === totalN2 && totalN2 > 0));
     bar.setAttribute("role", "progressbar");
     bar.setAttribute("aria-valuenow", String(pct2));
@@ -872,12 +887,12 @@ function cardNode(c) {
 
   // Bottom row: priority flag + members avatar
   var bottom = document.createElement("span");
-  bottom.className = "card-bottom";
+  bottom.className = CARD_BOTTOM_CLASS;
   var hasBottom = false;
 
   if (c.priority && c.priority !== "normal") {
     var pr = document.createElement("span");
-    pr.className = "card-flag";
+    pr.className = CARD_FLAG_CLASS;
     pr.setAttribute("data-priority", c.priority);
     pr.textContent = c.priority;
     bottom.appendChild(pr);
@@ -1832,7 +1847,7 @@ function showCardDetail(id) {
       deps.className = "checklist-deps";
       (s.depends_on || []).forEach(function (id) {
         var dep = document.createElement("span");
-        dep.className = "card-flag";
+        dep.className = CARD_FLAG_CLASS;
         dep.textContent = "waits on " + (subById[id] ? subById[id].text : id);
         var clear = document.createElement("button");
         clear.type = "button";
@@ -1914,7 +1929,7 @@ function showCardDetail(id) {
     var tN = c.subtasks.length;
     var pct2 = tN ? Math.round(dN / tN * 100) : 0;
     var track = document.createElement("div");
-    track.className = "card-progress-bar";
+    track.className = CARD_PROGRESS_BAR_CLASS;
     track.setAttribute("data-done", String(dN === tN && tN>0));
     track.setAttribute("role", "progressbar");
     track.setAttribute("aria-valuenow", String(pct2));
@@ -1925,7 +1940,7 @@ function showCardDetail(id) {
     fill2.style.width = pct2 + "%";
     track.appendChild(fill2);
     var pctLabel = document.createElement("span");
-    pctLabel.className = "card-progress"; pctLabel.textContent = fmtInt(dN) + "/" + fmtInt(tN) + " · " + fmtPct(pct2, 0);
+    pctLabel.className = CARD_PROGRESS_CLASS; pctLabel.textContent = fmtInt(dN) + "/" + fmtInt(tN) + " · " + fmtPct(pct2, 0);
     pctLabel.style.marginLeft = "var(--space-3)";
     var progRow = document.createElement("div");
     progRow.className = "detail-row";

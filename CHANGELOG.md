@@ -270,6 +270,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   A bare attribute variant (`[hidden]:hidden`) is allowed by the arbitrary-value
   check: an attribute selector is a variant, not a value.
 
+- The board card's face is styled with Tailwind utilities: the plate with its
+  hover, active, focus, current, dragging and priority states, the body, title,
+  description preview, progress bar, flag and meta row, all in
+  `ui/app/features/board.js`. The card is a `group`, so the title's hover and
+  current colours read the card's own state instead of a descendant selector.
+  Two assertions that pinned `.card` and `.card-body` in `app.css` now check
+  the utility strings they moved to, because the overlay's offset still has to
+  agree with the body's padding. First paint 61.7K gz; the sheet's accounting
+  figure moves to 64K with the reasoning beside it.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive
