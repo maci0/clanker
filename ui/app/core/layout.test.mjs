@@ -41,15 +41,17 @@ test("operator sections fill the main column", function () {
 });
 
 test("Chat header, transcript and composer share the full column width", function () {
-  const headerMax = decl(ruleBody("#view-chat .conversation-header"), "max-width");
-  const composerMax = decl(ruleBody("#view-chat .composer"), "max-width");
-  assert.ok(fillsColumn(headerMax), "Chat header should fill, got " + headerMax);
-  assert.ok(fillsColumn(composerMax), "Chat composer should fill, got " + composerMax);
-  assert.equal(headerMax, composerMax);
-
-  const combined = /#view-chat \.conversation-scroll \.transcript[\s\S]{0,160}max-width:\s*([^;]+)/.exec(css);
-  assert.ok(combined, "Chat transcript must set max-width");
-  assert.equal(combined[1].trim(), headerMax);
+  // The chat column's widths are utilities on the view element now, so the
+  // guard reads the markup: the three parts share one list and none of them
+  // clamps itself.
+  const html = readFileSync(join(here, "..", "index.html"), "utf8");
+  const view = /<div class="([^"]*)" id="view-chat"/.exec(html);
+  assert.ok(view, "missing the chat view's class list");
+  for (const part of ["[&_.conversation-header]", "[&_.composer]", "[&_.suggestions]"]) {
+    assert.match(view[1], new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "Chat " + part + " must be sized by the view");
+  }
+  const combined = /\[&_\.conversation-scroll_\.transcript\]:max-w-none/.exec(view[1]);
+  assert.ok(combined, "Chat transcript must fill the column");
 });
 
 const THEME_NAMES = [

@@ -10,9 +10,12 @@ const html = readFileSync(join(here, "..", "index.html"), "utf8");
 const css = readFileSync(join(here, "..", "app.css"), "utf8");
 
 test("empty Chat hides session verbs and find", function () {
-  assert.match(css, /#view-chat\.chat-empty #session-acts-body/);
-  assert.match(css, /#view-chat\.chat-empty #transcript-tools/);
-  assert.match(css, /display:\s*none/);
+  // The empty state is an attribute on the view, and the script that knows it
+  // hides the three nodes the sheet used to name.
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.match(app, /setAttribute\("data-empty", empty \? "true" : "false"\)/);
+  assert.match(app, /"session-acts-body", "session-more", "transcript-tools"/);
+  assert.match(app, /node\.hidden = empty/);
 });
 
 test("a page load starts a new conversation instead of replaying the last session", function () {

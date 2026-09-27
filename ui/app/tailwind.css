@@ -86,6 +86,9 @@
 .top-1 {
   top: var(--space-1);
 }
+.top-3 {
+  top: var(--space-3);
+}
 .top-full {
   top: 100%;
 }
@@ -3417,6 +3420,63 @@
     opacity: 100%;
   }
 }
+.\[\&_\.composer\]\:relative .composer {
+  position: relative;
+}
+.\[\&_\.composer\]\:z-3 .composer {
+  z-index: 3;
+}
+.\[\&_\.composer\]\:mt-1 .composer {
+  margin-top: var(--space-1);
+}
+.\[\&_\.composer\]\:flex-none .composer {
+  flex: none;
+}
+.\[\&_\.conversation-header\]\:w-full .conversation-header {
+  width: 100%;
+}
+.\[\&_\.conversation-header\]\:flex-none .conversation-header {
+  flex: none;
+}
+.\[\&_\.conversation-header_\.run-picker\]\:m-0 .conversation-header .run-picker {
+  margin: 0px;
+}
+.\[\&_\.conversation-header_\.section-head\]\:mb-1 .conversation-header .section-head {
+  margin-bottom: var(--space-1);
+}
+.\[\&_\.conversation-header_\.section-head\]\:items-center .conversation-header .section-head {
+  align-items: center;
+}
+.\[\&_\.conversation-header_\.session-status-bar\]\:mb-1 .conversation-header .session-status-bar {
+  margin-bottom: var(--space-1);
+}
+.\[\&_\.conversation-scroll\]\:flex-1 .conversation-scroll {
+  flex: 1;
+}
+.\[\&_\.conversation-scroll\]\:overflow-x-hidden .conversation-scroll {
+  overflow-x: hidden;
+}
+.\[\&_\.conversation-scroll\]\:overflow-y-auto .conversation-scroll {
+  overflow-y: auto;
+}
+.\[\&_\.conversation-scroll\]\:overscroll-contain .conversation-scroll {
+  overscroll-behavior: contain;
+}
+.\[\&_\.conversation-scroll\]\:pb-1 .conversation-scroll {
+  padding-bottom: var(--space-1);
+}
+.data-\[empty\=true\]\:\[\&_\.conversation-scroll\]\:flex-none[data-empty="true"] .conversation-scroll {
+  flex: none;
+}
+.data-\[empty\=true\]\:\[\&_\.conversation-scroll\]\:overflow-visible[data-empty="true"] .conversation-scroll {
+  overflow: visible;
+}
+.\[\&_\.conversation-scroll_\.run-empty\]\:max-w-none .conversation-scroll .run-empty {
+  max-width: none;
+}
+.\[\&_\.conversation-scroll_\.transcript\]\:max-w-none .conversation-scroll .transcript {
+  max-width: none;
+}
 .\[\&_\.danger\]\:border-danger .danger {
   border-color: var(--danger);
 }
@@ -3477,6 +3537,15 @@
 }
 .\[\&_\.section-head\]\:gap-y-3 .section-head {
   row-gap: var(--space-3);
+}
+.\[\&_\.suggestions\]\:w-full .suggestions {
+  width: 100%;
+}
+.\[\&_\.suggestions\]\:flex-none .suggestions {
+  flex: none;
+}
+.data-\[empty\=true\]\:\[\&_\.suggestions\]\:mt-4[data-empty="true"] .suggestions {
+  margin-top: var(--space-4);
 }
 .data-\[orphan\=true\]\:\[\&_\.turn-author\]\:text-fg-muted[data-orphan="true"] .turn-author {
   color: var(--fg-muted);

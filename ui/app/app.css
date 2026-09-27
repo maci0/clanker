@@ -411,51 +411,11 @@ main {
 .view > section { max-width: none; width: 100%; }
 
 /* Conversation column: header / scrollport / docked composer, full width. */
-#view-chat {
-  display: flex; flex-direction: column;
-  flex: 1 1 auto; min-height: 0; width: 100%;
-}
-#view-chat[hidden] { display: none; }
-#view-chat .conversation-header {
-  flex: none; width: 100%; max-width: none; margin-inline: 0;
-}
-#view-chat .conversation-header .section-head {
-  margin-bottom: var(--space-2);
-  align-items: center;
-}
-#view-chat .conversation-header h2#session-title { flex: 1 1 10rem; min-width: 0; }
-#view-chat .conversation-header .run-picker { margin: 0; }
-#view-chat .conversation-header .session-status-bar { margin-bottom: var(--space-2); }
-#view-chat .conversation-scroll {
-  flex: 1 1 auto; min-height: 5.5rem; overflow-x: hidden; overflow-y: auto;
-  overscroll-behavior: contain;
-  width: 100%;
-  padding-bottom: var(--space-2);
-}
-#view-chat .conversation-scroll .transcript,
-#view-chat .conversation-scroll .run-empty {
-  max-width: none; width: 100%; margin-inline: 0;
-}
-#view-chat .composer {
-  flex: none; position: relative; z-index: 3;
-  width: 100%; max-width: none; margin: var(--space-2) 0 0;
-}
-#view-chat .suggestions {
-  flex: none; width: 100%; max-width: none; margin-inline: 0;
-}
 /* Suggestions belong to the empty state only; once a turn exists the column
    is transcript over docked composer with nothing beneath it. */
-#view-chat:not(.chat-empty) .suggestions { display: none; }
 /* Idle Chat is a work-order stack, not a centered chat-product hero:
    legend plate, composer, jobs. Session verbs and find wait until a
    turn exists (they stay in the palette). */
-#view-chat.chat-empty .conversation-scroll {
-  flex: none; min-height: 0; overflow: visible;
-}
-#view-chat.chat-empty .suggestions { margin-top: var(--space-4); }
-#view-chat.chat-empty #session-acts-body,
-#view-chat.chat-empty #session-more,
-#view-chat.chat-empty #transcript-tools { display: none; }
 .plan-toggle.safety-toggle span {
   font-family: var(--mono); letter-spacing: var(--track-label);
 }

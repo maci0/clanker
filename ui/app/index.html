@@ -180,7 +180,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
 <div class="shell min-w-0" tabindex="-1">
 <main id="main" tabindex="-1">
-  <div class="view conversation" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
+  <div class="view conversation flex min-h-0 w-full flex-1 flex-col [&_.conversation-header]:w-full [&_.conversation-header]:flex-none [&_.conversation-header_.section-head]:mb-1 [&_.conversation-header_.section-head]:items-center [&_.conversation-header_.run-picker]:m-0 [&_.conversation-header_.session-status-bar]:mb-1 [&_.conversation-scroll]:flex-1 [&_.conversation-scroll]:overflow-x-hidden [&_.conversation-scroll]:overflow-y-auto [&_.conversation-scroll]:overscroll-contain [&_.conversation-scroll]:pb-1 [&_.conversation-scroll_.transcript]:max-w-none [&_.conversation-scroll_.run-empty]:max-w-none [&_.composer]:relative [&_.composer]:z-3 [&_.composer]:mt-1 [&_.composer]:flex-none [&_.suggestions]:w-full [&_.suggestions]:flex-none data-[empty=true]:[&_.conversation-scroll]:flex-none data-[empty=true]:[&_.conversation-scroll]:overflow-visible data-[empty=true]:[&_.suggestions]:mt-4" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
     <!-- Conversation column: header, scrolling transcript, docked composer.
          No aria-live here: each turn's answer is its own live region (see
          createTurn). Nesting one inside the other made a screen reader announce
@@ -189,7 +189,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <!-- A heading, not the kicker this used to be: it names the conversation
          rather than labelling the row beneath it. -->
     <div class="section-head">
-      <h2 id="session-title">New conversation</h2>
+      <h2 class="min-w-0 flex-1 basis-40" id="session-title">New conversation</h2>
       <div class="run-picker [&_input[type=search]]:max-[640px]:[font-size:16px]" id="session-picker">
         <div class="session-actions">
           <div class="session-acts-body" id="session-acts-body">

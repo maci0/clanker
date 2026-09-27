@@ -586,6 +586,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   rather than classes the sheet stopped styling. The chip's optical paddings
   became cabinet rungs. First paint 59.7 → 59.2K gz.
 
+- The Chat view's chrome is utilities: its column, the conversation header and
+  its heading, the scrollport, the docked composer and the suggestions grid are
+  sized by class lists on the view element, and the idle state is the view's
+  `data-empty` attribute rather than a `.chat-empty` class. Session verbs and
+  find are hidden by the script when the state changes, which is where the
+  knowledge lives — a descendant rule in the sheet was the other way. First
+  paint 59.2 → 59.4K gz (the utilities for the view's parts cost more than the
+  rules they replace, and the sheet still carries the rest of the cabinet).
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

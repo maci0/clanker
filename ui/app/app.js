@@ -841,8 +841,15 @@ function syncTranscriptEmpty() {
   var empty = el.transcript.querySelector(".turn") === null;
   el.transcriptEmpty.hidden = !empty;
   // Empty conversations keep the idle plate, composer and jobs stacked from
-  // the top; the first turn docks the composer to the bottom.
-  document.getElementById("view-chat").classList.toggle("chat-empty", empty);
+  // the top; the first turn docks the composer to the bottom. Session verbs
+  // and find belong to a conversation that exists, so the empty state hides
+  // them — the sheet used to say that with a descendant rule, and the script
+  // that knows the state is the one place that can.
+  document.getElementById("view-chat").setAttribute("data-empty", empty ? "true" : "false");
+  ["session-acts-body", "session-more", "transcript-tools"].forEach(function (id) {
+    var node = document.getElementById(id);
+    if (node) node.hidden = empty;
+  });
 }
 
 function loadSessions() {
@@ -1579,7 +1586,7 @@ var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted in-aria-selected:text-acce
 
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
-  document.getElementById("view-chat").classList.remove("chat-empty");
+  document.getElementById("view-chat").setAttribute("data-empty", "false");
   var turn = document.createElement("div");
   turn.className = TURN_CLASS;
 
