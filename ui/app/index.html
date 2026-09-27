@@ -486,12 +486,12 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="runs">
         <section aria-labelledby="arena-list-head">
           <h3 id="arena-list-head" class="sr-only">Matches</h3>
-          <div id="arena-list" class="arena-list"></div>
+          <div id="arena-list" class="flex flex-col gap-2"></div>
         </section>
         <!-- Who is fighting, in DOM: label, persona, and a real HP bar per
              combatant. The canvas below repeats this as pixels; this row is
              what a screen reader (and a reduced-motion session) actually gets. -->
-        <div id="arena-combatants" class="arena-combatants"></div>
+        <div id="arena-combatants" class="my-2 flex flex-wrap gap-x-4 gap-y-2"></div>
         <!-- The canvas is decorative; #arena-status carries the same state in
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
@@ -506,8 +506,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <!-- HP over the match, one stepped line per combatant: the same story
              the transcript tells, as a chart. Decorative for the same reason
              the stage is; the transcript is the record. -->
-        <details id="arena-graph" class="arena-graph" hidden open>
-          <summary>Match graph — HP by move</summary>
+        <details id="arena-graph" class="my-1" hidden open>
+          <summary class="my-1 cursor-pointer text-sm text-fg-muted">Match graph — HP by move</summary>
           <canvas class="pixel-canvas" id="arena-hp-canvas" width="640" height="150" aria-hidden="true"></canvas>
           <p class="meta" id="arena-graph-caption"></p>
         </details>

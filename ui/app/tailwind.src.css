@@ -96,6 +96,18 @@
     transform: translateY(-0.08em) rotate(45deg);
   }
 
+  /* A lamp lit: here the dome is the element itself (the Health tile draws its
+     dome on a pseudo-element), and a lit lamp carries two shadows — the ring
+     plus the glow — where one shadow utility composes one value. The element
+     states its geometry (`h-2 w-2 rounded-full bg-lamp-dome`) and this rule
+     supplies the colour and the light. */
+  .lit[data-state="done"] { color: var(--ok); box-shadow: var(--lamp-ring), var(--lamp-glow); }
+  .lit[data-state="running"] { color: var(--warn); box-shadow: var(--lamp-ring), var(--lamp-glow); }
+  @media (prefers-reduced-motion: no-preference) {
+    .lit[data-state="running"] { animation: lamp-pulse 1.4s ease-in-out infinite; }
+  }
+  @keyframes lamp-pulse { 50% { opacity: 0.35; } }
+
   /* The bar column takes the slack of the table, so the labels and numbers stay
      put and only the picture stretches. A share of the table, not a rung. */
   .health-band-barcell { width: 55%; }

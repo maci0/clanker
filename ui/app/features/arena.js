@@ -222,7 +222,7 @@ function renderPicker(matches) {
     // The lamp says how it ended at a glance: green a verdict, amber still
     // running, grey a draw. Same vocabulary as the rest of the panel.
     var lamp = document.createElement("span");
-    lamp.className = "arena-lamp";
+    lamp.className = "lit h-2 w-2 flex-none rounded-full bg-lamp-dome text-fg-muted";
     var running = !m.winner && !m.headline;
     lamp.dataset.state = running ? "running" : (m.winner === "draw" ? "draw" : "done");
     lamp.setAttribute("aria-hidden", "true");
@@ -275,19 +275,19 @@ function renderTranscript(m) {
 
   (m.rounds || []).forEach(function (r, ri) {
     var fold = document.createElement("details");
-    fold.className = "arena-round";
+    fold.className = "my-2";
     // The newest round is the one being followed; older rounds fold away so
     // a long match stays scannable, like the transcript's tool cards.
     fold.open = ri === (m.rounds.length - 1);
     var h = document.createElement("summary");
+    h.className = "my-2 cursor-pointer text-sm font-semibold";
     h.textContent = "Round " + r.round + " — " + (r.moves || []).length + " move(s)";
     fold.appendChild(h);
     host.appendChild(fold);
     (r.moves || []).forEach(function (mv) {
       var card = document.createElement("div");
-      card.className = "tool-card";
+      card.className = "ml-4";
       var title = document.createElement("div");
-      title.className = "tool-card-head";
       var bits = [mv.label, mv.move];
       if (mv.target_label && mv.target_label !== mv.label) bits.push("at " + mv.target_label);
       var nums = [];
@@ -298,7 +298,6 @@ function renderTranscript(m) {
       title.textContent = bits.join(" ") + " · " + nums.join(", ");
       card.appendChild(title);
       var body = document.createElement("div");
-      body.className = "tool-card-body";
       body.textContent = mv.forfeit ? ("forfeited the round: " + (mv.error || "no reply")) : mv.text;
       card.appendChild(body);
       var flags = [];
@@ -319,12 +318,10 @@ function renderTranscript(m) {
 
   if (m.verdict) {
     var v = document.createElement("div");
-    v.className = "tool-card arena-verdict";
+    v.className = "border-accent";
     var vh = document.createElement("div");
-    vh.className = "tool-card-head";
     vh.textContent = "Verdict: " + m.verdict.headline;
     var vb = document.createElement("div");
-    vb.className = "tool-card-body";
     vb.textContent = m.verdict.answer || "";
     v.appendChild(vh);
     v.appendChild(vb);
@@ -697,23 +694,23 @@ function renderCombatants(m) {
   var pal = arenaTheme();
   (m.combatants || []).forEach(function (c, i) {
     var chip = document.createElement("div");
-    chip.className = "arena-combatant";
+    chip.className = "group flex items-center gap-2 text-sm data-[out=true]:opacity-55";
     if (c.eliminated || c.conceded) chip.dataset.out = "true";
     if (m.verdict && m.verdict.winner === i) chip.dataset.winner = "true";
     var dot = document.createElement("span");
-    dot.className = "arena-swatch";
+    dot.className = "h-2.5 w-2.5 flex-none rounded-plate-sm";
     dot.style.background = peerColor(c.label || String(i));
     dot.setAttribute("aria-hidden", "true");
     var name = document.createElement("span");
-    name.className = "arena-combatant-name";
+    name.className = "group-data-[winner=true]:font-semibold group-data-[winner=true]:text-ok";
     name.textContent = c.label || ("#" + (i + 1));
     if (c.persona) name.title = c.persona;
     var bar = document.createElement("span");
-    bar.className = "arena-hp";
+    bar.className = "h-[7px] w-[90px] flex-none overflow-hidden rounded-capsule border border-rule bg-surface-2";
     bar.setAttribute("role", "img");
     bar.setAttribute("aria-label", (c.label || "") + " " + c.hp + " of " + (c.max_hp || 100) + " HP");
     var fill = document.createElement("span");
-    fill.className = "arena-hp-fill";
+    fill.className = "block h-full rounded-capsule";
     var frac = (c.max_hp ? c.hp / c.max_hp : 0);
     fill.style.width = Math.max(0, Math.min(100, Math.round(frac * 100))) + "%";
     fill.style.background = hpColor((c.max_hp ? c.hp / c.max_hp : 0), pal);

@@ -1352,62 +1352,6 @@ button.tool-name:hover { color: var(--accent-text); }
 
 
 
-/* Arena: the match picker rows. The stage reuses .fleet-floor, and the
-   transcript reuses the tool-call card style used everywhere else, so nothing
-   here is a new visual language. */
-.arena-list { display: flex; flex-direction: column; gap: 4px; }
-
-.arena-pick { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; }
-
-.arena-pick[aria-pressed="true"] { border-color: var(--accent, var(--ok)); }
-
-.arena-pick-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
-
-.arena-pick-outcome { flex: none; }
-
-/* Named a lamp, so it is one: the dome, not a flat dot in an amber that
-   belonged to no palette. Colour comes from `color:`, geometry from the
-   token. */
-.arena-lamp {
-  flex: none; width: 8px; height: 8px; border-radius: 50%;
-  color: var(--fg-muted); background: var(--lamp-dome);
-}
-
-.arena-lamp[data-state="done"] { color: var(--ok); box-shadow: var(--lamp-ring), var(--lamp-glow); }
-
-.arena-lamp[data-state="running"] { color: var(--warn); box-shadow: var(--lamp-ring), var(--lamp-glow); }
-
-@media (prefers-reduced-motion: no-preference) {
-  .arena-lamp[data-state="running"] { animation: arena-lamp-pulse 1.4s ease-in-out infinite; }
-}
-
-@keyframes arena-lamp-pulse { 50% { opacity: 0.35; } }
-
-.arena-combatants { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-2) 0; }
-
-.arena-combatant { display: flex; align-items: center; gap: var(--space-2); font-size: var(--step-0); }
-
-.arena-combatant[data-out="true"] { opacity: 0.55; }
-
-.arena-combatant[data-winner="true"] .arena-combatant-name { color: var(--ok); font-weight: 600; }
-
-.arena-swatch { width: 10px; height: 10px; border-radius: var(--radius-sm); flex: none; }
-
-.arena-hp { width: 90px; height: 7px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-pill); overflow: hidden; flex: none; }
-
-.arena-hp-fill { display: block; height: 100%; border-radius: var(--radius-pill); }
-
-.arena-graph > summary { cursor: pointer; font-size: var(--step-0); color: var(--fg-muted); margin: 4px 0; }
-
-.arena-round { margin: 0.5rem 0; }
-
-.arena-round > summary { cursor: pointer; font-weight: 600; font-size: var(--step-0); margin: var(--space-2) 0; }
-
-.arena-round .tool-card { margin-left: var(--space-4); }
-
-.arena-verdict { border-color: var(--accent, var(--ok)); }
-
-
 /* Compare: the blind side-by-side. Columns are deliberately identical to each
    other — equal width, one shared surface, no ordering cue beyond the letter —
    because any per-column decoration is a place a reader could learn something

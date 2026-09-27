@@ -129,6 +129,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   its grid strings cost ~0.2K gz. The number comes back down when the port is
   finished and the last sheet is gone.
 
+- The Arena view is styled with Tailwind utilities; its rules left
+  `views.css`. The match lamp is the one component rule it needed: the dome is
+  the element itself here (the Health tile draws its dome on a pseudo-element)
+  and a lit lamp carries two shadows that one shadow utility cannot compose, so
+  `.lit[data-state="done|running"]` holds the colour and the light while the
+  markup states the geometry. The reduced-motion pulse moved with it. A
+  combatant's eliminated and winner states are `data-out`/`data-winner` on the
+  chip, read by its own and its name's utilities; the HP bar and swatch carry
+  their pixel measurements as geometry. Three rules for classes no markup used
+  since the HP chart moved to a canvas (`arena-hp`, `arena-hp-fill`,
+  `arena-graph > summary`) are deleted, not ported, and `tool-card` and its two
+  child classes — which had no rule beyond Arena's own left margin — are gone
+  from Arena and Compare.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

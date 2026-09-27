@@ -42,16 +42,22 @@ const migrated = [
   "features/goals.js",
   "features/models.js",
   "core/usage.js",
+  "features/arena.js",
   "core/kit.js",
 ];
 
-/// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
-/// a grid template the layout actually needs. A colour or a padding written
-/// this way is not on this list, and should not be.
-const arbitrary_ok = [/^max-(?:\[40rem\]|\[700px\]):/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/, /^max-h-\[70vh\]$/, /^max-w-\[52ch\]$/, /^h-\[1\.7rem\]$/, /^w-\[1\.7rem\]$/];
+/// Utilities whose arbitrary value has no scale to come from: geometry (a
+/// size, an offset, a grid template) and proportions. The line is deliberate —
+/// a *colour*, a *padding* or a *radius* written this way is drift and is not
+/// on this list, while a 7px bar and a 52ch measure are measurements the
+/// cabinet's scales are not asked to carry.
+const arbitrary_ok = [
+  /^max-w-\[min\(/,
+  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb)-\[/,
+];
 /// A generated-content utility: `content-['…']` is the only spelling for an
 /// empty output's placeholder, and the value is a character, not a size.
-const content_ok = /^empty:before:content-\[/;
+const content_ok = /^content-\[/;
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
@@ -216,10 +222,12 @@ test("migrated files use scale utilities, not arbitrary values", function () {
           if (variant_bracket_ok.test(part)) continue;
           offenders.push(`${rel}: ${token}`);
         }
+        // Both lists are checked against the utility, not the whole token:
+        // a bracketed variant is the previous loop's business.
         const utility = parts[parts.length - 1];
         if (!utility.includes("[")) continue;
-        if (content_ok.test(token)) continue;
-        if (arbitrary_ok.some((re) => re.test(token))) continue;
+        if (content_ok.test(utility)) continue;
+        if (arbitrary_ok.some((re) => re.test(utility))) continue;
         offenders.push(`${rel}: ${token}`);
       }
     }

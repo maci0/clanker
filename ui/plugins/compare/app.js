@@ -164,7 +164,7 @@ clanker.registerView({
         host.appendChild(api.el("p", "meta compare-your-pick", mine));
       }
       if (doc.synthesis) {
-        var card = api.el("div", "tool-card");
+        var card = api.el("div");
         card.appendChild(api.el("div", null, "Merged answer"));
         card.appendChild(api.el("div", null, doc.synthesis));
         host.appendChild(card);
