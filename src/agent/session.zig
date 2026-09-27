@@ -84,7 +84,12 @@ pub const validSessionId = @import("../util/session_id.zig").validSessionId;
 /// `CREATE TABLE IF NOT EXISTS` never touches a database that already has
 /// the table, so a column added only to `schema` is missing from every
 /// session written by an older build and every read of it fails.
-const added_message_columns = [_][:0]const u8{
+///
+/// Exported for the same reason `messages_ddl` is: a mesh replica holds this
+/// projection in its own database, and a replica written by a build that
+/// predates a column needs the same ALTER or the owner's read path (which
+/// selects every column by name) fails against it forever.
+pub const added_message_columns = [_][:0]const u8{
     "ALTER TABLE messages ADD COLUMN steered INTEGER NOT NULL DEFAULT 0;",
 };
 

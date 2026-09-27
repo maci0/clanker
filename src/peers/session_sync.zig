@@ -465,7 +465,7 @@ test "the replica messages table matches the owner schema" {
     const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/replica.db", .{&env.tmp.sub_path});
     var store = try session_events.Store.open(arena, try arena.dupeZ(u8, path));
     defer store.close();
-    ensureMessages(&store);
+    try ensureMessages(&store);
 
     // The owner read path selects every transcript column by name; a
     // drifted replica shape fails it, and with it any resume from the
@@ -487,18 +487,67 @@ test "the replica messages table matches the owner schema" {
     try std.testing.expectEqual(@as(i64, 0), chk.columnInt(0));
 }
 
+test "a replica written by an older build gains the columns added since" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/old-replica.db", .{&env.tmp.sub_path});
+    var store = try session_events.Store.open(arena, try arena.dupeZ(u8, path));
+    defer store.close();
+
+    // The table as it shipped before any column was added. `CREATE TABLE IF NOT
+    // EXISTS` leaves it exactly so, so without the owner's ALTER list the
+    // replica keeps this shape for good and every read of it by the owner read
+    // path fails on the missing column.
+    try store.conn.exec(
+        \\CREATE TABLE messages (
+        \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        \\  role TEXT NOT NULL,
+        \\  content TEXT,
+        \\  images TEXT,
+        \\  tool_calls TEXT,
+        \\  tool_call_id TEXT
+        \\);
+    );
+
+    try ensureMessages(&store);
+    // Idempotent: a second call must not report the duplicate column as a
+    // failure, since every pull runs it again.
+    try ensureMessages(&store);
+
+    var rd = try store.conn.prepare(
+        \\SELECT role, content, images, tool_calls, tool_call_id, steered FROM messages ORDER BY seq;
+    );
+    defer rd.finalize();
+    try std.testing.expectEqual(sqlite.Step.done, try rd.step());
+}
+
 /// Ensures the replica database also has the messages table, in the owner's
 /// shape, so a replica can hold the transcript projection and resume a
 /// session (or serve it through the same read path), not only audit it.
-/// The owner's DDL is used rather than a copy of it: the replica is read by
-/// the same `loadStored` projection, and a second copy of the table is a shape
-/// that can drift from the one that reads it (the owner read path selects every
-/// column by name, so a drifted replica fails every read). Its CHECKs come with
-/// it: a peer that sends a row the read path cannot decode is refused at the
-/// insert, which rolls the pull back to the previous snapshot rather than
-/// storing an unreadable transcript.
-fn ensureMessages(store: *session_events.Store) void {
-    store.conn.exec(session_mod.messages_ddl) catch {};
+/// The owner's DDL and ALTERs are used rather than copies of them: the replica
+/// is read by the same `loadStored` projection, and a second copy of the table
+/// is a shape that can drift from the one that reads it (the owner read path
+/// selects every column by name, so a drifted replica fails every read). Its
+/// CHECKs come with it: a peer that sends a row the read path cannot decode is
+/// refused at the insert, which rolls the pull back to the previous snapshot
+/// rather than storing an unreadable transcript.
+///
+/// The columns added after the table's first shipped shape are applied too,
+/// for the reason they are on the owner side: `CREATE TABLE IF NOT EXISTS`
+/// leaves a replica database an older build created exactly as it was, and the
+/// owner's read path then fails on the missing column for every read of that
+/// replica, with no way back except deleting the file.
+fn ensureMessages(store: *session_events.Store) !void {
+    try store.conn.exec(session_mod.messages_ddl);
+    for (session_mod.added_message_columns) |ddl| {
+        store.conn.exec(ddl) catch |err| {
+            // A duplicate column is the already-migrated case, the same
+            // idempotence the owner's open relies on.
+            if (std.mem.find(u8, store.conn.last_error, "duplicate column name") == null) return err;
+        };
+    }
 }
 
 const TranscriptRow = struct {
@@ -535,7 +584,10 @@ fn pullTranscript(
         return;
     };
     defer store.close();
-    ensureMessages(&store);
+    ensureMessages(&store) catch |err| {
+        backfillFailed("ensure replica transcript table", owner, owner_url, id, err);
+        return;
+    };
     const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch |err| {
         backfillFailed("build pull url", owner, owner_url, id, err);
         return;

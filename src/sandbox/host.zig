@@ -26,6 +26,7 @@ const atomic_write = @import("../util/atomic_write.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 const secret_dotenv = @import("../util/secret_dotenv.zig");
+const dm_room = @import("../util/dm_room.zig");
 const glob = @import("../util/glob.zig");
 const fs_skip = @import("../util/fs_skip.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -2438,14 +2439,12 @@ const ChatOp = struct {
 };
 
 /// A direct message remains an ordinary chatroom so history, persistence and
-/// peer fan-out need no second transport. Sorting the two participants gives
-/// both callers exactly one room name, regardless of who sends first.
+/// peer fan-out need no second transport, which makes the room name the
+/// conversation's identity and the composite-key rule a `dm:` name has to
+/// obey one shared definition of (`util/dm_room.zig`, whose `parse` the mesh
+/// map splits names with).
 fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []const u8) ![]const u8 {
-    const from = std.mem.trim(u8, from_raw, " \t\r\n");
-    const to = std.mem.trim(u8, to_raw, " \t\r\n");
-    if (from.len == 0 or to.len == 0 or std.mem.eql(u8, from, to)) return error.InvalidDirectMessage;
-    const pair = if (std.mem.lessThan(u8, from, to)) .{ from, to } else .{ to, from };
-    return std.fmt.allocPrint(arena, "dm:{s}|{s}", pair);
+    return dm_room.roomName(arena, from_raw, to_raw) catch return error.InvalidDirectMessage;
 }
 
 /// The agent-facing history response is deliberately small to protect its

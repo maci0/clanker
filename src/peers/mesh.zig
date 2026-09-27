@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const fuzz_corpus = @import("../util/fuzz_corpus.zig");
+const dm_room = @import("../util/dm_room.zig");
 
 pub const protocol_version = "1.0";
 pub const default_max_frame_bytes: u32 = 1 << 20;
@@ -268,11 +269,9 @@ pub fn buildMap(arena: std.mem.Allocator, in: MapInput) !Map {
     for (in.rooms) |room| {
         var left: ?[]const u8 = null;
         var right: ?[]const u8 = null;
-        if (std.mem.startsWith(u8, room.room, "dm:")) {
-            const rest = room.room["dm:".len..];
-            const bar = std.mem.findScalar(u8, rest, '|') orelse continue;
-            left = resolveName(in.self_id, in.self_name, in.peers, rest[0..bar]);
-            right = resolveName(in.self_id, in.self_name, in.peers, rest[bar + 1 ..]);
+        if (dm_room.parse(room.room)) |pair| {
+            left = resolveName(in.self_id, in.self_name, in.peers, pair.a);
+            right = resolveName(in.self_id, in.self_name, in.peers, pair.b);
         } else if (resolveName(in.self_id, in.self_name, in.peers, room.last_from)) |other| {
             if (!std.mem.eql(u8, other, in.self_id)) {
                 left = in.self_id;
