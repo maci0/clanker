@@ -301,13 +301,15 @@ needed:
   `agent.sandbox_follow_symlinks` to lift exactly that refusal — off by default,
   a known risk, and not a security finding
   ([ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md)).
-- **The harness itself** reads roughly 44 hardcoded relative `state/...` paths
-  against the process cwd, so `linkCheckoutState` symlinks these entries into the
-  worktree and native I/O follows them. It creates the checkout's shared runtime
-  directories before linking, following a final symlink such as a durable
-  checkout `state/`, so a fresh checkout cannot split one run between a
-  sandbox-created checkout `state/` and a native-created worktree `state/`.
-  The sandbox never traverses those links, because its half routes around them.
+- **The harness itself** resolves native I/O against the process cwd, so
+  `linkCheckoutState` symlinks `host.shared_prefixes` (`state`, `.local`,
+  `.agents`, `.claude`, and, when the checkout already has one, `.env` and
+  `config.local.*`) into the worktree and native I/O follows the links. It
+  creates the checkout's shared runtime directories before linking, following a
+  final symlink such as a durable checkout `state/`, so a fresh checkout cannot
+  split one run between a sandbox-created checkout `state/` and a native-created
+  worktree `state/`. The sandbox never traverses those links, because its half
+  routes around them.
 
 `zig-out/` and `.zig-cache/` are untracked but stay per-worktree: builds *write*
 there, and a shared `zig-out` lets a worktree's build clobber the binaries the
@@ -1282,7 +1284,7 @@ The shell scripts `scripts/clanker-improve.sh` and `scripts/clanker-review.sh` a
 
 ## Configuration
 
-`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Other sections, including `web`, are replaced as whole sections when the local file names them. The exceptions are `[modules]` and `[serve]`, which are field-merged like `[agent]`: a local file that flips one flag or moves one port leaves the rest of that section as the base file had it. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
+`config.toml` is the global config; `config.local.toml` overrides it, provider by provider. Every struct section is field-merged, so a local file that flips one flag or moves one port leaves the rest of that section as the base file had it. Whole-section replacement is gone from `merge` in `src/config.zig`: it meant a local file that set one key (`[tui] mascot_size`) silently reset every other key in that section to its struct default, and the merged config still loaded clean, so `config set` (which writes exactly one key) lost the rest of whichever table it touched. The overlays that are whole-value by shape are the keyed maps (`[providers.<name>]`, `[mcp_servers.<name>]`, one entry replaces another) and `[[peers]]`, which is a list and can only be replaced wholesale. TOML is the only supported config format; a leftover pre-migration `.json` file is ignored entirely (and `clanker doctor` warns about it) rather than half-supported.
 
 If startup rejects a setting, it prints a configuration diagnostic instead of
 an implementation error name: the filename and line, fully qualified setting,
@@ -1333,7 +1335,7 @@ The pre-`models`-table form is **rejected**, not silently accepted:
 
 Each names the provider (or model key) and the fix. All fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
 
-A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored — check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
+A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored, check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
 Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. The table-key name is the local alias (`--model xai/grok4.6-coding`); optional `id` is the SKU sent on the wire, so two names can share one SKU with different sampling. Omitted context/max-output/cost/display/capabilities are filled from the models.dev snapshot when that file exists; a written value wins. `rpm` on a provider or model is a self-imposed requests-per-minute cap enforced in `src/llm/rate_limit.zig` before each send. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`, `skills` for `skills_dir`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`, `mesh`, `ttsr`, `advisor`, `hooks`, `mcp_servers`) and still omits `api_key_env` and `service_account_file`. `mcp_servers` is the one section whose schema carries a credential inline rather than by env-var name, so its `env` and `headers` entries cross the bridge as names with the value replaced by `<redacted>` (`writeMcpServerJson` in `src/sandbox/host.zig`).
 
@@ -1513,7 +1515,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 |----------|--------|-------------|
 | `/`, `/webui` | GET | Web UI (rendered by the internal `webui` WASM tool). Both paths serve it; the URL `serve` prints is `/webui` |
 | `/webui/app.css`, `/webui/views.css`, `/webui/tailwind.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheets, each on its own route. `tailwind.css` is compiled from `ui/app/tailwind.src.css` by `bun run css:build` and committed, because the `webui` guest embeds it at comptime and the serve path runs no build step |
-| `/webui/vendor/*.js` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid` |
+| `/webui/vendor/*` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid`, `three` (`vendor_files` in `src/serve/webui_assets.zig` is the one list, and it includes the `patternfly.min.css` sheet) |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
 | `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |
 | `/api/metrics` | GET | Process-local RED: HTTP request/error/4xx counters, latency buckets, in-flight connections, plus LLM, tool, and schedule request/error counters (JSON, no high-cardinality labels) |
@@ -1642,7 +1644,7 @@ pass flags on the invocation. Weakest first:
 | environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
 | flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
-Each layer overrides the one above it, so a flag beats the environment and the environment beats the file — the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. `[serve]` is field-merged like `[agent]`, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
+Each layer overrides the one above it, so a flag beats the environment and the environment beats the file — the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. Every section is field-merged, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
 
 A `CLANKER_WEBUI_PORT` or `CLANKER_PROXY_PORT` that is not a 16-bit number
 (or is `0`) warns and is ignored, leaving the layer below it in force, rather
