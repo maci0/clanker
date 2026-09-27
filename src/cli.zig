@@ -105,6 +105,7 @@ const webui_vendor_three = ui_vendor.three;
 const webui_vendor_three_core = ui_vendor.three_core;
 const webui_vendor_patternfly = ui_vendor.patternfly;
 const edit_distance = @import("util/edit_distance.zig");
+const error_hint = @import("util/error_hint.zig");
 const no_color = @import("util/no_color.zig");
 const elapsed = @import("util/elapsed.zig");
 const test_env = @import("util/test_env.zig");
@@ -2905,6 +2906,11 @@ const CheckStatus = enum {
     unreachable_host,
     /// Still had not answered when its budget ran out.
     timed_out,
+    /// No OAuth token on disk (`error.OAuthLoginRequired` from `auth.resolve`,
+    /// raised before any socket work). It is not an unreachable host: nothing
+    /// was sent, so the latency is unmeasured, and the repair is
+    /// `clanker auth login <name>`, which the `unreachable` row does not name.
+    needs_login,
 
     fn label(s: CheckStatus) []const u8 {
         return switch (s) {
@@ -2913,6 +2919,7 @@ const CheckStatus = enum {
             .failed => "failed",
             .unreachable_host => "unreachable",
             .timed_out => "timed out",
+            .needs_login => "needs login",
         };
     }
 };
@@ -2941,11 +2948,14 @@ const PingResult = struct {
 
 /// Which kind of not-working a failed ping was. `error.ApiError` is the client's
 /// "the endpoint answered with a status >= 400 (or an error body behind a 200)",
-/// so it is the one error that proves the host is there; everything else,
+/// so it is the one error that proves the host is there;
+/// `error.OAuthLoginRequired` means `auth.resolve` found no token and stopped
+/// before a socket existed, so the host was never in question; everything else,
 /// refused, DNS, TLS, a canceled socket, means nothing answered.
 fn classifyChatError(err: anyerror) CheckStatus {
     return switch (err) {
         error.ApiError => .failed,
+        error.OAuthLoginRequired => .needs_login,
         else => .unreachable_host,
     };
 }
@@ -3064,6 +3074,10 @@ fn padCell(w: *std.Io.Writer, text: []const u8, width: usize) !void {
 /// The latency cell: a measurement, `>budget` for a provider that ran out of
 /// time, or `-` when nothing was sent at all.
 fn latencyCell(buf: []u8, row: CheckRow) []const u8 {
+    // `.needs_login` never sent a request, so `ms` is the few hundred
+    // microseconds `auth.resolve` spent looking for a token on disk. Printing
+    // it as `0ms` reads as a fast answer from a host that was never asked.
+    if (row.status == .needs_login) return "-";
     const ms = row.ms orelse return "-";
     const prefix: []const u8 = if (row.status == .timed_out) ">" else "";
     return std.fmt.bufPrint(buf, "{s}{d}ms", .{ prefix, ms }) catch "?";
@@ -3114,6 +3128,13 @@ fn writeCheckSummary(w: *std.Io.Writer, rows: []const CheckRow) !void {
 fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void {
     for (rows) |r| {
         if (!r.is_default or r.status == .ok) continue;
+        if (r.status == .needs_login) {
+            try w.print(
+                "\nDefault provider '{s}' has no OAuth token. Run `clanker auth login {s}`, or choose another with `default_provider` in config.local.toml.\n",
+                .{ r.name, r.name },
+            );
+            return;
+        }
         try w.print("\nDefault provider '{s}' is {s}. Fix its config or choose another with `default_provider` in config.local.toml.\n", .{ r.name, r.status.label() });
         return;
     }
@@ -3209,6 +3230,9 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
                 std.debug.print("  {s}: ok, {d}ms\n", .{ name, res.ms });
             },
             .timed_out => std.debug.print("  {s}: timed out after {d}s\n", .{ name, budget_s }),
+            // The bare error name here (`OAuthLoginRequired`) is a symbol from
+            // `llm/auth.zig`; the repair it implies is a command. Say it.
+            .needs_login => std.debug.print("  {s}: no OAuth token; run `clanker auth login {s}`\n", .{ name, name }),
             else => std.debug.print("  {s}: {s}\n", .{ name, res.detail }),
         }
         try rows.append(arena, .{
@@ -16246,28 +16270,12 @@ fn respondRunError(stream: std.Io.net.Stream, detail: []const u8, fallback: []co
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
     const suffix: []const u8 = if (had_images)
         "; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled"
-    else if (containsAnyCaseInsensitive(detail, &.{ "401", "unauthorized", "invalid_api_key", "authentication" }))
-        "; check that the API key is set and valid (`clanker doctor`)"
-    else if (containsAnyCaseInsensitive(detail, &.{ "http 400", "bad request", "invalid request" }))
-        "; provider rejected the request; the model name may be wrong for this provider (try `clanker providers models`), or the request body is invalid"
-    else if (containsAnyCaseInsensitive(detail, &.{ "429", "rate limit", "rate_limit", "too many requests", "quota" }))
-        "; rate limited, wait a moment or switch model"
-    else if (containsAnyCaseInsensitive(detail, &.{ "not found", "does not exist", "no such model", "model_not_found" }))
-        "; the model may not exist on this provider; try `clanker providers models`"
-    else if (containsAnyCaseInsensitive(detail, &.{ "timeout", "timed out", "deadline" }))
-        "; the request timed out; the provider may be slow or unreachable"
-    else if (containsAnyCaseInsensitive(detail, &.{ "onnection refused", "onnection reset", "unreachable" }))
-        "; cannot reach the provider; check the network and base_url in config"
     else
-        "";
+        // The REPL composes the same sentence from the same table
+        // (`util/error_hint.zig`), so a 429 names one repair everywhere it
+        // surfaces rather than one per surface.
+        error_hint.suffix(error_hint.Kind.classify(detail), .cli);
     return std.fmt.allocPrint(arena, "{s}: {s}{s}", .{ provider_name, detail, suffix }) catch detail;
-}
-
-fn containsAnyCaseInsensitive(haystack: []const u8, needles: []const []const u8) bool {
-    for (needles) |needle| {
-        if (std.ascii.findIgnoreCase(haystack, needle) != null) return true;
-    }
-    return false;
 }
 
 /// Applies a per-run temperature/top_p override to `provider`, which is a
@@ -19148,6 +19156,31 @@ test "a canceled or refused socket is unreachable, an HTTP error status is a fai
     try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.ConnectionRefused));
     try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.Canceled));
     try std.testing.expectEqual(CheckStatus.unreachable_host, classifyChatError(error.TemporaryNameServerFailure));
+    // A missing token is decided from disk before any socket exists, so it is
+    // neither an error status nor an unreachable host. It is its own state, and
+    // its repair (`clanker auth login`) is not the one an unreachable host has.
+    try std.testing.expectEqual(CheckStatus.needs_login, classifyChatError(error.OAuthLoginRequired));
+}
+
+test "a provider waiting on a login reports no latency, because none was measured" {
+    var buf: [32]u8 = undefined;
+    const row: CheckRow = .{ .name = "claude", .status = .needs_login, .model = "claude-opus-5", .ms = 0, .is_default = true };
+    try std.testing.expectEqualStrings("-", latencyCell(&buf, row));
+    try std.testing.expectEqualStrings("needs login", row.status.label());
+}
+
+test "a default provider waiting on a login names the login command" {
+    const rows = [_]CheckRow{
+        .{ .name = "claude", .status = .needs_login, .model = "claude-opus-5", .ms = 0, .is_default = true },
+        .{ .name = "ollama", .status = .ok, .model = "qwen3.5", .ms = 81, .is_default = false },
+    };
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeDefaultProviderRecovery(&out.writer, &rows);
+    try std.testing.expectEqualStrings(
+        "\nDefault provider 'claude' has no OAuth token. Run `clanker auth login claude`, or choose another with `default_provider` in config.local.toml.\n",
+        out.written(),
+    );
 }
 
 test "a provider that never answers costs the sweep its budget, not the OS connect timeout" {

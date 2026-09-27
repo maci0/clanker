@@ -37,6 +37,7 @@
 
 const std = @import("std");
 const edit_distance = @import("../util/edit_distance.zig");
+const error_hint = @import("../util/error_hint.zig");
 const elapsed = @import("../util/elapsed.zig");
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
@@ -267,25 +268,31 @@ fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
     if (err == error.SessionTokenBudgetExceeded) return " (ran out of token budget)";
     if (err == error.CompactionStalled) return " (history cannot be compacted below agent.max_history_tokens; raise it or trim the system prompt)";
     if (detail) |d| {
+        const kind = error_hint.Kind.classify(d);
+        if (kind != .none) return error_hint.suffix(kind, .tui);
         const find = std.ascii.findIgnoreCase;
-        if (find(d, "401") != null or find(d, "unauthorized") != null or find(d, "authentication") != null)
-            return " (check API key; run `clanker doctor`)";
-        if (find(d, "429") != null or find(d, "rate limit") != null or find(d, "rate_limit") != null)
-            return " (rate limited; wait or /model to switch)";
-        if (find(d, "http 400") != null or find(d, "bad request") != null)
-            return " (provider rejected the request; the model may not exist here, or the request body is invalid; /model to switch)";
-        if (find(d, "not found") != null or find(d, "model_not_found") != null)
-            return " (model not found; /model to pick another)";
-        if (find(d, "timeout") != null or find(d, "timed out") != null)
-            return " (request timed out)";
-        if (find(d, "onnection refused") != null or find(d, "onnection reset") != null)
-            return " (cannot reach provider; check network)";
         if (find(d, "max_iterations") != null or find(d, "iteration limit") != null)
             return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
         if (find(d, "token_budget") != null or find(d, "token budget") != null)
             return " (ran out of token budget)";
     }
     return "";
+}
+
+test "a provider error names a next action in the REPL, from the shared table" {
+    // The class is shared with `clanker run` and the web UI
+    // (`util/error_hint.zig`); only the action is the medium's. Every one of
+    // these used to be a bare error string in the scrollback, and a quota
+    // refusal or an unreachable endpoint classified as nothing at all.
+    try std.testing.expectEqualStrings(" (rate limited; wait a moment, or /model to switch)", errorRecoveryHint(error.RateLimited, "HTTP 429: rate limit reached"));
+    try std.testing.expectEqualStrings(" (rate limited; wait a moment, or /model to switch)", errorRecoveryHint(error.RateLimited, "quota exhausted for this key"));
+    try std.testing.expectEqualStrings(" (model not found; /model to pick another)", errorRecoveryHint(error.ApiError, "no such model: gpt-9"));
+    try std.testing.expectEqualStrings(" (cannot reach the provider; check the network and base_url in config; `clanker providers check` measures it)", errorRecoveryHint(error.ReadFailed, "connection refused"));
+    // A harness ceiling is decided from the error, not the provider's text, and
+    // keeps its own wording.
+    try std.testing.expectEqualStrings(" (hit iteration limit; try a simpler task or raise agent.max_iterations)", errorRecoveryHint(error.MaxIterationsExceeded, null));
+    // Nothing recognizable: say nothing rather than guess.
+    try std.testing.expectEqualStrings("", errorRecoveryHint(error.RateLimited, "something went sideways"));
 }
 
 /// Parse `/plan on`, `/research off`, or a bare toggle. Returns null when the
