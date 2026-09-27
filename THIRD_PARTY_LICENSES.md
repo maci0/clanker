@@ -36,7 +36,6 @@ above.
 | highlight.js | 11.12.0 | BSD-3-Clause | `ui/vendor/hljs.min.js` | `ui/vendor/README.md` |
 | mermaid | 11.16.1 | MIT | `ui/vendor/mermaid.min.js` | `ui/vendor/README.md` |
 | three.js | r180 | MIT | `ui/vendor/three.module.min.js`, `ui/vendor/three.core.min.js` | `ui/vendor/README.md` |
-| @patternfly/patternfly | 6.6.1 | MIT | `ui/vendor/patternfly.min.css` (subset, see its README) | `ui/vendor/README.md` |
 
 The `ui/vendor/` rows share one provenance and digest table, which names the
 upstream release each file came from and the sha256 of the committed bytes.

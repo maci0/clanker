@@ -321,7 +321,7 @@ def build() -> dict:
         }))
 
     # Vendored web UI files; several rows share one upstream package (the two
-    # patternfly files, the two three.js files), so group rows per package and
+    # the three.js split, the highlight.js and mermaid builds), so group rows per package and
     # carry each committed file path as a property.
     web = {}
     for w in vendored_web():

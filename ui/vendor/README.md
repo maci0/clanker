@@ -17,7 +17,6 @@ The whole tree's third-party inventory, this directory included, is
 | `mermaid.min.js` | [mermaid](https://www.npmjs.com/package/mermaid) UMD `dist/mermaid.min.js` | 11.16.1 | MIT | `18327bef70d96fb505fe7287d9f6a7362ebf07ff6576ddfaffb1a06f3e1a2954` |
 | `three.module.min.js` | [three](https://www.npmjs.com/package/three) | r180 module | MIT | `e2b5ee6bccd38fd6d8a2428546b83c5f2426d84b152ef82be8055556e3b40eb6` |
 | `three.core.min.js` | [three](https://www.npmjs.com/package/three) | r180 core split | MIT | `61ba0df005b05991361d040d8ff670e1aadfd0ce7aeebd1fdb0725957a8957de` |
-| `patternfly.min.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly.min.css` | 6.6.1 | MIT | `72aec045c1ac78cd63aa4179997e1bbb436f7f701a923ad7da456eb2b67ef182` |
 
 The SHA-256 column is the integrity reference for the committed bytes: after
 re-copying or subsetting a file from upstream, `sha256sum ui/vendor/*` must
@@ -25,16 +24,11 @@ reproduce the recorded digest before the README table is updated alongside it.
 It is what ties "the file clanker serves" to "the upstream release named in the
 Version column" without trusting the git history alone.
 
-`patternfly.min.css` is served without its upstream `@font-face` blocks: the
-cabinet UI uses system stacks (`--sans` / `--mono`), and the Red Hat webfont
-files are not vendored. Re-copying from npm must strip `@font-face` again (or
-vendor the fonts under `ui/vendor/assets/fonts/` and keep CSP `font-src 'self'`).
-
-Measured 2026-08-15: the committed file is a generated subset (~625KB)
-of the 1.8MB upstream sheet. clanker uses ten families (page, masthead,
-nav, button, form, check, label, alert, backdrop, modal).
-Table/wizard/drawer/menu are unused. Regenerate from the full upstream
-copy (`scripts/subset-patternfly.py`); do not re-subset this file.
+`patternfly.min.css` was removed with the Tailwind port: every `pf-v6-*` class
+came off the markup as its rule became a utility, so the sheet was unlinked
+first and then deleted from the tree and the host wiring (`ui/vendor.zig`,
+`cli.zig`, `webui_assets.zig`, the size gate). Its subset script
+(`scripts/subset-patternfly.py`) and the `@font-face` caveat went with it.
 
 `patternfly-addons.css` was removed 2026-08-26: it stayed unlinked from
 `index.html`, no view or plugin used any `pf-v6-u-*` utility class, and serving

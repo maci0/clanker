@@ -390,6 +390,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `src/gate/checks.zig`, the subset script and `ui/PATTERNFLY.md`), plus the
   modal and toast bridges in `ui/app/core/ui.js`.
 
+- PatternFly is deleted, not just unlinked: `ui/vendor/patternfly.min.css`,
+  `scripts/subset-patternfly.py`, its embed in `ui/vendor.zig`, its route and
+  gzip cache in `src/cli.zig`, its row in `src/serve/webui_assets.zig`, its
+  ceiling in the webui size gate, and its row in `ui/vendor/README.md` and
+  `THIRD_PARTY_LICENSES.md`. The modal and toast bridges in `core/ui.js` lose
+  their PF classes with it: a toast's text sits in a `min-w-0 flex-1` span of
+  its own rather than an alert title.
+- `upgradePfUi` called `upgradePfOverlays`, which the field-bridge step had
+  deleted: the shipped page threw `ReferenceError` on load and no suite saw it,
+  because none of them evaluates that function's body. The call is gone, and
+  `ui/app/core/harden.test.mjs` now checks every `upgradePf*` name the page
+  calls against the definitions in `core/ui.js`, so a bridge cannot be deleted
+  while a caller remains. `core/ui.js` also joins the Tailwind ledger, which it
+  passes as it stands.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

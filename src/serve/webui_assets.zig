@@ -262,7 +262,6 @@ pub const vendor_files = [_][]const u8{
     "mermaid.min.js",
     "three.module.min.js",
     "three.core.min.js",
-    "patternfly.min.css",
 };
 
 pub fn isVendorFile(name: []const u8) bool {

@@ -833,3 +833,39 @@ test("rooms own-message actions are labeled and report a failed write", function
   assert.doesNotMatch(app, /editBtn\.textContent = "✏️"/);
   assert.doesNotMatch(app, /delBtn\.textContent = "🗑️"/);
 });
+
+// The page calls a family of bridges that the PatternFly removal is dismantling
+// one at a time, and a bridge that is deleted while a caller remains is a
+// ReferenceError at page load, not a test failure: nothing here evaluates
+// `upgradePfUi`'s body, so the suite stayed green while the shipped page threw.
+// This checks the family by name across every JS file the page serves.
+test("every upgradePf* name the page calls is defined in ui.js", function () {
+  const defined = new Set();
+  for (const m of uiSrc.matchAll(/\bfunction\s+(upgradePf\w+)/g)) defined.add(m[1]);
+  const dirs = [here, join(here, ".."), join(here, "..", "..", "plugins")];
+  const sources = [uiSrc];
+  const { readdirSync } = require("node:fs");
+  for (const dir of dirs) {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (e.isFile() && e.name.endsWith(".js") && !e.name.endsWith(".test.mjs")) {
+        sources.push(readFileSync(join(dir, e.name), "utf8"));
+      }
+      if (e.isDirectory() && e.name !== "vendor") {
+        for (const inner of readdirSync(join(dir, e.name), { withFileTypes: true })) {
+          if (inner.isFile() && inner.name.endsWith("app.js")) {
+            sources.push(readFileSync(join(dir, e.name, inner.name), "utf8"));
+          }
+        }
+      }
+    }
+  }
+  const missing = new Set();
+  for (const src of sources) {
+    for (const m of src.matchAll(/\b(upgradePf\w+)\s*\(/g)) {
+      if (!defined.has(m[1])) missing.add(m[1]);
+    }
+  }
+  assert.deepEqual([...missing], [], "called but never defined in ui/app/core/ui.js");
+});

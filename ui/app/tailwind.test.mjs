@@ -48,6 +48,7 @@ const migrated = [
   "features/board.js",
   "lib/graph.js",
   "core/kit.js",
+  "core/ui.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: geometry (a

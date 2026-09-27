@@ -127,13 +127,15 @@ export function upgradePfForms(root) { return root || document; }
 export function upgradePfChip(el) { return el; }
 export function upgradePfChips(root) { return root || document; }
 
+/* A toast's text sits in its own flex child so the dismiss control keeps its
+   place: that child used to be PatternFly's alert title. */
+var TOAST_TITLE_CLASS = "min-w-0 flex-1";
+
 function upgradePfToastNode(node) {
   if (!node || !node.classList.contains("toast")) return node;
-  node.classList.add("pf-v6-c-alert", "pf-m-inline", "pf-m-custom");
-  if (node.hasAttribute("data-kind")) node.classList.add("pf-m-danger");
-  if (!node.querySelector(".pf-v6-c-alert__title")) {
+  if (!node.querySelector(":scope > ." + TOAST_TITLE_CLASS.split(" ")[0])) {
     var title = document.createElement("span");
-    title.className = "pf-v6-c-alert__title";
+    title.className = TOAST_TITLE_CLASS;
     title.textContent = node.textContent;
     node.textContent = "";
     node.appendChild(title);
@@ -141,12 +143,13 @@ function upgradePfToastNode(node) {
   return node;
 }
 
-/** Run all PatternFly DOM upgrades (steps 4–7) on static markup and a subtree. */
+/** Put the controls in a subtree into the cabinet's vocabulary. The PatternFly
+    class bridges are gone; the remaining calls are the ones that still have a
+    job, and the name stays because app.js and the plugins use it. */
 export function upgradePfUi(root) {
   var scope = root || document;
   upgradePfButtons(scope);
   upgradePfForms(scope);
-  upgradePfOverlays(scope);
   upgradePfChips(scope);
   scope.querySelectorAll(".toast").forEach(upgradePfToastNode);
   return scope;
@@ -159,13 +162,13 @@ export function toast(msg, kind) {
   var host = document.getElementById("toasts");
   if (!host) return null;
   var node = document.createElement("div");
-  node.className = "toast pf-v6-c-alert pf-m-inline pf-m-custom";
+  node.className = "toast";
   node.tabIndex = 0;
   node.setAttribute("role", "status");
   node.setAttribute("aria-live", "polite");
   if (kind === "bad" || /fail|error|could not|refus|denied|no such/i.test(msg)) node.setAttribute("data-kind", "bad");
   var title = document.createElement("span");
-  title.className = "pf-v6-c-alert__title";
+  title.className = TOAST_TITLE_CLASS;
   title.textContent = msg;
   node.appendChild(title);
   var dismiss = document.createElement("button");
@@ -242,10 +245,10 @@ export function showLoadError(container, message, retryFn) {
 function openDialog(build) {
   return new Promise(function (resolve) {
     var dlg = document.createElement("dialog");
-    dlg.className = "slack-dialog pf-v6-c-modal-box";
+    dlg.className = "slack-dialog";
     var form = document.createElement("form");
     form.method = "dialog";
-    form.className = "slack-dialog-form pf-v6-c-form pf-v6-c-modal__body";
+    form.className = "slack-dialog-form";
     dlg.appendChild(form);
     build(form, function done(value) {
       dlg.close();

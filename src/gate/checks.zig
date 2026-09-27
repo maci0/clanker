@@ -2118,14 +2118,13 @@ const WebuiCap = struct {
 /// additions shows up without each file needing its own row to maintain.
 /// Limits are raw bytes measured on this tree with ~15% headroom:
 /// index.html 74382, app.css 168540, views.css 67831, app.js 252003,
-/// patternfly.min.css 625202 (vendored), all as of 2026-08-25. Raising one is
+/// all as of 2026-08-25. Raising one is
 /// a deliberate edit to this table, made with a fresh measurement beside it.
 const webui_first_paint_caps = [_]WebuiCap{
     .{ .path = "ui/app/index.html", .limit = 88 * 1024 },
     .{ .path = "ui/app/app.css", .limit = 194 * 1024 },
     .{ .path = "ui/app/views.css", .limit = 78 * 1024 },
     .{ .path = "ui/app/app.js", .limit = 290 * 1024 },
-    .{ .path = "ui/vendor/patternfly.min.css", .limit = 720 * 1024 },
 };
 
 /// Everything every visitor downloads before any interaction: the document
@@ -2266,7 +2265,7 @@ test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips forei
     var urls: std.ArrayList([]const u8) = .empty;
     const html =
         \\<link rel="modulepreload" href="/webui/app.js">
-        \\<link rel="stylesheet" href="/webui/app.css" media="print" data-pf="1">
+        \\<link rel="stylesheet" href="/webui/app.css" media="print" data-views="1">
         \\<noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
         \\<link rel="icon" href="data:image/svg+xml,xxx">
         \\<script type="module" src="/webui/app.js"></script>

@@ -92,7 +92,6 @@ console.log(`   eager JS (${eager.length} requests): ${eagerJsGz.toFixed(1)}K gz
 console.log(`   first paint (index.html + app.css + tailwind.css): ${firstPaintGz.toFixed(1)}K gz`);
 console.log(`   tailwind.css: ${(fileBytes("tailwind.css").length / KiB).toFixed(1)}K raw ${gzKib(fileBytes("tailwind.css")).toFixed(1)}K gz`);
 console.log(`   views.css deferred: ${gzKib(fileBytes("views.css")).toFixed(1)}K gz`);
-console.log(`   patternfly.min.css deferred: ${gzKib(fileBytes(join("..", "vendor", "patternfly.min.css"))).toFixed(1)}K gz`);
 
 test("the page head still preloads the heavy entry, not the light modules", function () {
   // The preload list is the critical-path fetch set; growing it dilutes
@@ -131,7 +130,7 @@ test("eager JS stays inside its weight budget", function () {
 
 test("first paint stays inside its weight budget", function () {
   // index.html, app.css and the compiled Tailwind sheet are the render-blocking
-  // critical path; the deferred views.css and patternfly must not creep back
+  // critical path; the deferred views.css must not creep back
   // into them (css-split.test.mjs pins what each sheet may style).
   assert.ok(firstPaintGz <= 64, `first paint is ${firstPaintGz.toFixed(1)}K gz; budget is 64K`);
   const appCssRaw = fileBytes("app.css").length / KiB;
@@ -168,14 +167,6 @@ test("single large files stay inside their budgets", function () {
   assert.ok(htmlRaw <= 96, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 96K`);
   const viewsRaw = fileBytes("views.css").length / KiB;
   assert.ok(viewsRaw <= 80, `views.css is ${viewsRaw.toFixed(1)}K raw; budget is 80K`);
-});
-
-test("deferred vendor CSS stays inside its budget", function () {
-  // patternfly is fetched on every visit (media=print, swapped to all by
-  // app.js) but must stay off the first-paint path; its gz size is what every
-  // visitor pays once the swap lands.
-  const pfGz = gzKib(fileBytes(join("..", "vendor", "patternfly.min.css")));
-  assert.ok(pfGz <= 80, `patternfly.min.css is ${pfGz.toFixed(1)}K gz; budget is 80K`);
 });
 
 test("web UI plugins stay off the load path unless they opt in", function () {
