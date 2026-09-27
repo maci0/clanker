@@ -354,7 +354,9 @@ function renderList(query) {
   if (!order.length) {
     var empty = document.createElement("p");
     empty.className = PICKER_EMPTY_CLASS;
-    empty.textContent = q ? "No models match." : "No models configured.";
+    empty.textContent = q
+      ? "No models match \"" + q + "\". Clear the search to see every model."
+      : "No models configured yet. Set a provider API key, or add one in the Models view.";
     _list.appendChild(empty);
     return;
   }

@@ -3487,6 +3487,7 @@ function buildChatMessage(m) {
       reactionsBar.appendChild(pill);
     });
   }
+  function reactFail(msg){ el.chatStatus.textContent = msg; uiToast(msg); }
   function toggleReact(emoji){
     // Call the server-side react endpoint
     if (!canAct) return;
@@ -3500,8 +3501,10 @@ function buildChatMessage(m) {
         if(d.added) { if(at===-1) reacts[emoji].push(instanceName); }
         else { if(at!==-1) reacts[emoji].splice(at,1); if(!reacts[emoji].length) delete reacts[emoji]; }
         renderReacts();
+      } else {
+        reactFail("Reaction not saved: " + (d.error || "unknown error"));
       }
-    }).catch(function(){});
+    }).catch(function(){ reactFail("Reaction not saved: the server did not answer."); });
   }
   renderReacts();
   wrap.appendChild(reactionsBar);
@@ -3978,27 +3981,36 @@ if (el.chatCreateRoomBtn && el.chatCreateDialog) {
     });
   }
   if (el.chatCreateCancel) el.chatCreateCancel.addEventListener("click", function () { el.chatCreateDialog.close(); });
-  el.chatCreateDialog.addEventListener("close", function () {
-    if (el.chatCreateDialog.returnValue !== "ok") return;
+  // The dialog stays open until the server has the channel: a `method="dialog"`
+  // form closed on submit, so a refusal left an empty field to retype.
+  var createForm = el.chatCreateDialog.querySelector("form");
+  var createError = document.getElementById("chat-new-room-error");
+  var createBtn = document.getElementById("chat-create-confirm");
+  if (createForm) createForm.addEventListener("submit", function (e) {
+    e.preventDefault();
     var name = el.chatNewRoomName.value.trim();
     if (!name) return;
+    if (createError) { createError.hidden = true; }
+    var idleLabel = createBtn ? createBtn.textContent : "";
+    if (createBtn) { createBtn.disabled = true; createBtn.textContent = "Creating…"; }
+    function failed(msg) {
+      if (createError) { createError.textContent = msg; createError.hidden = false; }
+      el.chatStatus.textContent = msg;
+      uiToast(msg);
+      if (createBtn) { createBtn.disabled = false; createBtn.textContent = idleLabel; }
+      el.chatNewRoomName.focus();
+    }
     fetch("/api/chat/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ room: name, on: true })
     }).then(function (r) { return r.json(); }).then(function (d) {
-      if (!d.ok) {
-        var fail = "Could not create channel: " + (d.error || "unknown error");
-        el.chatStatus.textContent = fail;
-        uiToast(fail);
-        return;
-      }
+      if (!d.ok) { failed("Could not create channel: " + (d.error || "unknown error")); return; }
+      el.chatCreateDialog.close();
       loadChatRooms().then(function () {
         el.chatRoom.value = name;
         openChatRoom(name);
       });
     }).catch(function (err) {
-      var fail = "Could not create channel: " + err.message;
-      el.chatStatus.textContent = fail;
-      uiToast(fail);
+      failed("Could not create channel: " + err.message);
     });
   });
 }
@@ -5110,10 +5122,14 @@ el.task.addEventListener("keydown", function (e) {
   if (list === "prompt" && e.key === "Delete") {
     e.preventDefault();
     var doomed = items[at].querySelector(".palette-label").textContent;
-    if (!compForgetPrompt(prompts, doomed)) return;
-    savePrompts();
-    el.sessionStatus.textContent = "Forgot that prompt.";
-    renderPromptList();
+    uiConfirm("Delete the saved prompt \"" + doomed + "\"? This cannot be undone.",
+      { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+      if (!yes) return;
+      if (!compForgetPrompt(prompts, doomed)) return;
+      savePrompts();
+      el.sessionStatus.textContent = "Deleted that prompt.";
+      renderPromptList();
+    });
     return;
   }
   if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) {
@@ -5361,8 +5377,9 @@ el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value
 wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLoadError); });
 
 // Progress streaming — reuses /api/run event channel shape via fetch + reader.
-// History lists recent runs from /api/runs (the same graph guest the Gate view reads);
-// the Revert button only confirms — the actual revert is the CLI's `clanker revert <run-id>`.
+// History lists recent runs from /api/runs (the same graph guest the Gate view reads).
+// The Revert entry is not an action: `clanker revert` takes an improvement id, so the
+// button only says where revert lives instead of asking to confirm one.
 (function(){
   var progCtrl=null, progEl=document.getElementById("progress-log"), progStatus=document.getElementById("progress-status"), progHist=document.getElementById("progress-history");
   var stopBtn=document.getElementById("progress-stop");
@@ -5396,12 +5413,10 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
         openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+fmtUnit(r.duration_ms||0, "millisecond");
         openRunBtn.addEventListener("click", function(){ if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(openRunBtn);
-        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="How to revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
+        rev.title="Revert is a CLI verb and takes an improvement id (imp-...), not a run id";
         rev.addEventListener("click", function(){
-          uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
-            if(!yes) return;
-            append("Revert requested for "+r.run_id+" — use CLI `clanker revert "+r.run_id+"` if server-side revert is not enabled.\n");
-          });
+          append("Reverting is done from the terminal: `clanker revert <improvement-id>`, where the id is the imp-… entry that applied the change in state/improvements.jsonl. "+r.run_id+" is a run, not an improvement, so it has nothing to revert.\n");
         });
         li.appendChild(rev);
         ul.appendChild(li);

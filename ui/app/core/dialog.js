@@ -9,6 +9,7 @@ export var SHORTCUTS = [
   ["Ctrl/\u2318 + Enter", "Run the task in the composer"],
   ["Ctrl/\u2318 + \u2190 \u2192", "Move the focused board card between columns"],
   ["/", "Focus search (in board or run graph)"],
+  ["Delete", "Delete the highlighted saved prompt (composer list)"],
   ["j / k", "Next / previous iteration (run graph)"],
   ["n / N, F", "Next match / next failed node (run graph)"],
   ["+ / - / 0", "Zoom in / out / reset (run graph)"],

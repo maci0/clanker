@@ -105,7 +105,7 @@ function renderError(container, msg, retryFn) {
   var p = el("p", "run-empty", msg);
   container.appendChild(p);
   if (typeof retryFn === "function") {
-    var btn = el("button", "secondary", "Retry");
+    var btn = el("button", "secondary", "Try again");
     btn.type = "button";
     btn.addEventListener("click", retryFn);
     container.appendChild(btn);

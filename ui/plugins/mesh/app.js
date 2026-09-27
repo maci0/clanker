@@ -156,7 +156,9 @@ clanker.registerView({
       drop.disabled = !!state.busy;
       drop.setAttribute("aria-label", "Leave " + name);
       drop.addEventListener("click", function () {
-        act(function () { return api.postJSON("/api/mesh/leave", { peer_id: m.id || name }); }, "left " + name);
+        api.confirm("Leave \"" + name + "\"? That peer will no longer see this instance.").then(function (yes) {
+          if (yes) act(function () { return api.postJSON("/api/mesh/leave", { peer_id: m.id || name }); }, "left " + name);
+        });
       });
       row.appendChild(drop);
       return row;

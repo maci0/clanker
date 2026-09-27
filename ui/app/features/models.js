@@ -228,6 +228,7 @@ function postConfig(path, payload, btn, confirmMessage, doneLabel) {
   if (!snippetModel) return;
   askConfirm(confirmMessage, { confirmLabel: "Save", title: "Write config.local.toml" }).then(function (yes) {
     if (!yes) return;
+    var idleLabel = btn ? btn.textContent : "";
     if (btn) btn.disabled = true;
     postJson(path, payload)
       .then(function (d) {
@@ -237,7 +238,7 @@ function postConfig(path, payload, btn, confirmMessage, doneLabel) {
         status("Wrote " + (d.path || "config.local.toml") + ".");
       })
       .catch(function (err) {
-        if (btn) { btn.disabled = false; btn.textContent = "Retry"; }
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
         setSnippetNote("Could not save: " + err.message);
       });
   });

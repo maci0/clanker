@@ -207,9 +207,9 @@ function openCollection(id, docId){
     else docs.forEach(function(d){
       var row=document.createElement("div"); row.className=DOC_CLASS;
       var dn=document.createElement("span"); dn.textContent=d.name+" ("+d.bytes+" bytes)"; row.appendChild(dn);
-      var rm=kit.button({variant:"secondary-danger"}, "Remove");
+      var rm=kit.button({variant:"secondary-danger"}, "Delete");
       rm.addEventListener("click",function(){
-        uiConfirm("Remove "+d.name+"?", { danger: true, confirmLabel: "Remove" }).then(function(yes){
+        uiConfirm("Delete \""+d.name+"\"? This cannot be undone.", { danger: true, confirmLabel: "Delete" }).then(function(yes){
           if(!yes) return;
           fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs/"+encodeURIComponent(d.id),{method:"DELETE"})
             .then(readJson).then(function(){ openCollection(id); loadKnowledge(); }).catch(function(e){ toast(e.message); });

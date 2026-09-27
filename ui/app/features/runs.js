@@ -621,7 +621,7 @@ function drawRun(g) {
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
   var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next"; upgradePfButton(graphNextBtn);
   graphNextBtn.title = "Next match (n)";
-  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear"; upgradePfButton(graphClearBtn);
+  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear filter"; upgradePfButton(graphClearBtn);
   graphClearBtn.title = "Clear filter";
   var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit"; upgradePfButton(graphFitBtn);
   graphFitBtn.title = "Fit graph to view (0)";

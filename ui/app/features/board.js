@@ -1935,7 +1935,11 @@ function showCardDetail(id) {
     drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Remove checklist item: " + s.text);
     drop.addEventListener("click", function () {
-      postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed checklist item: " + s.text);
+      uiConfirm("Remove the checklist item \"" + s.text + "\"? This cannot be undone.",
+        { danger: true, confirmLabel: "Remove" }).then(function (yes) {
+        if (!yes) return;
+        postBoard({ op: "subtask_remove", id: c.id, subtask_id: s.id }, "Removed checklist item: " + s.text);
+      });
     });
     row.appendChild(tick);
     row.appendChild(lab);
@@ -2083,7 +2087,8 @@ function showCardDetail(id) {
     drop.appendChild(icon("strike", 14));
     drop.setAttribute("aria-label", "Stop waiting on " + (dep ? dep.title : depId));
     drop.addEventListener("click", function () {
-      postBoard({ op: "depend_remove", id: c.id, depends_on: depId }, null);
+      postBoard({ op: "depend_remove", id: c.id, depends_on: depId },
+        "No longer waiting on " + (dep ? dep.title : depId) + ".");
     });
     row.appendChild(name);
     row.appendChild(drop);
@@ -2104,7 +2109,10 @@ function showCardDetail(id) {
   });
   depPick.addEventListener("change", function () {
     if (!depPick.value) return;
-    postBoard({ op: "depend_add", id: c.id, depends_on: depPick.value }, null);
+    var added = depPick.value;
+    var addedCard = cardById(added);
+    postBoard({ op: "depend_add", id: c.id, depends_on: added },
+      "Now waiting on " + (addedCard ? addedCard.title : added) + ".");
   });
   deps.appendChild(depPick);
 

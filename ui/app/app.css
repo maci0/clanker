@@ -1015,7 +1015,8 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
   margin-top: var(--space-4);
 }
 .goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
-.goal-form input { flex: 1 1 16rem; min-width: 0; }
+.goal-form input, .goal-form textarea { flex: 1 1 16rem; min-width: 0; }
+.goal-form textarea { resize: vertical; }
 .progress-log {
   max-height: 18rem; overflow: auto; white-space: pre-wrap;
   font-family: var(--mono); font-size: var(--step--1);
@@ -1039,7 +1040,7 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
   padding: var(--space-4); background: var(--surface-raised); border-radius: var(--radius);
 }
 .board-goal-form label { grid-row: 1; }
-.board-goal-form input, .board-goal-form button { grid-row: 2; }
+.board-goal-form input, .board-goal-form textarea, .board-goal-form button { grid-row: 2; }
 .board-goal-form label { flex-basis: auto; }
 /* The one checkbox among text boxes. The global `input[type="checkbox"]` rule
    already sizes it, but `.goal-form input`'s `flex: 1 1 16rem` matches at the
@@ -1376,7 +1377,7 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
   #view-kanban .board { gap: var(--space-3); }
   #view-kanban .board-col { min-width: 10rem; }
   .board-goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .board-goal-form label, .board-goal-form input, .board-goal-form button { grid-row: auto; }
+  .board-goal-form label, .board-goal-form input, .board-goal-form textarea, .board-goal-form button { grid-row: auto; }
   .board-goal-form label { margin-top: var(--space-2); }
   .board-filter { grid-template-columns: auto minmax(10rem, 1fr) auto auto; }
 }
@@ -1387,7 +1388,7 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
   #view-kanban .board { flex-direction: column; }
   #view-kanban .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
   .board-goal-form { display: flex; padding: var(--space-3); }
-  .board-goal-form input, .board-goal-form button { width: 100%; min-height: 44px; }
+  .board-goal-form input, .board-goal-form textarea, .board-goal-form button { width: 100%; min-height: 44px; }
   /* Exempt from the full-width rule above: a checkbox has nothing to fill. */
   .board-goal-form input[type="checkbox"] { width: 1.05rem; min-height: 0; }
   .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
