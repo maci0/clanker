@@ -73,16 +73,27 @@ snapshot whose entries did not materialize is refused rather than promoted.
 `.agents` and `.local` are checkout-private and may be real directories inside
 the checkout; when either is absent the backup skips it instead of aborting.
 
-**Local configuration.** `config.local.toml`, `config.local.json` and `.env`
-are the one piece of machine state that lives in the checkout rather than in
-`state/`, and they are gitignored, so a lost checkout or a lost volume takes
-them with it and nothing else has a copy. They are copied verbatim into a
-`config/` entry (a snapshot that has none of them carries no `config/`
-directory), which the weekly drill restores and byte-compares like any other
-entry. They carry API keys, so the backup root is created `chmod 700` and each
-file keeps its own mode; a snapshot, and the off-site mirror that copies one,
-is as sensitive as the keys it holds. `config.toml` is deliberately absent: it
-is committed, and git is its backup.
+**Local configuration.** `config.local.toml`, `config.local.json`, `.env` and
+every `profiles/<name>.local.toml` are the one piece of machine state that
+lives in the checkout rather than in `state/`, and they are gitignored, so a
+lost checkout or a lost volume takes them with it and nothing else has a copy.
+The three files are copied verbatim into a `config/` entry and the profile
+overlays into `config/profiles/` (a snapshot that has none of them carries no
+`config/` directory), which the weekly drill restores and byte-compares like
+any other entry. They carry API keys, so the backup root is created
+`chmod 700` and each file keeps its own mode; a snapshot, and the off-site
+mirror that copies one, is as sensitive as the keys it holds. `config.toml`
+and the committed `profiles/<name>.toml` are deliberately absent: they are
+committed, and git is their backup.
+
+**Device-global operator rules.** `~/.agents/AGENTS.md` is the first
+instruction layer of every system prompt
+(`resolveGlobalInstructionsPath`, `src/agent/system_prompt.zig`) and is not
+the checkout's `.agents`: that one is a per-project directory under the
+storage root, this one is per-device and lives in `$HOME`, in no repository. A
+run with no `$HOME/.agents` skips the entry; it never fails the backup. A
+snapshot that holds it carries a `home-agents/` entry, which a restore puts
+back at `$HOME/.agents`.
 
 `state` must resolve into the shared storage root. A run whose resolved backup
 root would land inside the checkout itself (state never pointed at an external

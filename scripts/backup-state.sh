@@ -199,9 +199,20 @@ done
 copy_local_config() {
     local file copied_any=0
     mkdir -p -- "$staging/config"
+    # The three files the loop names, plus every `profiles/<name>.local.toml`:
+    # the checkout-private half of a named profile (machine-local endpoints,
+    # same relationship `config.local.toml` has to `config.toml`), gitignored
+    # and therefore as absent from a re-clone as the three beside it.
     for file in config.local.toml config.local.json .env; do
         [ -f "$repo_root/$file" ] || continue
         cp -p -- "$repo_root/$file" "$staging/config/$file"
+        copied_any=1
+    done
+    local profile
+    for profile in "$repo_root"/profiles/*.local.toml; do
+        [ -f "$profile" ] || continue
+        mkdir -p -- "$staging/config/profiles"
+        cp -p -- "$profile" "$staging/config/profiles/${profile##*/}"
         copied_any=1
     done
     if [ "$copied_any" = 1 ]; then
@@ -212,6 +223,24 @@ copy_local_config() {
     fi
 }
 copy_local_config
+
+# Device-global operator instructions. `~/.agents/AGENTS.md` is the first
+# instruction layer of every system prompt (`resolveGlobalInstructionsPath` in
+# `src/agent/system_prompt.zig`), and it is not the checkout's `.agents`: that
+# one is a per-project directory under the storage root, this one is per-device
+# and lives in `$HOME`. It is in no repository, so a re-clone cannot bring it
+# back and a lost storage root takes it with the store. Copied as its own
+# entry, because a restore has to put it back at `$HOME/.agents` rather than
+# anywhere in the storage root. A missing `$HOME` (a service started without
+# one) or an absent directory is a soft skip, like `.agents`/`.local` above.
+copy_home_agents() {
+    [ -n "${HOME:-}" ] || return 0
+    [ -d "$HOME/.agents" ] || return 0
+    mkdir -p -- "$staging/home-agents"
+    rsync -a --exclude='*.lock' "$HOME/.agents/" "$staging/home-agents/"
+    copied="$copied home-agents"
+}
+copy_home_agents
 
 # rsync's exit code is the only success signal so far; a run that copied
 # nothing would still rotate `latest` onto a hollow snapshot and read as

@@ -128,6 +128,28 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no snapshot has ever been promoted", result.stderr)
 
+    def test_device_global_rules_entry_is_restored_and_compared(self) -> None:
+        # `~/.agents/AGENTS.md` is a snapshot entry of its own, and the drill
+        # has to carry it: an entry the backup writes but the drill skips is a
+        # file whose restorability nobody ever checks.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        (snap / "home-agents").mkdir()
+        (snap / "home-agents" / "AGENTS.md").write_text("device rules\n")
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("home-agents", result.stdout)
+
+    def test_unreadable_device_global_rules_fail_the_drill(self) -> None:
+        # A `home-agents` entry that is a dangling symlink: the directory
+        # cannot be copied out, so the drill must fail rather than report the
+        # snapshot as restorable.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        (snap / "home-agents").mkdir()
+        (snap / "home-agents" / "AGENTS.md").symlink_to("nowhere.md")
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("differs from the snapshot", result.stderr)
+
     def run_verify(
         self, *args: str, env_extra: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:

@@ -262,6 +262,65 @@ class BackupStateTest(unittest.TestCase):
             "the second run's own copy is not reachable from latest",
         )
 
+    def test_device_global_agent_rules_are_snapshotted(self) -> None:
+        # `~/.agents/AGENTS.md` is the first instruction layer of every system
+        # prompt and lives in no repository. The checkout's own `.agents` is a
+        # different, per-project directory, so covering only that left the
+        # device-wide rules with no copy anywhere.
+        home_agents = self.root / ".agents"
+        home_agents.mkdir()
+        (home_agents / "AGENTS.md").write_text("device rules\n")
+        project_agents = self.repo / ".agents"
+        project_agents.mkdir()
+        (project_agents / "AGENTS.md").write_text("project rules\n")
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        latest = self.latest()
+        self.assertEqual(
+            (latest / "home-agents" / "AGENTS.md").read_text(), "device rules\n"
+        )
+        self.assertEqual((latest / "agents" / "AGENTS.md").read_text(), "project rules\n")
+
+    def test_absent_home_agents_directory_is_a_soft_skip(self) -> None:
+        # A device with no `~/.agents` (the harness reads it fail-open) must
+        # still snapshot the store; the entry is skipped, not fatal.
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.latest() / "home-agents").exists())
+        self.assertTrue((self.latest() / "state" / self.session_db("s1")).exists())
+
+    def test_profile_local_overlays_travel_with_the_local_config(self) -> None:
+        # `profiles/<name>.local.toml` is the checkout-private half of a named
+        # profile, gitignored exactly like `config.local.toml`, so it was as
+        # absent from a re-clone as the files beside it.
+        profiles = self.repo / "profiles"
+        profiles.mkdir()
+        (profiles / "web.local.toml").write_text("base_url = \"http://localhost:1234\"\n")
+        (profiles / "web.toml").write_text("name = \"web\"\n")
+        (self.repo / ".env").write_text("TOKEN=abc\n")
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        config = self.latest() / "config"
+        self.assertEqual(
+            (config / "profiles" / "web.local.toml").read_text(),
+            "base_url = \"http://localhost:1234\"\n",
+        )
+        self.assertEqual((config / ".env").read_text(), "TOKEN=abc\n")
+        self.assertFalse(
+            (config / "profiles" / "web.toml").exists(),
+            "the committed half of the profile is git's backup, not this one's",
+        )
+
     def test_installed_symlink_launcher_resolves_the_checkout(self) -> None:
         # What the systemd unit runs: `~/.local/bin/clanker-state-backup` is a
         # symlink to the script in the checkout. Both links matter -- the

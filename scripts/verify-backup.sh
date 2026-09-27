@@ -27,7 +27,8 @@
 # Restore time is measured so RTO stops being an unknown: a snapshot that
 # takes N seconds to copy out is the lower bound on a real restore of the
 # same size. The drill copies the same entry set the backup captures
-# (state/, plus local/, agents/ and config/ when the snapshot holds them);
+# (state/, plus local/, agents/, config/ and home-agents/ when the snapshot
+# holds them);
 # `staging/` and `*.lock` are absent by design (see backup-state.sh).
 set -euo pipefail
 
@@ -101,7 +102,7 @@ fi
 snapshot=$(resolve_path "$snapshot")
 
 entries="state"
-for extra in local agents config; do
+for extra in local agents config home-agents; do
     [ -d "$snapshot/$extra" ] && entries="$entries $extra"
 done
 

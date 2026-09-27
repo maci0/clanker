@@ -28,9 +28,12 @@ edit of `backups/`.
   (`improvements.jsonl`), stats (`token_stats.jsonl`, `reasoning.jsonl`,
   `autolearn.jsonl`), goals, board, plugins, chat history, logs — plus
   checkout-local `.local/` and `.agents/` when they exist, plus a `config/`
-  entry carrying `config.local.toml`, `config.local.json` and `.env` (the
-  gitignored machine-local configuration, which exists nowhere else and
-  without which a restored store has no provider to call). `*.lock` files are
+  entry carrying `config.local.toml`, `config.local.json` and `.env` plus
+  `config/profiles/*.local.toml` (the gitignored machine-local configuration,
+  which exists nowhere else and without which a restored store has no provider
+  to call), plus a `home-agents/` entry holding `~/.agents/AGENTS.md` (the
+  device-global operator rules that open every system prompt; the checkout's
+  `.agents` is a different, per-project directory). `*.lock` files are
   excluded by design; flock locks die with their process, so a restored tree
   never carries stale locks. `state/staging/` (the improve loop's checkout
   copies with build artifacts) is excluded too: regenerable, and it would
@@ -128,7 +131,10 @@ this runbook can manufacture a snapshot that does not exist.
    rsync -a --delete "$SNAP/local/" "$storage_root/.local/" 2>/dev/null || true
    rsync -a --delete "$SNAP/agents/" "$storage_root/.agents/" 2>/dev/null || true
    # the gitignored machine-local config, back into the checkout it came from
+   # (config/profiles/*.local.toml lands back under profiles/ this way)
    rsync -a "$SNAP/config/" "$repo_root/" 2>/dev/null || true
+   # the device-global operator rules, back into $HOME (never the storage root)
+   rsync -a "$SNAP/home-agents/" "$HOME/.agents/" 2>/dev/null || true
    ```
    `--delete` makes the target match the snapshot exactly, dropping files the
    corruption added. That also drops a live `state/staging/` if one exists —
