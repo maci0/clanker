@@ -6,6 +6,9 @@
 //! `neutralize`: a document that contains `</retrieved_knowledge>` verbatim
 //! would otherwise close the block early and have the rest of its own text
 //! read as the operator's request, which is the whole point of the fence.
+//! `<selected_idea>` is the same fence around the plan-phase idea the improve
+//! engine re-sells to the next model call: model output, promoted to a host
+//! directive, so it needs the same structural guard as a retrieved document.
 //!
 //! Two callers, one table. `cli.zig` frames retrieval on the HTTP run path;
 //! `agent/loop.zig` frames every tool result, which is the far larger surface
@@ -29,6 +32,8 @@ pub const markers = [_][]const u8{
     "<operator_task>",
     "</tool_result>",
     "<tool_result>",
+    "</selected_idea>",
+    "<selected_idea>",
 };
 
 /// The byte substituted for a marker's leading `<`: U+FF1C FULLWIDTH LESS-THAN
