@@ -67,11 +67,11 @@ and Implementation lists checkable file-level phases.
 | [0006](0006-webui.md) | Web UI | Shipped | |
 | [0007](0007-memory.md) | Memory layer | In progress | Builtin path shipped; pluggable embedder/vector keys deleted, not stranded; every-turn inject is 0048 |
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
-| [0009](0009-schedule.md) | Scheduled runs | Shipped | (Fixed) sweep-exit Known issue |
+| [0009](0009-schedule.md) | Scheduled runs | Shipped | (Fixed) sweep-exit Known issue; per-entry `goal` open |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
 | [0011](0011-clanker-mesh.md) | Clanker mesh | In progress | Serve listener + `clanker mesh` + HTTP join/leave/status/pending in; `ck_mesh` guests and Phase 3 share open |
 | [0012](0012-surface-plugins.md) | Surface plugins | Shipped | Web UI, TUI slash-command scan and CLI two-tier all shipped (TUI/CLI 2026-08-20) |
-| [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
+| [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry; fire log and `ttsr_fires` counter open |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
 | [0015](0015-advisor.md) | Advisor | Shipped | Off by default; fail-open |
 | [0016](0016-eval-kernel.md) | Eval kernel | In progress | Persist/reset/SIGTERM shipped; JS, bridge, venv open |
@@ -79,9 +79,9 @@ and Implementation lists checkable file-level phases.
 | [0018](0018-snapcompact.md) | Snapcompact | Draft | Opt-in; default stays LLM compact |
 | [0019](0019-github-fs.md) | GitHub filesystem | Shipped | `gh_read` + file cache; sqlite still open |
 | [0020](0020-auto-thinking.md) | Auto thinking | Shipped | Opt-in classifier; selects a 0024 row |
-| [0021](0021-smart-commit.md) | Smart commit | Shipped | `clanker commit` + guest grouping |
+| [0021](0021-smart-commit.md) | Smart commit | Shipped | `clanker commit` + guest grouping; `commit.model` open |
 | [0022](0022-out-of-tree-tools.md) | Out-of-tree tools | Shipped | `tools_dir` is a list; last-listed wins |
-| [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only |
+| [0023](0023-webui-model-config.md) | Web UI model config | Shipped | Writes `config.local.toml` only; the running serve reloads into it (`ConfigWatch`) |
 | [0024](0024-sampling-profiles.md) | Sampling profiles | Shipped | Use-case table fills empty knobs |
 | [0025](0025-fallback-provider-chain.md) | Fallback provider chain | Shipped | Reactive list; vision path unchanged |
 | [0026](0026-llm-proxy.md) | LLM compatibility proxy | In progress | Serve surface landed, off by default; e2e not wired |

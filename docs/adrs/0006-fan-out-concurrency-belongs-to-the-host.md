@@ -38,7 +38,9 @@ specific to agent runs.
 ## Decision
 
 Add `ck_llm_many(request) -> [{provider, model, ok, text|error, ms, tokens}]`,
-one thread per target, all joined before the call returns. Option 3.
+one thread per target, all joined before the call returns. Option 3. A target
+whose thread fails to spawn runs inline instead of being reported as a spawn
+failure, so the batch still answers every model it was asked about.
 
 The guest-visible contract deliberately mirrors `ck_llm` rather than inventing a
 second one: same `"llm": true` descriptor grant, same session token budget

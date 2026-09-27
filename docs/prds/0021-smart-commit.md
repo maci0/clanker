@@ -5,7 +5,9 @@
 Shipped. `smart_commit` groups a staged (or `--all`) diff via `ck_llm`,
 validates conventional commit messages, topo-sorts on a grep graph, and
 falls back to one commit + `note` on a degenerate cycle. `clanker commit`
-dry-runs, confirms, then executes. Sources of truth:
+dry-runs, confirms, then executes. Not shipped: the `commit.model` override
+(open box under Acceptance criteria; there is no `commit` section in
+`src/config.zig`). Sources of truth:
 `tools/zig/smart_commit.zig`, `tools/zig/commit_logic.zig`,
 `src/cli.zig` (`cmdCommit`).
 

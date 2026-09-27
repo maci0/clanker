@@ -2,7 +2,9 @@
 
 ## Status
 
-Shipped. Sources of truth: `tools/zig/schedule_cron.zig` (the dialect and the
+Shipped. Not shipped: the per-entry `goal` field (open box under Acceptance
+criteria; no `goal` key in `state/schedule.json` and no `--goal` on `add`).
+Sources of truth: `tools/zig/schedule_cron.zig` (the dialect and the
 next-fire arithmetic, pure, host-tested), `src/schedule/store.zig`
 (`state/schedule.json` + `state/schedule/log.jsonl`),
 `src/schedule/runner.zig` (due selection, claiming, firing, the ledger),

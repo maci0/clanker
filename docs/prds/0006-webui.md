@@ -5,7 +5,7 @@
 Shipped. Source of truth: `ui/app/*`
 (`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
 comptime-embedded via `ui/webui.zig`, routed in `src/cli.zig`
-(`handleConnection`/`handleRun`/`handleWebuiAsset`/`handleWebuiPeers`/etc).
+(`handleConnection`/`handleRun`/`handleWebuiAsset`/`handlePeers`/etc).
 Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
 the CLI. Turn-by-turn audit trail of the module-split and accessibility work
 lives separately in `docs/reviews/webui.md` — that document is a working log,

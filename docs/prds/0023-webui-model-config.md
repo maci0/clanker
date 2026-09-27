@@ -4,8 +4,11 @@
 
 Shipped. `POST /api/config/model` and `POST /api/config/default` write
 `config.local.toml` via the span-replace primitive in
-`src/util/toml_edit.zig`. The Models view confirms, then saves, and
-notices that a serve restart is required. Sources of truth:
+`src/util/toml_edit.zig`. The Models view confirms, then saves, and says the
+server reloads into the new config: `ConfigWatch` (`src/cli.zig`) watches
+`config.toml` and `config.local.toml` by mtime and restarts the process when
+the result still loads, so no restart is required of the operator. Sources of
+truth:
 `ui/app/features/models.js`, `src/util/toml_edit.zig`, `src/cli.zig`
 (`cmdProvidersFill`, `renderModelSnippet`, `findCatalogProvider`/
 `findCatalogModel`), `src/config.zig` (`Provider`, `Model`, `Config.load`'s
@@ -84,13 +87,12 @@ just a papercut.
    showing the user the exact block that will be written and requiring an
    explicit confirm, matching the confirm-before-write posture the harness
    already applies to its own file-writing tool calls.
-7. The UI states plainly, after a successful write, that the change takes
-   effect on the next `clanker serve` restart — not live. Text notice only;
-   no in-UI restart action in v1. The Models view builds the notice from a
-   response field the server never sends (`d.applied`); the handler answers
-   `ok`/`path`/`written`/`restart: true`, so the shipped sentence never names
-   a restart (re-checked 2026-09-27). `Config.load` runs once at process start;
-   nothing about this feature adds hot-reload.
+7. The UI states plainly, after a successful write, that the change is picked
+   up by the running server. Text notice only; no in-UI restart action.
+   `ConfigWatch` (`src/cli.zig`) watches `config.toml` and `config.local.toml`
+   by mtime and re-execs into the new config when it still loads, so a save
+   takes effect without the operator restarting anything. The write is
+   noticed on the watcher's 2s tick, not inside the request.
 
 ## Non-goals
 
@@ -115,7 +117,8 @@ just a papercut.
   a lock or a compare-and-swap check for a single-user local tool is not
   justified by this PRD; noted as an open question if it ever becomes a
   real complaint.
-- An in-UI "restart now" control after save. v1 is a text notice only.
+- An in-UI "restart now" control after save. The reload is the server's own,
+  so the notice is text only.
 
 ## Design
 
@@ -146,7 +149,7 @@ missing, same as `cmdInit`'s existing first-write case.
 spacing (e.g. `[ models."x/y" ]`) and the literal scan misses it, a second
 table with the same effective key is appended. Pin against the vendored TOML
 parser: **last table wins**. That outcome is accepted for v1 (the UI-written
-block is the one that takes effect after restart). Format-tolerant matching
+block is the one that takes effect after the reload). Format-tolerant matching
 is deferred; see Open questions.
 
 **Top-level keys (`default_provider`, `default_model`).** Not inside a
@@ -181,9 +184,10 @@ searching for an existing table, or a name containing a quote would never
 match its own prior block and would append a duplicate instead of replacing
 it.
 
-**Restart notice.** After a successful write the UI shows a text notice that
-the change applies on the next `clanker serve` restart. No "restart now"
-button or self-restart in v1.
+**Save notice.** After a successful write the UI shows a text notice that the
+server reloads into the new config. No "restart now" button; the reload is
+`ConfigWatch`'s, and an edit that leaves the config unloadable is refused in
+place (the last known good config keeps serving).
 
 **Dependencies.**
 
@@ -206,7 +210,7 @@ button or self-restart in v1.
 3. Pin duplicate-table behavior: unit test that two tables with the same
    header parse as last-wins under the vendored TOML parser.
 4. Models UI: confirm-before-write using the existing snippet preview; Save
-   calls the endpoint; success response shows text-only restart notice.
+   calls the endpoint; success response shows the text-only reload notice.
 5. Tests: surgical replace leaves unrelated lines byte-identical; append when
    missing; top-level key insert before first `[`; crash mid-write leaves
    prior content; quote/backslash names round-trip through the same escaping;
@@ -223,7 +227,7 @@ button or self-restart in v1.
 | Two browser tabs write different models at nearly the same time | Read-modify-write race; the later write's full-file content wins and can silently drop the earlier tab's change. Accepted risk (see Non-goals), not mitigated |
 | Process killed mid-write | `atomic_write.writeFile`'s temp+rename leaves the old file intact — no partial/corrupt file |
 | File not writable (permissions) | Endpoint returns an error; UI surfaces it; no partial write (nothing is attempted past the failed `createFileAtomic`) |
-| Write succeeds | Running `clanker serve` process keeps its already-loaded config; UI shows a text notice to restart; no live apply, no restart button |
+| Write succeeds | The running `clanker serve` process restarts into the new config on its own (`ConfigWatch`); UI shows a text notice; no restart button |
 
 ## Acceptance criteria
 
@@ -252,8 +256,8 @@ button or self-restart in v1.
 - [x] The Models view exposes a "set as default" action that writes
       `default_provider`/`default_model` via `POST /api/config/default`.
       (Goal 6)
-- [x] A successful save's UI response is a text notice that the change
-      applies on next restart (no restart button).
+- [x] A successful save's UI response is a text notice that the running
+      server reloads into the new config (no restart button).
 
 ## Open questions / future work
 
