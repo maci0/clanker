@@ -74,6 +74,22 @@ So, when adding a capability:
 - CLI and web UI call the tool rather than reimplementing it, so tool stays single implementation. `toolText`/`toolJson` in `cli.zig` are that call.
 - Web UI capability may want second descriptor over same wasm: one op per tool reads well in model catalog, one multiplexed entry suits HTTP endpoint. Mark that one `internal` to hide from catalog.
 
+### Settled placements
+
+The rule above has been applied to the bounded work that once lived in `src/`. These are decided; re-proposing them is a regression, not a fresh idea.
+
+Guest-owned, and there is deliberately no native half left: exact-match patch apply (`patch_apply`), peer notify and chat fan-out (`peers`), the autolearn aggregate and ROADMAP upsert (`autolearn`, logic in `tools/zig/autolearn_logic.zig`), the run-graph serialize-and-write (`graph`, logic in `tools/zig/graph_listing.zig`), workflow parse and argument expansion (`workflows`, logic in `tools/zig/workflows_logic.zig`), the five record stores, `janitor`, `knowledge`, `prompts`, `config_view`, `model_stats`. `src/records/*.zig` renders only; the store itself is the guest.
+
+Native by necessity, not by accident:
+
+- `src/gate/checks.zig` and the promote path in `src/improve/engine.zig` decide whether a self-authored change is graded and promoted, so they must not live where a later pass could rewrite them. `tools/zig/gate.zig` is not a counterexample: it answers an agent's question about its own work on demand, the gate makes the decision, and the decision runs from the binary already on disk.
+- `src/llm/client.zig` is the trust root `ck_llm` is built on, and `Agent.on_token` streams straight out of it. A tool needing model access already has `ck_llm`.
+- `src/sandbox/*` and `src/toolhost/` define what a WASM tool is; `builder.zig` is closed to passes outright.
+- `src/cli.zig`'s REPL loop, HTTP accept loop and spinner threads: no `ck_*` for socket listen/accept, raw fd control, or a thread held across a session. New `/` commands go through the existing `cmd_*` dispatch instead.
+- `src/agent/private_todos.zig` and the `self.provider` graph stamp: run-scoped mutable state the host must read after the call returns.
+- `src/peers/session_sync.zig`: opens the replica SQLite databases directly, and no `ck_*` does general SQLite.
+- `src/agent/auto_learn.zig`'s `record`/`recordRun`: once per tool call and once per run, inside the agent loop. The aggregate side moved; the append hooks did not, because a WASM dispatch per tool call is a real cost on that path.
+
 ## Tool ABI
 
 Guests export `scratch(need) -> u32`, `host_arena() -> u32`, `run(ptr, len) -> u64` (packed `(out_ptr << 32)|out_len`), and import `env.ck_*` in `tools/zig/lib.zig`.

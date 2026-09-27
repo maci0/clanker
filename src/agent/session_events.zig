@@ -17,7 +17,6 @@ const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
 const log = @import("../util/log.zig");
 
-/// The suffix appended to a session id to name its event database. The JSON
 /// The events table lives in the session's own database (`<id>.db`); this
 /// module is the append-only writer for it.
 /// One event in a session's stream. `payload` is a JSON object; the exact

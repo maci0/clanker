@@ -5,7 +5,7 @@
 //!
 //! Architecture: a single root `vxfw.Widget` ("Model") drives everything.
 //! `vxfw.App.run` already handles SIGWINCH (`.winsize` events resize and
-//! redraw automatically, no self-pipe needed, unlike src/tui/term.zig)
+//! redraw automatically, no self-pipe needed)
 //! and owns the render loop. A submitted task runs `Agent.run` on a
 //! background thread (LLM calls and tool execution are blocking); the
 //! callbacks it takes (`on_token`/`on_tool_call`/`on_tool_result`) are bare
