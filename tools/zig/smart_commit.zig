@@ -5,7 +5,7 @@ const lib = @import("lib.zig");
 const logic = @import("commit_logic.zig");
 const model_reply = @import("model_reply.zig");
 const utf8 = @import("utf8");
-const num = @import("num.zig");
+const num = @import("num");
 
 /// A grouping wider than this is one commit per file with nothing left to
 /// say, so a caller asking for more is answered with the cap rather than a

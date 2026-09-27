@@ -92,7 +92,9 @@ test "clampJsonInt bounds a parsed integer before the narrowing" {
     // out-of-bounds slice in the guest.
     try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, 4294967296, 1, 100));
     try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, std.math.maxInt(i64), 1, 100));
-    try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, std.math.minInt(i64), 1, 100));
+    // Below the floor, so the low bound, and the widening holds for the
+    // negative edge too (`minInt(i64)` reaches i128 exactly).
+    try std.testing.expectEqual(@as(u32, 1), clampJsonInt(u32, std.math.minInt(i64), 1, 100));
     // A cap the type cannot represent would itself be a wrap, so the widest
     // legal destination value is still returned as itself.
     try std.testing.expectEqual(@as(u64, 4294967295), clampJsonInt(u64, 4294967295, 1, std.math.maxInt(u64)));

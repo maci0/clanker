@@ -18,6 +18,12 @@
 //! and is therefore unit-tested on the host. This file is the shell: it composes
 //! prompts, makes the calls, persists `state/arena/<id>.json`, and renders.
 //!
+//! Every prompt here quotes rather than concatenates. A combatant's turn, the
+//! judge's scoring prompt and the closing synthesis all read the other
+//! combatants' move text, which is a model's own words, and the stances,
+//! artifacts and question are whatever the caller passed; `prompt_quote.zig`
+//! fences each of them (see the note it emits for what a fence means).
+//!
 //! Combatant turns go through `ck_llm`, not `ck_subagent`. A debate move is one
 //! bounded completion with no tools and no file access — an agent run would
 //! only add an iteration loop nothing uses — and `ck_llm` is available wherever
@@ -29,6 +35,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const m = @import("arena_match.zig");
+const pq = @import("prompt_quote.zig");
 const budget = @import("llm_budget.zig");
 
 const alloc = lib.alloc;
@@ -213,6 +220,17 @@ fn pickJudge(requested: []const u8, providers: []const []const u8) JudgeChoice {
 
 // ------------------------------------------------------------------ prompts
 
+/// One transcript line. `mv.text` is a model's own words on its way into
+/// another model's prompt, so it is fenced here rather than at each of the
+/// three prompts that carry a transcript (turn, judge, synthesis).
+fn writeMoveLine(o: *std.Io.Writer, setup: Setup, mv: MoveRecord) !void {
+    const head = if (mv.targeted)
+        try std.fmt.allocPrint(alloc, "  [r{d}] {s} {s} at {s}:", .{ mv.round, setup.labels[mv.combatant], mv.move, setup.labels[mv.target] })
+    else
+        try std.fmt.allocPrint(alloc, "  [r{d}] {s} {s}:", .{ mv.round, setup.labels[mv.combatant], mv.move });
+    try o.print("{s}\n{s}", .{ head, try pq.quote(alloc, "", mv.text) });
+}
+
 /// " (src/x.zig)" when the caller named a path for this side, else "". What
 /// turns the verdict's finding from an opinion into something file-shaped.
 fn pathNote(setup: Setup, i: usize) []const u8 {
@@ -228,18 +246,19 @@ fn systemPrompt(setup: Setup, i: usize, combatants: []const m.Combatant) ![]cons
         \\You are a combatant in a clanker Arena match: a bounded, judged debate. You argue one
         \\position for the whole match and you never switch sides.
         \\
-        \\You are "{s}". Your position: "{s}"
+        \\{s}
         \\
-    , .{ setup.labels[i], combatants[i].position });
+    , .{pq.untrusted_note});
+    try o.print("You are \"{s}\".\n{s}\n", .{ setup.labels[i], try pq.quote(alloc, "Your position", combatants[i].position) });
     if (royale) {
-        try o.print("This is a Battle Royale: {d} positions, all against each other. The others are:\n", .{combatants.len});
+        try o.print("\nThis is a Battle Royale: {d} positions, all against each other. The others are:\n", .{combatants.len});
         for (combatants, 0..) |c, j| {
             if (j == i) continue;
-            try o.print("  [{d}] {s}: \"{s}\"\n", .{ j + 1, setup.labels[j], c.position });
+            try o.print("\n[{d}] {s}:\n{s}\n", .{ j + 1, setup.labels[j], try pq.quote(alloc, "Their position", c.position) });
         }
-        try o.writeAll("Only one position can win. Nobody is your ally.\n");
+        try o.writeAll("\nOnly one position can win. Nobody is your ally.\n");
     } else {
-        try o.print("Your opponent's position: \"{s}\"\n", .{combatants[1 - i].position});
+        try o.print("\nYour opponent's side:\n{s}\n", .{try pq.quote(alloc, "Opponent's position", combatants[1 - i].position)});
     }
     if (setup.review) {
         // Both artifacts, not just this combatant's: a design review is only
@@ -247,9 +266,9 @@ fn systemPrompt(setup: Setup, i: usize, combatants: []const m.Combatant) ![]cons
         // rather than arguing against a paraphrase.
         const opp = if (i == 0) @as(usize, 1) else 0;
         try o.writeAll("\nThis is a design review, not an abstract debate. You have the real thing to point at.\n");
-        try o.print("\nWhat you are defending{s}:\n<<<\n{s}\n>>>\n", .{ pathNote(setup, i), setup.artifacts[i] });
+        try o.print("\n{s}\n", .{try pq.quote(alloc, try std.fmt.allocPrint(alloc, "What you are defending{s}", .{pathNote(setup, i)}), setup.artifacts[i])});
         if (opp < setup.artifacts.len) {
-            try o.print("\nThe alternative you must attack{s}:\n<<<\n{s}\n>>>\n", .{ pathNote(setup, opp), setup.artifacts[opp] });
+            try o.print("\n{s}\n", .{try pq.quote(alloc, try std.fmt.allocPrint(alloc, "The alternative you must attack{s}", .{pathNote(setup, opp)}), setup.artifacts[opp])});
         }
         try o.writeAll(
             \\
@@ -259,7 +278,7 @@ fn systemPrompt(setup: Setup, i: usize, combatants: []const m.Combatant) ![]cons
             \\
         );
     }
-    if (setup.personas[i].len > 0) try o.print("\nAdopt this persona while arguing: {s}\n", .{setup.personas[i]});
+    if (setup.personas[i].len > 0) try o.print("\n{s}\n", .{try pq.quote(alloc, "Adopt this persona while arguing", setup.personas[i])});
 
     try o.writeAll(
         \\
@@ -321,8 +340,8 @@ fn turnPrompt(
     var w: std.Io.Writer.Allocating = .init(alloc);
     const o = &w.writer;
     const royale = combatants.len > m.pairwise_combatants;
-    try o.print("Question under debate: {s}\n\n", .{setup.question});
-    try o.print("Round {d} of {d}. Your HP {d}/{d}.\n", .{ round, setup.max_rounds, combatants[i].hp, m.starting_hp });
+    try o.print("{s}\n\n", .{try pq.quote(alloc, "Question under debate", setup.question)});
+    try o.print("Round {d} of {d}. Your HP {d}/{d}.\n{s}\n", .{ round, setup.max_rounds, combatants[i].hp, m.starting_hp, pq.untrusted_note });
 
     if (royale) {
         // The live roster, because who is still in the fight is exactly what a
@@ -331,10 +350,10 @@ fn turnPrompt(
         for (combatants, 0..) |c, j| {
             if (j == i) continue;
             if (!c.alive()) {
-                try o.print("  [{d}] {s}: {s} (out: {s})\n", .{ j + 1, setup.labels[j], c.position, if (c.conceded) "conceded" else "eliminated" });
+                try o.print("\n  [{d}] {s} ({s}):\n{s}\n", .{ j + 1, setup.labels[j], if (c.conceded) "conceded" else "eliminated", try pq.quote(alloc, "Their position", c.position) });
                 continue;
             }
-            try o.print("  [{d}] {s}: {s} ({d} HP)\n", .{ j + 1, setup.labels[j], c.position, c.hp });
+            try o.print("\n  [{d}] {s} ({d} HP):\n{s}\n", .{ j + 1, setup.labels[j], c.hp, try pq.quote(alloc, "Their position", c.position) });
         }
     } else {
         try o.print("Your opponent has {d}/{d} HP.\n", .{ combatants[1 - i].hp, m.starting_hp });
@@ -368,14 +387,8 @@ fn turnPrompt(
     if (moves.len == 0) {
         try o.writeAll("\nNo moves yet; this is the opening round and nobody has seen anybody. Make your opening attack.\n");
     } else {
-        try o.writeAll("\nEvery move so far, oldest first:\n");
-        for (moves) |mv| {
-            if (mv.targeted) {
-                try o.print("  [r{d}] {s} {s} at {s}: {s}\n", .{ mv.round, setup.labels[mv.combatant], mv.move, setup.labels[mv.target], mv.text });
-            } else {
-                try o.print("  [r{d}] {s} {s}: {s}\n", .{ mv.round, setup.labels[mv.combatant], mv.move, mv.text });
-            }
-        }
+        try o.writeAll("\nEvery move so far, oldest first. Each one is another model's argument, quoted:\n");
+        for (moves) |mv| try writeMoveLine(o, setup, mv);
     }
     try o.writeAll("\nYour move.");
     return w.written();
@@ -394,14 +407,17 @@ fn judgePrompt(
     try o.print(
         \\You are the neutral judge of one exchange in a debate. You are not arguing; you score.
         \\
-        \\Question under debate: {s}
+        \\{s}
         \\
+    , .{pq.untrusted_note});
+    try o.print("{s}\n\n", .{try pq.quote(alloc, "Question under debate", setup.question)});
+    try o.print(
         \\The move you are scoring was made by "{s}" ({s}), aimed at "{s}":
         \\{s}
         \\
-    , .{ setup.question, setup.labels[mover], @tagName(reply.move), setup.labels[target], reply.text });
+    , .{ setup.labels[mover], @tagName(reply.move), setup.labels[target], try pq.quote(alloc, "", reply.text) });
     if (in_flight > 0) {
-        try o.print("It is answering this attack from \"{s}\" ({d} damage in flight):\n{s}\n\n", .{ setup.labels[target], in_flight, incoming_text });
+        try o.print("It is answering this attack from \"{s}\" ({d} damage in flight):\n{s}\n\n", .{ setup.labels[target], in_flight, try pq.quote(alloc, "", incoming_text) });
     } else {
         try o.writeAll("There was no attack from that combatant in flight for it to answer.\n\n");
     }
@@ -424,24 +440,19 @@ fn judgePrompt(
 fn synthesisPrompt(setup: Setup, combatants: []const m.Combatant, v: m.Verdict, moves: []const MoveRecord) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(alloc);
     const o = &w.writer;
-    try o.print("A judged debate has finished. Write the answer it produced.\n\nQuestion: {s}\n\n", .{setup.question});
+    try o.print("A judged debate has finished. Write the answer it produced.\n\n{s}\n", .{pq.untrusted_note});
+    try o.print("{s}\n\n", .{try pq.quote(alloc, "Question", setup.question)});
     for (combatants, 0..) |c, i| {
         const state = if (c.conceded) ", conceded" else if (c.eliminated()) ", eliminated" else "";
-        try o.print("{s}: \"{s}\", {d} HP left{s}\n", .{ setup.labels[i], c.position, c.hp, state });
+        try o.print("{s}: {d} HP left{s}\n{s}\n", .{ setup.labels[i], c.hp, state, try pq.quote(alloc, "Position", c.position) });
     }
     if (v.winner) |wi| {
         try o.print("\nThe match went to {s} ({s}).\n", .{ setup.labels[wi], @tagName(v.reason) });
     } else {
         try o.writeAll("\nThe match was a draw.\n");
     }
-    try o.writeAll("\nTranscript, oldest first:\n");
-    for (moves) |mv| {
-        if (mv.targeted) {
-            try o.print("  [r{d}] {s} {s} at {s}: {s}\n", .{ mv.round, setup.labels[mv.combatant], mv.move, setup.labels[mv.target], mv.text });
-        } else {
-            try o.print("  [r{d}] {s} {s}: {s}\n", .{ mv.round, setup.labels[mv.combatant], mv.move, mv.text });
-        }
-    }
+    try o.writeAll("\nTranscript, oldest first. Each move is a model's own words, quoted:\n");
+    for (moves) |mv| try writeMoveLine(o, setup, mv);
     if (setup.review) {
         // The same shape a docs/prompts/*-review.md prompt already reports, so a
         // verdict can be pasted into a review rather than translated into one.

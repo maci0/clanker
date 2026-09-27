@@ -5,6 +5,132 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+Compatibility-breaking minor. The changes that break a consumer are under
+Breaking and Security, each with the upgrade step; the rest are additive or
+internal.
+
+### Breaking
+
+- The six read tools (`read_file`, `list_files`, `find_files`, `image`, `lsp`,
+  `repo_search`) carry `"fs_read_only": true`, which refuses every `ck_fs_*`
+  write. Before, `fs_prefixes` was a whole-channel grant, so a tool that only
+  read also held write authority over every prefix it names. A custom
+  descriptor that wraps one of these *and* writes needs its own copy of the
+  entry with `fs_read_only` absent; nothing else about the grant changes.
+- `edit_file` no longer writes `Dockerfile`, `.dockerignore` or
+  `docker-compose.yml`. Those names left its `fs_prefixes` when the same
+  commit narrowed the read tools. Upgrade action: edit those files with an
+  `edit_file` call naming the path only if the descriptor names it again
+  (the manifest is the authority), or write them through a tool whose
+  descriptor still grants the root.
+- `GET /api/runs?run=<id>` answers `404` with
+  `{"ok":false,"error":"no such run"}` for an id that names no run. It
+  answered `500` for what is a client mistake, because the handler discarded
+  the guest's "no such run" message. Clients that treated any non-2xx as a
+  server fault should now branch on 404.
+- `?workspace=<id>` naming no registered workspace answers `404` with
+  `{"ok":false,"error":"no such workspace"}` on the file routes
+  (`GET /api/files`, and the file endpoints beside it). It answered with the
+  serve working directory's listing under the requested id's name, so one
+  project's files were served as another's. Upgrade action: register the id as
+  a `{name, path}` (or `{name, roots}`) row in `state/workspaces.json`, or
+  `POST /api/workspaces`, or drop the parameter to get the serve root.
+- `POST /api/a2a/message` is a `400` for a JSON-RPC body with no `method`, or
+  whose `jsonrpc` is anything but `"2.0"`. A peer that omitted `method` used
+  to get an agent run with an empty prompt. A peer that omits `jsonrpc`
+  entirely is still served, and the method name itself is not matched against
+  a table, so a later A2A revision keeps working.
+- `chat_edit`, `chat_delete` and `chat_react` no longer accept a `room`
+  argument. The three ops identify a message by `msg_id` alone and the field
+  was never read, so a caller passing one now has it refused by the schema
+  rather than ignored. Upgrade action: drop `room` from the call.
+- A direct-message participant name containing `|` is refused, and the mesh map
+  no longer splits a `dm:` room name carrying a second separator. The name is
+  the conversation's identity, and `dm:` joins two names with `|`, so
+  `dm:a|b|c` was a room two different conversations could both name. A DM
+  between participants whose ids hold `|` used to succeed into an ambiguous
+  room and now answers an error; existing logs under such a room are left
+  where they are and are no longer drawn as a direct message.
+- Out-of-range integers and non-finite floats crossing the WASM ABI are
+  refused instead of wrapped or truncated. A guest that sent
+  `{"max_results": 1e30}` or `{"size": -5}` got silent garbage before (guests
+  build `ReleaseSmall`, where the conversion traps nothing); it now gets a
+  range error from the host, or a checked `intFromFloat` in
+  `tools/zig/num.zig`. Tools reading model-supplied numbers should range-check
+  at their own width (`intFromFloat`, `intFromFloatExact`, `clampInt`).
+- `[agent] llm_token_budget` (default `100000`) bounds the output tokens one
+  tool call may spend on `ck_llm`/`ck_llm_many` in total. A descriptor's
+  `max_tokens` grant bounds one completion, not how many a guest makes, so a
+  tool that loops the channel was unbounded and is now refused once the budget
+  is spent. Upgrade action: raise the key, or set it to `0` for the previous
+  unbounded behaviour.
+- `GET /api/files` refuses a file whose mode is owner-only (`0600`), not only
+  the dotenv names it already refused. The class is the mode, not the
+  filename: every personal-data store under `state/` writes itself that way,
+  and the route is reachable by every process and LAN client that can open the
+  port, so the file's own mode is its statement that those bytes do not leave
+  the account. A checkout's private keys are refused for the same reason.
+  Upgrade action: a client previewing a file it created `chmod 644` will see
+  it again; there is no config key to widen this.
+- Two documented exit codes changed, each detailed under Fixed: the
+  `clanker providers check` sweep exits `1` when the `default_provider` row is
+  not `ok` (it exited `0`), and `clanker auth` refuses a missing or misspelled
+  provider at exit `2` (it exited `1` with a Zig error name). A script that
+  chains either command needs the new codes.
+
+### Security
+
+- Model output that feeds another model call is quoted, not concatenated. The
+  `arena` prompts (combatant turn, judge, closing synthesis) now fence every
+  opponent move, stance, artifact, question and persona, and `compare` fences
+  every entrant answer in its judge and merge prompts, with a per-prompt line
+  saying a fence is quoted material. An entrant's or opponent's answer could
+  otherwise carry a directive into the call that scores or merges it. Fences
+  are neutralized inside quoted text, so a model writing `>>>` cannot close a
+  block. (`tools/zig/prompt_quote.zig`, the guest-side twin of
+  `src/util/prompt_fence.zig`.)
+- Every config view redacts a secret value. `clanker config dump` prints both
+  files as the operator wrote them, with every secret value replaced by
+  `<redacted>`: an `[mcp_servers.<name>]` `env`/`headers` value, and an
+  assignment whose key is one of `api_key`, `apikey`, `token`,
+  `access_token`, `refresh_token`, `bearer_token`, `auth_token`, `password`,
+  `passwd`, `secret`, `client_secret`, `private_key`, `authorization`,
+  `auth`. The names, the layout and the comments survive. `api_key_env`,
+  `proxy_token_env` and `service_account_file` are deliberately *not*
+  redacted: they name the holder, which is how an operator finds it. A dump
+  taken for a bug report no longer carries a live key.
+- A config value that is present but empty is refused at load, naming the key.
+  `default_provider = ""` and `[serve] host = ""` used to load and then resolve
+  to nothing. Upgrade action: delete the line or give it a value.
+- Free-form detail no longer reaches a log line whole. A hook's stderr (which
+  echoes the task text and the tool arguments it read), a denied `ck_exec`
+  argument, a goal loop's verdict reason and the improve plan's identifiers are
+  capped and masked before logging (`util/redact.zig`); the uncapped text still
+  goes to the model where it belongs.
+- Personal data under `state/` is owner-only and stays that way. The chat log,
+  the session database and its `-wal`/`-shm` sidecars, reasoning traces,
+  spills, exported transcripts, goals and the workspace store are created
+  `0600` rather than at the process umask, and `GET /api/files` refuses any
+  file whose mode grants nobody but its owner (see Breaking). Upgrade action: a
+  state directory written by an older build may hold such files at the wider
+  mode; each is tightened on its next write, so `chmod 600` an old snapshot (or
+  remove it, since the values it holds are still in the live store).
+- A URL carrying credentials, and a value echoed back in an error that is
+  logged, are masked before the text is written (`util/redact.zig`). Log lines
+  that quoted a full URL now show a redacted one.
+- A guest can no longer relocate the sandbox root: the `config` and `gate`
+  tools' ability to set it is refused, and a workspace id is resolved against
+  the registered roots instead of a path the caller supplied. A guest that
+  configured `sandbox_root` to reach outside its prefixes is refused.
+- Dotenv names are refused whatever their case (`.ENV`, `.Env`, `.envrc` are
+  the same secret as `.env`), and the backup scripts and the workspace store
+  honor the platform `PATH_MAX` instead of assuming a length.
+- Text a previous run wrote and a later run reads back (tool results, model
+  commit and roadmap text, self-authored alarm reminders) is fence-neutralized
+  and escaped before it reaches a prompt, a log line, or a shell. A tool result
+  that emitted `</retrieved_knowledge>` verbatim could close a block the
+  harness drew around something else.
+
 ### Added
 
 - `tool-helper-coverage` gate: every `tools/zig/*.zig` holding a top-level

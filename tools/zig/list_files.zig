@@ -14,7 +14,7 @@ const lib = @import("lib.zig");
 // The same skip table the host's ck_fs_find walk uses, so the two answer the
 // same about a tree rather than drifting apart.
 const fs_skip = @import("fs_skip");
-const num = @import("num.zig");
+const num = @import("num");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);

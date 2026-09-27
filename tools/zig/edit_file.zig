@@ -18,7 +18,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const hashline = @import("hashline.zig");
-const num = @import("num.zig");
+const num = @import("num");
 
 /// Ceilings on the two numbers a hunk carries. Both are counts into a file
 /// whose length the hunk itself is about, so a value past this is a mistaken
