@@ -237,6 +237,46 @@ const SPACE_STEPS = {
   "0.9rem": "--space-4", "1.4rem": "--space-5", "2.2rem": "--space-6", "3.4rem": "--space-7",
 };
 
+// A lamp pinned with `left:` is a lamp that stays on the left when the page
+// reads right to left. The sheets already say so: the disclosure chevron's
+// comment names `border-inline-end` swapping under `dir="rtl"`, and the same
+// file uses `inset-inline-start` for every other marker. A physical `left:`
+// does not read as a bug, so nothing caught the three that had crept in
+// (`.lamp`, `.rail-tab[aria-selected]`, `.room-row[data-active]`) -- the rail
+// and the room list each put their marker on the wrong side, at the far edge
+// from the text it marks. Centering is not a direction: `left: 50%` with a
+// `translateX(-50%)` lands in the same place in either direction, so it is the
+// one exemption and it is named here rather than waved through.
+test("a marker is placed with a logical property, so it mirrors under dir=rtl", () => {
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    for (const m of css.matchAll(/(^|[;{\s])(left|right)\s*:\s*([^;}]+)/g)) {
+      if (/-50%|50%/.test(m[3]) && /translateX/.test(css.slice(m.index, m.index + 200))) continue;
+      strays.push(`${name}:${css.slice(0, m.index).split("\n").length}  ${m[1].trim()} ${m[2]}: ${m[3].trim()}`);
+    }
+  }
+  assert.deepEqual(strays, [], `use inset-inline-start/end, not left/right:\n${strays.join("\n")}`);
+});
+
+// The mirror has to be written down where the marker's own rule is, or the
+// chevron is the only thing in the sheet with a reading direction: it opens
+// toward the reading direction in LTR, and the same `border-inline-end` it
+// draws on means the fold is sideways in RTL unless a `[dir="rtl"]` rule
+// mirrors the rotation beside it. The comment at the chevron already claimed
+// this rule existed; it did not, and an unbacked comment is the one thing
+// here that reads as done.
+test("a caret built from a rotation has a dir=rtl mirror beside it", () => {
+  const src = readFileSync(join(here, "tailwind.src.css"), "utf8");
+  for (const sel of [".rail-fold > summary.rail-group::after", ".disclosure-caret > summary::before"]) {
+    const at = src.indexOf(sel);
+    assert.notEqual(at, -1, `${sel} must exist`);
+    const rule = src.slice(at, src.indexOf("}", at));
+    if (!/rotate\(/.test(rule)) continue; // An unrotated mask needs no mirror.
+    assert.match(src.slice(at, at + 1200), new RegExp(`\\[dir="rtl"\\][^\\n]*${sel.replace(/[.[\]()*+?^$|\\{}]/g, "\\$&")}`),
+      `${sel} rotates with the reading direction, so it needs a [dir="rtl"] mirror`);
+  }
+});
+
 test("spacing that lands on a rung of the scale is written as the token", () => {
   const props = "gap|row-gap|column-gap|padding|margin";
   const re = new RegExp(`(^|[;{\\s])(?:${props})(?:-(?:top|right|bottom|left|block|inline))?\\s*:\\s*([^;}]+)`, "g");

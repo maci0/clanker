@@ -49,7 +49,7 @@
   .lamp::before {
     content: "";
     position: absolute;
-    left: var(--space-3);
+    inset-inline-start: var(--space-3);
     top: 1.15rem;
     width: 8px;
     height: 8px;
@@ -114,7 +114,7 @@
   .rail-tab[aria-selected="true"]::before {
     content: "";
     position: absolute;
-    left: var(--space-2);
+    inset-inline-start: var(--space-2);
     top: 50%;
     transform: translateY(-50%);
     width: 7px;
@@ -128,15 +128,19 @@
     content: "";
     width: 0.4em;
     height: 0.4em;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
+    border-inline-end: 1.5px solid currentColor;
+    border-block-end: 1.5px solid currentColor;
     transform: rotate(-45deg);
-    margin-left: auto;
+    margin-inline-start: auto;
     flex: none;
     opacity: 0.6;
     transition: transform 120ms ease-out;
   }
   .rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
+  /* The corner sits on the inline end, so the rotation that folds it down has
+     to mirror with it or an RTL rail opens its groups sideways. */
+  [dir="rtl"] .rail-fold > summary.rail-group::after { transform: rotate(45deg); }
+  [dir="rtl"] .rail-fold[open] > summary.rail-group::after { transform: rotate(-45deg); }
   .rail-pin[data-on="true"] .icon path:nth-child(2) { fill: currentColor; }
 
   /* ---- the rendered document ----
@@ -755,7 +759,7 @@
      utility composes. The row's active/unread marks are data attributes, so the
      rule reads the same spelling the script writes. */
   .room-row[data-active="true"]::before {
-    content: ""; position: absolute; left: 0.4rem; top: 50%;
+    content: ""; position: absolute; inset-inline-start: 0.4rem; top: 50%;
     width: 0.4rem; height: 0.4rem; margin-top: -0.2rem; border-radius: 50%;
     background: var(--accent);
     box-shadow: 0 0 6px 0 color-mix(in srgb, var(--accent) 45%, transparent);
@@ -772,6 +776,11 @@
   transition: transform 120ms ease-out;
   }
   .disclosure-caret[open] > summary::before { transform: rotate(90deg); }
+  /* The masked path is a right-pointing chevron, so the fold opens toward the
+     reading direction only in LTR. scaleX mirrors it in place, which is cheaper
+     than a second mask and keeps the open rotation negative. */
+  [dir="rtl"] .disclosure-caret > summary::before { transform: scaleX(-1); }
+  [dir="rtl"] .disclosure-caret[open] > summary::before { transform: scaleX(-1) rotate(-90deg); }
 
   /* A card label or cover names one of the cabinet's ten card colours in
      `data-color`. Ten utilities per element would be thirty rules for one
