@@ -83,7 +83,7 @@ unconfigured one.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `vertex`, `azure_openai`, or `gemini`. See below. |
+| `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `vertex`, `azure_openai`, `gemini`, `codex` (OpenAI Responses), `grok` (xAI Responses), or `claude` (Anthropic Messages bound to clanker's own OAuth metadata). See below. |
 | `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, `azure_openai` builds `/openai/deployments/<model>/chat/completions`, `gemini` builds `/models/<model>:generateContent`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
 | `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
@@ -222,7 +222,7 @@ Auth is a separate axis from the wire format, so `kind` says how the request is
 |---|---|
 | `api_key` | Read `api_key_env` and present it the way the wire kind wants (`Bearer` for `openai_compat`/`vertex_anthropic`, `x-api-key` for `anthropic`, `api-key` for `azure_openai`, `x-goog-api-key` for `gemini`). |
 | `oauth_static` | A pasted OAuth access token in `api_key_env`, presented as `Authorization: Bearer` plus any provider beta header. |
-| `oauth_refresh` | A token minted and renewed in-process. `vertex` and `vertex_anthropic` support it (service-account JWT or gcloud ADC refresh); other kinds reject it rather than downgrade silently. |
+| `oauth_refresh` | A token minted and renewed in-process. `vertex` and `vertex_anthropic` mint a GCP token (service-account JWT or gcloud ADC refresh); `codex`, `grok` and `claude` run the native OAuth flow `clanker auth login <provider>` drives, which is what makes them `oauth_refresh` whenever `api_key_env` is unset. Every other kind rejects the value rather than downgrade silently. |
 
 Leave it unset unless you need it. Each kind auto-detects: `anthropic` reads an
 `sk-ant-oat` prefix as `oauth_static` and anything else as `api_key`;

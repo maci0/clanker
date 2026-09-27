@@ -67,11 +67,15 @@ its own file.
 **Adding a provider** is three edits, in fixed places: a new
 `src/llm/providers/<name>.zig`, a row in `registry`, and a `ProviderKind` tag
 in `src/config.zig` (which is the `kind = "..."` config surface, so it has to
-live there; `fromStr` is reflective and needs no change). Nothing else in the
-tree learns about it. Where a new provider mostly matches an existing one,
-re-export that provider's function pointers rather than copying the codec —
-`vertex_anthropic.zig` does exactly this with `anthropic.zig` and differs only in a body
-header, the URL verb and the credential.
+live there; `fromStr` is reflective and needs no change). A provider that also
+ships a native OAuth flow adds a fourth: a `src/llm/oauth_plugins/<name>.zig`
+and a row in that directory's `plugins` table, which is what `clanker auth
+login` looks up. Nothing else in the tree learns about it. Where a new provider
+mostly matches an existing one, re-export that provider's function pointers
+rather than copying the codec — `vertex_anthropic.zig` does exactly this with
+`anthropic.zig` and differs only in a body header, the URL verb and the
+credential, and `claude.zig` does it with `anthropic.zig` for the OAuth
+variant.
 
 - **openai_compat** (`src/llm/providers/openai.zig`): works with any OpenAI-compatible endpoint.
 - **anthropic** (`src/llm/providers/anthropic.zig`): Anthropic's native Messages API.
@@ -79,6 +83,9 @@ header, the URL verb and the credential.
 - **vertex** (`src/llm/providers/vertex.zig`): Vertex AI. Gemini generateContent, or the Anthropic Vertex wire when the model id is Claude.
 - **azure_openai** (`src/llm/providers/azure.zig`): Azure OpenAI chat completions. Same body as openai_compat; deployment in the URL; key on `api-key`.
 - **gemini** (`src/llm/providers/gemini.zig`): Google Gemini generateContent (AI Studio). Key on `x-goog-api-key`.
+- **codex** (`src/llm/providers/codex.zig`): OpenAI Responses API, plus ChatGPT account selection for OAuth grants. The compat proxy does not speak it (`.proxy.enabled = false`).
+- **grok** (`src/llm/providers/grok.zig`): xAI on the Responses API. The proxy still handles it as OpenAI-compatible, because the xAI base URL also serves `/v1/chat/completions`.
+- **claude** (`src/llm/providers/claude.zig`): the Anthropic Messages wire re-exported from `anthropic.zig`, bound to clanker's own Claude OAuth metadata and its own `/v1/messages` endpoint.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.
 - **moonshotai**: OpenAI-compatible provider at `api.moonshot.ai/v1`. Kimi is a model family on it.
 - **meta**: OpenAI-compatible provider at `api.meta.ai/v1`. Muse Spark is a model family on it.
@@ -104,9 +111,13 @@ default, how to recognise an OAuth token by shape, and how to mint one.
 Anthropic stays zero-config that way: a token starting `sk-ant-oat` (an OAuth
 access token from `ant auth login`) is detected as `oauth_static` and sent as
 `Authorization: Bearer` with an `oauth-2025-04-20` beta header, while any other
-value is `api_key` and goes on `x-api-key`. Vertex is the one `oauth_refresh`
-today, minting a GCP token from a service-account JSON or gcloud ADC — an access token in
-`api_key_env` still wins over it. openai_compat is `api_key` by default and
+value is `api_key` and goes on `x-api-key`. Vertex is `oauth_refresh`,
+minting a GCP token from a service-account JSON or gcloud ADC — an access token in
+`api_key_env` still wins over it. So are the three native OAuth providers
+(`codex`, `grok`, `claude`), each with a row in `src/llm/oauth_plugins/`; with no
+key configured they mint and renew in-process, and `clanker auth
+[status|login|logout] [codex|grok|claude]` drives them, keeping the tokens under
+`agent.state_dir/oauth`. openai_compat is `api_key` by default and
 declares no shape detection, because an API key and an OAuth token are not
 distinguishable across the many vendors it serves.
 
@@ -1377,7 +1388,7 @@ arena_advisory = false
 
 Fields:
 - `providers`: map of provider name → connection settings.
-  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), or `"gemini"` (Google AI Studio generateContent). Vertex kinds require `project` + `location`, and a credential (`service_account_file`, gcloud ADC, or `api_key_env`).
+  - `kind`: `"openai_compat"`, `"anthropic"`, `"vertex_anthropic"` (Anthropic-only on Vertex), `"vertex"` (Vertex AI: Gemini plus Claude), `"azure_openai"` (Azure chat completions; `api-key` header; optional `api_version`), `"gemini"` (Google AI Studio generateContent), `"codex"` (OpenAI Responses), `"grok"` (xAI Responses), or `"claude"` (Anthropic Messages with clanker's own OAuth metadata). The Vertex kinds require `project` + `location`, and a credential (`service_account_file`, gcloud ADC, or `api_key_env`). The last three are what `clanker auth login <provider>` authorizes.
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
   - Moonshot's `kimi-k3` model supports reasoning (returns a `reasoning` field).
