@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const cron = @import("schedule_cron");
+const logic = @import("schedule_logic");
 const store = @import("store.zig");
 const runner = @import("runner.zig");
 const log = @import("../util/log.zig");
@@ -129,11 +130,10 @@ fn add(io: std.Io, arena: std.mem.Allocator, opts: Options, now: i64, tool: Tool
         diag.errorLine("schedule add needs a task after the cron spec", .{});
         return Error.MissingArg;
     };
-    const task = store.validateTask(task_raw) catch |err| {
+    const task = logic.validateTask(task_raw) catch |err| {
         diag.errorLine("schedule add: {s}", .{switch (err) {
-            store.Error.TaskEmpty => "the task is empty",
-            store.Error.TaskTooLong => "the task is too long to schedule",
-            else => @errorName(err),
+            logic.TaskError.TaskEmpty => "the task is empty",
+            logic.TaskError.TaskTooLong => "the task is too long to schedule",
         }});
         return err;
     };

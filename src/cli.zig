@@ -89,6 +89,7 @@ const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
+const schedule_logic = @import("schedule_logic");
 const cli_plugins = @import("cli/cli_plugins.zig");
 const session_events = @import("agent/session_events.zig");
 const session_sync = @import("peers/session_sync.zig");
@@ -2586,7 +2587,7 @@ fn cmdSchedule(init: std.process.Init, opts: Options) !void {
         schedule_store.Error.NoSuchEntry => std.process.exit(1),
         // `add` already printed the refusal as a diagnostic; bad task text is
         // a usage error like a bad cron spec.
-        schedule_store.Error.TaskEmpty, schedule_store.Error.TaskTooLong => std.process.exit(2),
+        schedule_logic.TaskError.TaskEmpty, schedule_logic.TaskError.TaskTooLong => std.process.exit(2),
         // `run-due`/`run` printed per-entry lines above; the non-zero exit is
         // the signal to the cron that invoked us to look.
         schedule_cmd.Error.ScheduledRunFailed => std.process.exit(1),

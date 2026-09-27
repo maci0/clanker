@@ -1,9 +1,12 @@
 //! Pure schedule helpers: next-fire, id check, task validation, sequential
 //! ids. Host-tested; the guest and the HTTP bridge share these so a listing
 //! and a toggle cannot disagree about when an entry fires or what an id is.
+//! The cron parser arrives as the `schedule_cron` module, not by path: this
+//! file is linked into the host, where a path import would put
+//! `schedule_cron.zig` in two modules at once and the compiler refuses it.
 
 const std = @import("std");
-const cron = @import("schedule_cron.zig");
+const cron = @import("schedule_cron");
 
 pub const max_task_bytes: usize = 4000;
 /// Upper bound on a cron spec's byte length. The longest legitimate five-field

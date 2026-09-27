@@ -13,6 +13,12 @@
 //! Every path is taken relative to a `std.Io.Dir`, never resolved against the
 //! process cwd inside this file, so the tests drive the real code against a
 //! temp directory instead of a mock.
+//!
+//! What an entry may say is not here: `nextId` and `validateTask` live in
+//! `tools/zig/schedule_logic.zig`, which the guest that writes this file and
+//! `command.zig` both link. A second copy of either rule would be one the
+//! writer does not enforce, which is how a native-only cap becomes a cap the
+//! model can route around by calling the tool.
 
 const std = @import("std");
 const ensure_dir = @import("../util/ensure_dir.zig");
@@ -43,14 +49,8 @@ pub const max_store_bytes: usize = 1 << 20;
 /// unbounded disk.
 pub const max_ledger_bytes: usize = 4 << 20;
 
-/// Longest task text an entry may carry. The prompt is replayed on every fire,
-/// so an unbounded one is an unbounded prompt cost, forever, on a timer.
-pub const max_task_bytes: usize = 4000;
-
 pub const Error = error{
     NoSuchEntry,
-    TaskTooLong,
-    TaskEmpty,
     /// `state/schedule.json`  exists but could not be read back as an entry
     /// list. Every mutation rewrites the whole file, so this cannot be
     /// answered with an empty list: doing that turns one unreadable store
@@ -211,20 +211,6 @@ fn writeEntries(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, entries:
     try atomic_write.writeFilePerms(io, base, store_path, enc.written(), atomic_write.private_file);
 }
 
-/// The next free `sch-N`. Sequential rather than a timestamp because these ids
-/// are typed by hand into `schedule remove`/`enable`/`disable`; never reused,
-/// because reusing the id of a removed entry would silently re-point a ledger
-/// history at a different job.
-pub fn nextId(arena: std.mem.Allocator, entries: []const Entry) ![]const u8 {
-    var highest: u32 = 0;
-    for (entries) |e| {
-        if (!std.mem.startsWith(u8, e.id, "sch-")) continue;
-        const n = std.fmt.parseInt(u32, e.id["sch-".len..], 10) catch continue;
-        if (n > highest) highest = n;
-    }
-    return std.fmt.allocPrint(arena, "sch-{d}", .{highest + 1});
-}
-
 /// Appends one line to the ledger, trimming from the front when it outgrows
 /// its cap. Best effort by design: losing the record of a run that happened is
 /// bad, and refusing to run because the record could not be written is worse.
@@ -323,15 +309,6 @@ pub fn readRecords(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, limit
     std.mem.reverse(Record, all.items);
     if (all.items.len > limit) return all.items[0..limit];
     return all.items;
-}
-
-/// Validates the parts of an entry that are the caller's to get wrong, before
-/// anything is written. `cron.parse` covers the spec; this covers the rest.
-pub fn validateTask(task: []const u8) Error![]const u8 {
-    const trimmed = std.mem.trim(u8, task, " \t\r\n");
-    if (trimmed.len == 0) return Error.TaskEmpty;
-    if (trimmed.len > max_task_bytes) return Error.TaskTooLong;
-    return trimmed;
 }
 
 // ------------------------------------------------------------------- tests --
@@ -492,26 +469,6 @@ test "an empty or missing store is the one read that means no entries" {
     try testing.expectEqual(@as(usize, 0), (try read(io, arena, tmp.dir)).len);
 }
 
-test "ids are sequential and never reuse a removed one" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try testing.expectEqualStrings("sch-1", try nextId(arena, &.{}));
-    const two = [_]Entry{
-        .{ .id = "sch-1", .cron = "* * * * *", .task = "a" },
-        .{ .id = "sch-2", .cron = "* * * * *", .task = "b" },
-    };
-    try testing.expectEqualStrings("sch-3", try nextId(arena, &two));
-    // sch-2 removed: the next id is still 3, so the ledger's "sch-2" keeps
-    // meaning the job it meant.
-    const gap = [_]Entry{two[1]};
-    try testing.expectEqualStrings("sch-3", try nextId(arena, &gap));
-    // A hand-written id that is not sch-N does not derail the counter.
-    const named = [_]Entry{.{ .id = "nightly", .cron = "* * * * *", .task = "a" }};
-    try testing.expectEqualStrings("sch-1", try nextId(arena, &named));
-}
-
 test "the ledger appends one JSON line per fire and reads back newest first" {
     var threaded = testIo();
     defer threaded.deinit();
@@ -593,13 +550,6 @@ test "an unreadable ledger costs the new record, not the whole history" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     try testing.expectError(Error.LedgerUnreadable, readRecords(io, arena_state.allocator(), tmp.dir, 4));
-}
-
-test "a task must be non-empty and bounded" {
-    try testing.expectEqualStrings("hi", try validateTask("  hi\n"));
-    try testing.expectError(Error.TaskEmpty, validateTask("   "));
-    const huge = "x" ** (max_task_bytes + 1);
-    try testing.expectError(Error.TaskTooLong, validateTask(huge));
 }
 
 test "concurrent writers through the lock do not lose entries" {

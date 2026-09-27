@@ -8,7 +8,7 @@ const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic",
 
 /// The `tools/zig` helpers the host links directly, so the CLI and the guest
 /// that shares a file run the same source rather than two copies of it.
-const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic" };
+const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "schedule_logic", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic" };
 
 /// `base` plus one module per linked helper. Unlike the wasm guests and the
 /// `host_tested_helpers` test modules below, these get no named-module import
@@ -30,6 +30,18 @@ fn linkedHelperImports(
             .target = target,
             .optimize = optimize,
         }) };
+    }
+    // `schedule_logic` reaches the cron parser by name, the one linked helper
+    // that depends on another. A file may belong to only one module per
+    // compilation, so it cannot also pull `schedule_cron.zig` in by path: that
+    // would put the same file in the `schedule_logic` module and in the
+    // `schedule_cron` one above, and the compiler refuses the second copy.
+    // Wire the instance already created here into it.
+    for (imports[base.len..]) |*slot| {
+        if (!std.mem.eql(u8, slot.name, "schedule_logic")) continue;
+        for (imports[base.len..]) |dep| {
+            if (std.mem.eql(u8, dep.name, "schedule_cron")) slot.module.addImport("schedule_cron", dep.module);
+        }
     }
     return imports;
 }
@@ -546,7 +558,13 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // `schedule_logic` is the one helper that needs another by name, because a
+    // path import would put `schedule_cron.zig` in two modules at once. It is
+    // built after this loop, against the very module the loop builds
+    // `schedule_cron`'s own test from.
+    var helper_schedule_cron_mod: ?*std.Build.Module = null;
     for (host_tested_helpers) |stem| {
+        if (std.mem.eql(u8, stem, "schedule_logic")) continue;
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
             .target = test_target,
@@ -564,8 +582,26 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "fuzz_corpus", .module = helper_fuzz_corpus_mod },
             },
         });
+        if (std.mem.eql(u8, stem, "schedule_cron")) helper_schedule_cron_mod = mod;
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod, .filters = test_filters })).step);
     }
+    // `host_tested_helpers` lists it, so a helper nobody tests cannot slip in
+    // by editing the loop's condition instead of the list.
+    std.debug.assert(helper_schedule_cron_mod != null);
+    var schedule_logic_listed = false;
+    for (host_tested_helpers) |stem| {
+        if (std.mem.eql(u8, stem, "schedule_logic")) schedule_logic_listed = true;
+    }
+    std.debug.assert(schedule_logic_listed);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/zig/schedule_logic.zig"),
+            .target = test_target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "schedule_cron", .module = helper_schedule_cron_mod.? }},
+        }),
+        .filters = test_filters,
+    })).step);
     // The sandbox tests load zig-out/tools/*.wasm, which is build output and
     // therefore absent from a fresh checkout: `zig build test` failed there
     // with FileNotFound on a tool nobody had built yet. The improvement engine
@@ -668,6 +704,14 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The schedule guest's cron arithmetic and its validation both come from
+    // tools/zig, and the host links the same two files, so `schedule_logic`
+    // reaches the parser by name rather than by path in every compilation.
+    const tool_schedule_cron_mod = b.createModule(.{
+        .root_source_file = b.path("tools/zig/schedule_cron.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -716,6 +760,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                     .{ .name = "num", .module = tool_num_mod },
                     .{ .name = "fuzz_corpus", .module = tool_fuzz_corpus_mod },
+                    .{ .name = "schedule_cron", .module = tool_schedule_cron_mod },
                 },
             }),
         });
