@@ -395,6 +395,11 @@ export var runDetail = {
   note: "mb-2 rounded-plate-sm bg-surface-2 px-3 py-1 font-mono text-sm text-fg-muted",
 };
 
+/* The rail's channel tab: the eight static ones in the markup and every tab a
+   plugin registers wear one class list, so the strip cannot drift into two
+   looks. The engaged-channel lamp is a component rule in the sheet. */
+export var RAIL_TAB_CLASS = "rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none";
+
 /* The tool-row family: the Tools view, the Fleet roster and the run header
    all show a row of name, description and tags, so the strings live here
    rather than in each of them. */

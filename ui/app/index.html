@@ -90,85 +90,85 @@ lamps carry further). The seven named palettes ride the same tokens.
      Those regions stay the single source of truth; this is the visible view of
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
-<div class="rail-scrim" id="rail-scrim" data-open="false"></div>
+<div class="hidden max-[640px]:[&[data-open=true]]:fixed max-[640px]:[&[data-open=true]]:inset-0 max-[640px]:[&[data-open=true]]:z-14 max-[640px]:[&[data-open=true]]:block max-[640px]:[&[data-open=true]]:bg-[color-mix(in_srgb,var(--bg)_60%,transparent)]" id="rail-scrim" data-open="false"></div>
 <aside class="rail" id="rail" aria-label="Navigation">
   <div class="flex min-h-0 flex-1 flex-col">
   <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
        Work destinations stay visible, conversations fill the column,
        Watch and Set up fold so they do not eat the list. -->
-  <nav class="rail-nav" role="tablist" aria-orientation="vertical" aria-label="Sections"
+  <nav class="flex-none" role="tablist" aria-orientation="vertical" aria-label="Sections"
        aria-owns="tab-chat tab-kanban tab-runs tab-fleet tab-arena tab-rooms tab-models tab-knowledge tab-prompts tab-tools tab-system">
     <section aria-labelledby="rail-section-work">
-      <h2 class="rail-group" id="rail-section-work">Work</h2>
+      <h2 class="flex w-full items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted" id="rail-section-work">Work</h2>
       <ul class="m-0 list-none p-0" role="presentation">
         <li>
-          <button type="button" class="rail-tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
+          <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
         </li>
         <li>
-          <button type="button" class="rail-tab" role="tab" id="tab-kanban" aria-controls="view-kanban" aria-selected="false" tabindex="-1" data-view="kanban">Kanban</button>
+          <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-kanban" aria-controls="view-kanban" aria-selected="false" tabindex="-1" data-view="kanban">Kanban</button>
         </li>
       </ul>
     </section>
-    <details class="rail-fold" id="rail-fold-watch">
-      <summary class="rail-group" id="rail-section-watch">Watch</summary>
+    <details class="m-0 border-0 p-0 [&:not([open])>*:not(summary)]:hidden [&>summary]:cursor-pointer [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden" id="rail-fold-watch">
+      <summary class="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg" id="rail-section-watch">Watch</summary>
       <section aria-labelledby="rail-section-watch">
         <ul class="m-0 list-none p-0" role="presentation">
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
           </li>
         </ul>
       </section>
     </details>
   </nav>
 
-  <div class="rail-context" id="rail-context">
-    <div class="rail-head">
-      <div class="rail-workspace-bar">
+  <div class="mt-2 flex min-h-32 flex-1 flex-col border-t border-rule pt-2" id="rail-context">
+    <div class="flex flex-none flex-col gap-2">
+      <div class="flex items-stretch gap-1 [&_select]:min-h-8 [&_select]:min-w-0 [&_select]:flex-1 [&_select]:font-sans [&_select]:text-sm [&_select]:max-[640px]:[font-size:16px]">
         <label class="sr-only" for="workspace-pick">Workspace</label>
         <select id="workspace-pick" title="Workspace"></select>
-        <button type="button" class="rail-ws-btn" id="workspace-new" title="New workspace" aria-label="New workspace">+</button>
-        <button type="button" class="rail-ws-btn" id="workspace-remove" title="Remove this workspace" aria-label="Remove this workspace" hidden>−</button>
+        <button type="button" class="min-h-8 min-w-8 flex-none cursor-pointer p-0 font-mono text-base leading-none pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[640px]:min-h-11 max-[640px]:min-w-11" id="workspace-new" title="New workspace" aria-label="New workspace">+</button>
+        <button type="button" class="min-h-8 min-w-8 flex-none cursor-pointer p-0 font-mono text-base leading-none pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-[640px]:min-h-11 max-[640px]:min-w-11" id="workspace-remove" title="Remove this workspace" aria-label="Remove this workspace" hidden>−</button>
       </div>
-      <button type="button" class="rail-new" id="new-chat">New chat</button>
+      <button type="button" class="min-h-9 w-full cursor-pointer rounded-capsule border border-accent bg-accent px-4 font-sans text-sm font-semibold text-on-accent hover:border-transparent hover:bg-[color-mix(in_srgb,var(--accent)_88%,black)]" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations by title</label>
       <input type="search" id="session-filter" placeholder="Filter by title…" autocomplete="off">
       <!-- The Archive action tells people to toggle this; without it an
            archived conversation could never be listed or unarchived again. -->
-      <label class="rail-archived" for="archived-toggle">
+      <label class="flex cursor-pointer items-center gap-2 font-sans text-sm text-fg-muted [&_input]:m-0" for="archived-toggle">
         <input type="checkbox" id="archived-toggle"> Show archived
       </label>
     </div>
-    <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
+    <ul class="mt-4 flex min-h-0 flex-1 list-none flex-col gap-px overflow-y-auto overscroll-contain p-0 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent]" id="rail-list" aria-label="Conversations"></ul>
   </div>
 
-  <nav class="rail-nav rail-settings" aria-label="Set up">
-    <details class="rail-fold" id="rail-fold-setup">
-      <summary class="rail-group" id="rail-section-setup">Set up</summary>
+  <nav class="mt-auto flex-none border-t border-rule pt-2" aria-label="Set up">
+    <details class="m-0 border-0 p-0 [&:not([open])>*:not(summary)]:hidden [&>summary]:cursor-pointer [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden" id="rail-fold-setup">
+      <summary class="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg" id="rail-section-setup">Set up</summary>
       <section aria-labelledby="rail-section-setup">
         <ul class="m-0 list-none p-0" role="presentation">
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
           </li>
           <li>
-            <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
+            <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
           </li>
         </ul>
       </section>

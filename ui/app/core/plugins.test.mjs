@@ -299,6 +299,9 @@ function loadHost(page, extras) {
     // handed in the way the stripped imports are.
     __kitLoader: () => Promise.resolve({ recordRow: { list: "", row: "", name: "", head: "", outcome: "", snippet: "", foot: "", mark: "" } }),
     icon: () => makeElement("span"),
+    // The rail tab's class list lives in core/ui.js, whose import this sandbox
+    // strips; the string itself is not what these tests look at.
+    RAIL_TAB_CLASS: "rail-tab",
     searchFoldFind: () => {},
     searchFold: (s) => String(s),
     wireRefresh: () => {},

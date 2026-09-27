@@ -108,6 +108,37 @@
   }
   @keyframes lamp-pulse { 50% { opacity: 0.35; } }
 
+  /* The rail's channel tab and the engaged-channel lamp, and the fold's
+     caret: pseudo-elements carrying a dome or a rotated border, which no
+     utility composes. Everything else the rail wears is a utility string. */
+  .rail-tab[aria-selected="true"]::before {
+    content: "";
+    position: absolute;
+    left: var(--space-2);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    color: var(--accent);
+    background: var(--lamp-dome);
+    box-shadow: var(--lamp-ring), var(--lamp-glow);
+  }
+  .rail-fold > summary.rail-group::after {
+    content: "";
+    width: 0.4em;
+    height: 0.4em;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    margin-left: auto;
+    flex: none;
+    opacity: 0.6;
+    transition: transform 120ms ease-out;
+  }
+  .rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
+  .rail-pin[data-on="true"] .icon path:nth-child(2) { fill: currentColor; }
+
   /* A dialog's backdrop is a pseudo-element the author has to style; the
      create-channel dialog and every uiConfirm/uiPrompt reuse it. */
   .slack-dialog::backdrop { background: var(--scrim); }

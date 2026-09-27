@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { T, state, add, effect, showLoadError, upgradePfButton, uiConfirm, uiPrompt, toast } from "./ui.js";
+import { RAIL_TAB_CLASS, T, add, effect, showLoadError, state, toast, uiConfirm, uiPrompt, upgradePfButton } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
@@ -214,7 +214,7 @@ function makeViewShell(id, title, group) {
   document.getElementById("main").appendChild(panel);
   var tab = document.createElement("button");
   tab.type = "button";
-  tab.className = "rail-tab";
+  tab.className = RAIL_TAB_CLASS;
   tab.setAttribute("role", "tab");
   tab.id = "tab-" + id;
   tab.setAttribute("aria-controls", "view-" + id);

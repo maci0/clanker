@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
+import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
@@ -519,19 +519,19 @@ function railRowFor(s, current) {
 
   var row = T.button({
     type: "button",
-    class: "rail-item",
+    class: RAIL_ITEM_CLASS,
     title: rawTitle || title,
     onclick: function () {
       if (currentView !== "chat") showView("chat", false);
       switchSession(s.id);
       closeRailOnNarrow();
     }
-  }, T.span({ class: "rail-item-title" }, title), T.span({ class: "rail-item-meta" }, meta));
+  }, T.span({ class: RAIL_ITEM_TITLE_CLASS }, title), T.span({ class: RAIL_ITEM_META_CLASS }, meta));
   if (open) row.setAttribute("aria-current", "true");
 
   var pin = T.button({
     type: "button",
-    class: "rail-pin",
+    class: RAIL_PIN_CLASS,
     title: isPinned(s.id) ? "Stop pinning this conversation" : "Keep this conversation at the top of the list",
     "data-on": String(isPinned(s.id)),
     "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
@@ -540,7 +540,7 @@ function railRowFor(s, current) {
   });
   uiAdd(pin, icon("pin", 15));
 
-  return T.li({ class: "rail-row" }, row, pin);
+  return T.li({ class: RAIL_ROW_CLASS }, row, pin);
 }
 
 /* Workspaces are folders: a conversation is in exactly one, and the unnamed
@@ -585,14 +585,14 @@ bind(el.railList, railState, function (s) {
     var collapsed = isCollapsedGroup(g.name);
     var head = T.button({
       type: "button",
-      class: "rail-group",
+      class: RAIL_GROUP_CLASS,
       "aria-expanded": String(!collapsed),
       "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
       title: (collapsed ? "Show " : "Hide ") + plural(g.items.length, { one: "conversation", other: "conversations" }) + " in " + g.name,
       onclick: function () { toggleCollapsedGroup(g.name); }
-    }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
-      T.span({ class: "rail-group-name" }, g.name),
-      T.span({ class: "rail-group-count" }, String(g.items.length)));
+    }, T.span({ class: RAIL_GROUP_CARET_CLASS }, collapsed ? "▸" : "▾"),
+      T.span({ class: RAIL_GROUP_NAME_CLASS }, g.name),
+      T.span({ class: RAIL_GROUP_COUNT_CLASS }, String(g.items.length)));
     out.push(T.li({ role: "presentation" }, head));
     if (collapsed) { matched += g.items.length; return; }
     g.items.forEach(function (item) {
@@ -605,10 +605,10 @@ bind(el.railList, railState, function (s) {
      without this row the rail shows nothing selected while the composer is
      plainly pointed at something. */
   if (!seen && !s.filter) {
-    out.unshift(T.li({ class: "rail-row" },
-      T.button({ type: "button", class: "rail-item", "aria-current": "true" },
-        T.span({ class: "rail-item-title" }, "New conversation"),
-        T.span({ class: "rail-item-meta" }, "unsaved"))));
+    out.unshift(T.li({ class: RAIL_ROW_CLASS },
+      T.button({ type: "button", class: RAIL_ITEM_CLASS, "aria-current": "true" },
+        T.span({ class: RAIL_ITEM_TITLE_CLASS }, "New conversation"),
+        T.span({ class: RAIL_ITEM_META_CLASS }, "unsaved"))));
   }
   /* A failed load is stated where the rows would have been, with the retry
      next to it. It answers before the filter's own empty row, because "no
@@ -616,22 +616,22 @@ bind(el.railList, railState, function (s) {
      that never arrived is the same swallowed failure in a different shape. */
   if (!matched && s.failure) {
     if (s.failure.kind === "disabled") {
-      out.push(T.li({ class: "rail-empty" }, "Conversation history is off (" + s.failure.message + ")."));
+      out.push(T.li({ class: RAIL_EMPTY_CLASS }, "Conversation history is off (" + s.failure.message + ")."));
     } else {
-      out.push(T.li({ class: "rail-empty" },
+      out.push(T.li({ class: RAIL_EMPTY_CLASS },
         "Could not load conversations: " + s.failure.message + " ",
         T.button({
           type: "button",
-          class: "rail-empty-action",
+          class: RAIL_EMPTY_ACTION_CLASS,
           onclick: function () { loadSessions(); }
         }, "Try again")));
     }
   } else if (!matched && s.filter) {
-    out.push(T.li({ class: "rail-empty" },
+    out.push(T.li({ class: RAIL_EMPTY_CLASS },
       "No title matches. ",
       T.button({
         type: "button",
-        class: "rail-empty-action",
+        class: RAIL_EMPTY_ACTION_CLASS,
         onclick: function () {
           var q = s.filter;
           window._pendingSearchQuery = q;
@@ -641,7 +641,7 @@ bind(el.railList, railState, function (s) {
       " or ",
       T.button({
         type: "button",
-        class: "rail-empty-action",
+        class: RAIL_EMPTY_ACTION_CLASS,
         onclick: function () {
           if (el.sessionFilter) {
             el.sessionFilter.value = "";
@@ -720,7 +720,7 @@ function applyRailCollapsed(collapsed) {
     });
   }
   // populate data-short for collapsed rail labels from existing tab text
-  document.querySelectorAll(".rail-tab").forEach(function (t) {
+  document.querySelectorAll("#rail [role=tab]").forEach(function (t) {
     var txt = (t.textContent || "").trim();
     if (!t.getAttribute("data-short") && txt) t.setAttribute("data-short", txt.slice(0, 2));
   });
@@ -1560,6 +1560,22 @@ var EVENT_TOOL_CLASS = "w-fit max-w-full font-sans text-sm text-fg-muted [&>summ
 var TOOL_ARGS_CLASS = "my-1 ml-4 max-w-[60ch] rounded-plate-lg border border-rule bg-surface-2 px-2 py-1 font-mono text-xs whitespace-pre-wrap text-fg-muted wrap-anywhere";
 var SPIN_CLASS = "inline-block h-[0.8em] w-[0.8em] flex-none animate-spin rounded-full border-2 border-accent-dim border-t-accent motion-reduce:hidden";
 var RUN_STATE_CLASS = "text-fg-muted motion-safe:hidden";
+
+/* The rail's conversation list: a row, its overflow pin, the workspace
+   group headers and the empty states. The tab's own shape is in the markup
+   (eight of them) and the JS-built ones reuse the same constants. */
+var RAIL_ROW_CLASS = "flex items-center gap-1 [&>*]:min-w-0 [&>*]:flex-1";
+var RAIL_ITEM_CLASS = "block min-h-8 w-full cursor-pointer rounded-plate border border-transparent bg-transparent px-3 py-2 text-left font-sans text-sm text-fg shadow-none hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-current:border-rule aria-current:bg-surface-2 aria-current:font-semibold aria-current:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none";
+var RAIL_ITEM_TITLE_CLASS = "block truncate";
+var RAIL_ITEM_META_CLASS = "block tabular-nums text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))]";
+var RAIL_PIN_CLASS = "min-h-8 min-w-8 flex-none cursor-pointer rounded-plate-sm border-0 bg-transparent px-2 font-mono text-sm text-fg-muted shadow-none hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-pressed:text-accent data-[on=true]:text-accent";
+var RAIL_GROUP_CLASS = "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg";
+var RAIL_GROUP_CARET_CLASS = "w-[1em] flex-none";
+var RAIL_GROUP_NAME_CLASS = "flex-1 truncate";
+var RAIL_GROUP_COUNT_CLASS = "font-mono tabular-nums";
+var RAIL_EMPTY_CLASS = "font-mono text-sm text-fg-muted";
+var RAIL_EMPTY_ACTION_CLASS = "inline min-h-0 min-w-0 cursor-pointer border-0 bg-transparent p-0 [font:inherit] text-accent-text underline decoration-dotted underline-offset-2 hover:text-accent focus-visible:text-accent";
+var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted in-aria-selected:text-accent-text";
 
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
@@ -4697,7 +4713,7 @@ function setTabCount(view, n) {
   var el0 = tab.querySelector(".tab-count");
   if (!el0) {
     el0 = document.createElement("span");
-    el0.className = "tab-count";
+    el0.className = TAB_COUNT_CLASS;
     tab.appendChild(el0);
   }
   el0.textContent = n ? String(n) : "";

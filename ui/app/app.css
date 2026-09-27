@@ -511,91 +511,14 @@ button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-c
   flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
 /* ---- tabs: one view at a time ---- Everything used to be stacked in one column, so reaching Tools meant scrolling past the whole transcript, the run graph and every room. */
-.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: clip; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the channel that is engaged. */
-.rail-tab {
-  /* Own the PF nav link tokens so theme flips do not leave light greys. */
-  /* Drop UA button chrome under color-scheme:dark; otherwise selected tabs
-     keep system greys even when color/background use !important. */
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  width: 100%; text-align: start; cursor: pointer;
-  min-height: 32px; padding: 0.35rem var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius);
-  background-color: transparent;
-  background-image: none;
-  color: var(--fg-muted);
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 500;
-  /* Engraved into the backplane, not mounted on it: the base button's bevel
-     would turn eight quiet channel names into eight raised plates. */
-  box-shadow: none;
-}.rail-tab:hover {
-  background-color: var(--surface-2);
-  color: var(--fg);
-}.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 /* Selected channel: longhand + !important so PF . cannot leave light greys on dark rails (same class of leak as plain/primary buttons). */
-.rail-tab[aria-selected="true"], .rail-tab[aria-selected="true"]:hover {
-  color: var(--fg) !important;
-  background-color: var(--surface-2) !important;
-  background-image: none !important;
-  appearance: none;
-  -webkit-appearance: none;
-  font-weight: 600;
-  border-color: var(--rule);
-}.rail-tab:active:not(:disabled) { transform: translateY(1px); }
-@media (prefers-reduced-motion: reduce) {.rail-tab:active:not(:disabled), .rail-tab:active:not(:disabled) { transform: none; }
-}
 /* The engaged channel's lamp: lit blue, because blue is operator action. */
-.rail-tab[aria-selected="true"]::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: var(--space-2);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  color: var(--accent);
-  background: var(--lamp-dome);
-  box-shadow: var(--lamp-ring), var(--lamp-glow);
-}.rail-tab { position: relative; padding-inline-start: var(--space-5); }
-.rail-context {
-  margin-top: var(--space-2); border-top: 1px solid var(--rule); padding-top: var(--space-2);
-  flex: 1 1 auto; min-height: 8rem; display: flex; flex-direction: column;
-}
-.rail-context[hidden] { display: none; }
-.rail-settings {
-  flex: none; margin-top: auto;
-  border-top: 1px solid var(--rule); padding-top: var(--space-2);
-}
-.rail-fold { border: 0; margin: 0; padding: 0; }
-.rail-fold:not([open]) > :not(summary) { display: none; }
-.rail-fold > summary.rail-group {
-  list-style: none; cursor: pointer;
-}
-.rail-fold > summary.rail-group::-webkit-details-marker { display: none; }
-.rail-fold > summary.rail-group::after {
-  content: "";
-  width: 0.4em; height: 0.4em;
-  border-inline-end: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  margin-inline-start: auto; flex: none;
-  opacity: 0.6;
-}
-.rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
 /* The disclosure chevron follows the reading direction. `border-inline-end`
    already swaps sides under `dir="rtl"`, so the rotation that points it
    outward has to swap with it or an RTL rail opens its groups sideways. */
-[dir="rtl"] .rail-fold > summary.rail-group::after { transform: rotate(45deg); }
-[dir="rtl"] .rail-fold[open] > summary.rail-group::after { transform: rotate(-45deg); }
-@media (prefers-reduced-motion: reduce) {
-  .rail-fold > summary.rail-group::after { transition: none; }
-}
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
-.tab-count { color: var(--fg-muted); font-weight: 400; margin-inline-start: var(--space-2); }.rail-tab[aria-selected="true"] .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
 /* Any flex/grid element with [hidden] would otherwise still paint: the
    author display beats the UA [hidden] rule. Patch individually would
@@ -999,13 +922,11 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
    target across every view, including controls created dynamically. */
 @media (pointer: coarse) {
   button, summary, input[type="text"], input[type="search"], input[type="number"],
-  input[type="date"], select { min-height: 44px; }.rail-tab, .rail-tab, button.rail-tab { min-height: 44px; }
+  input[type="date"], select { min-height: 44px; }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
-  .rail-item, .rail-new,
   .board-quick-add .board-add-actions button,
   .card-quick-actions button, .slack-btn-icon, .slack-room-item, .label-picker-item,
-  .rail-pin, button.rail-pin,
   .session-actions .secondary, .session-actions .more > summary,
   .session-actions button,
   .composer .toolbar #voice-btn {
@@ -1019,15 +940,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
     font-size: 16px;
   }
 .composer .toolbar #submit,
-  .composer .toolbar #cancel { min-height: 44px; }.rail-tab, .rail-tab, button.rail-tab {
-    min-height: 44px;
-    padding-block: 0.55rem;
-  }
-.rail-pin,
-  button.rail-pin {
-    min-height: 44px;
-    min-width: 44px;
-  }
+  .composer .toolbar #cancel { min-height: 44px; }
 .session-actions .secondary,
   .session-actions .more > summary,
   .session-actions button {
@@ -1041,9 +954,6 @@ button.chip.header-model,
   button.chip.model-pill,
   #header-model,
   #composer-model {
-    min-height: 44px;
-  }
-button.rail-group {
     min-height: 44px;
   }
 .composer details > summary,
@@ -1071,8 +981,6 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
      drops box-shadow and overrides backgrounds, so "where am I" disappeared
      entirely — worst in the palette, where the highlighted row is the only
      clue what Enter will do. */
-  .rail-tab[aria-selected="true"],
-  .rail-item[aria-current="true"],
   .palette-item[aria-selected="true"] {
   border-color: Highlight;
   }
@@ -1397,27 +1305,6 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
   box-shadow: var(--lift);
 }
 .prompt-list[hidden] { display: none; }
-.rail-pin {
-  flex: none; border: 0; background: transparent; box-shadow: none; cursor: pointer;
-  color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0);
-  padding: 0 var(--space-2); min-height: 32px; min-width: 32px;
-}
-.rail-pin:hover { color: var(--fg); }
-.rail-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
-.rail-pin[aria-pressed="true"] { color: var(--accent); }
-.rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-.rail-row { display: flex; align-items: center; gap: var(--space-1); }
-.rail-row .rail-item { flex: 1; min-width: 0; }
-/* A scrim only exists on narrow screens, where the rail floats over the page
-   and there is otherwise nothing to click to dismiss it. */
-.rail-scrim { display: none; }
-@media (max-width: 40rem) {
-  .rail-scrim[data-open="true"] {
-    display: block; position: fixed; inset: 0; z-index: 14;
-    background: color-mix(in srgb, var(--bg) 60%, transparent);
-  }
-}
-
 .shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }main {
   background: var(--bg);
   border: 0;
@@ -1441,103 +1328,14 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
   opacity: 1 !important;
   max-width: none;
 }.rail:hover { scrollbar-color: var(--border) transparent; }
-.rail-head { display: flex; flex-direction: column; gap: var(--space-2); flex: none; }
-.rail-workspace-bar { display: flex; align-items: stretch; gap: var(--space-1); }
-.rail-workspace-bar select {
-  flex: 1 1 auto; min-width: 0; min-height: 32px;
-  font-family: var(--sans); font-size: var(--step-0);
-}
-.rail-ws-btn {
-  flex: none; min-width: 32px; min-height: 32px; padding: 0;
-  font-family: var(--mono); font-size: 16px; line-height: 1;
-  cursor: pointer;
-}
-@media (pointer: coarse) {
-  .rail-ws-btn { min-width: 44px; min-height: 44px; }
-}
-@media (max-width: 40rem) {
-  .rail-ws-btn { min-width: 44px; min-height: 44px; }
-}
 /* The rail is pinned: only the conversation list scrolls, not the whole
    sidebar, so the tabs and the chat controls stay put while the history
    moves under the pointer. The list owns the scrollbar. */
-.rail-nav { flex: none; }
-.rail-context {
-  flex: 1 1 auto; min-height: 8rem; display: flex; flex-direction: column;
-  margin-top: var(--space-2); border-top: 1px solid var(--rule); padding-top: var(--space-2);
-}
-.rail-context[hidden] { display: none; }
-.rail-new {
-  min-height: 36px; padding: 0 1rem; width: 100%;
-  border: 1px solid var(--accent); border-radius: var(--radius-pill);
-  background: var(--accent); color: var(--on-accent);
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 600; cursor: pointer;
-}
-.rail-new:hover { background: color-mix(in srgb, var(--accent) 88%, black); border-color: transparent; }
-.rail input[type="search"] { width: 100%; box-sizing: border-box; border-radius: var(--radius-pill); font-size: var(--step-0); min-height: 32px; }
-.rail-archived { display: flex; align-items: center; gap: var(--space-2); font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); cursor: pointer; }
-.rail-archived input { margin: 0; }
-.rail input[type="search"]::placeholder { font-size: var(--step-0); }
-.rail-list {
-  margin-top: var(--space-4); padding: 0; list-style: none;
-  display: flex; flex-direction: column; gap: 1px;
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  scrollbar-width: thin; scrollbar-color: transparent transparent;
-}
-.rail-list:hover { scrollbar-color: var(--border) transparent; }
 /* A workspace is a folder: its conversations are indented under its name, so
    the nesting is visible rather than implied by order. */
-.rail-workspace {
-  margin: var(--space-4) 0 var(--space-1);
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 700;
-  color: var(--fg); letter-spacing: 0;
-  display: flex; align-items: baseline; gap: var(--space-2);
-}
-.rail-workspace:first-child { margin-top: 0; }
-.rail-group {
-  display: flex; align-items: center; gap: var(--space-2); width: 100%;
-  margin: var(--space-3) 0 var(--space-1); padding: 0.2rem 0;
-  border: none; background: transparent; text-align: start;
-  font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600;
-}
-button.rail-group { cursor: pointer; }.rail-group:first-child { margin-top: 0; }
-button.rail-group:hover { color: var(--fg); }
-.rail-group-caret { width: 1em; flex: none; }
-.rail-group-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail-group-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.rail-item {
-  display: block; width: 100%; text-align: start; cursor: pointer;
-  min-height: 32px; padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent; border-radius: var(--radius);
-  background: transparent; color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0);
-  box-shadow: none;
-}
-.rail-item:hover { background: var(--surface-2); }
-.rail-item:active:not(:disabled) { transform: translateY(1px); }
-@media (prefers-reduced-motion: reduce) { .rail-item:active:not(:disabled) { transform: none; } }
-.rail-item[aria-current="true"] {
-  background: var(--surface-2);
-  border-color: var(--rule);
-  color: var(--fg);
-  font-weight: 600;
-}
-.rail-item-title {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.rail-item-meta { display: block; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 /* Same density-slice contrast fix as the model chips: --fg-muted alone can
    sit near the 4.5:1 floor on a raised panel. */
-.rail-item-meta { color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg)); }
-.rail-empty { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
-.rail-empty-action {
-  display: inline; min-height: 0; min-width: 0; padding: 0; margin: 0;
-  border: 0; background: none; box-shadow: none;
-  color: var(--accent-text); font: inherit; cursor: pointer;
-  text-decoration: underline; text-underline-offset: 0.15em;
-}
-.rail-empty-action:hover, .rail-empty-action:focus-visible { color: var(--accent); }label:has(+ input[required])::after, label:has(+ textarea[required])::after, label:has(> input[required])::after, label:has(> textarea[required])::after, h2#session-title {
+label:has(+ input[required])::after, label:has(+ textarea[required])::after, label:has(> input[required])::after, label:has(> textarea[required])::after, h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600; color: var(--fg);
@@ -1733,14 +1531,12 @@ button.rail-group:hover { color: var(--fg); }
 .checklist-children { margin-inline-start: var(--space-4); padding-inline-start: var(--space-3); border-inline-start: 1px solid var(--rule); }
 .checklist-deps { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 0 var(--space-2) 2rem; }
 .checklist-deps .card-flag { display: inline-flex; align-items: center; gap: var(--space-1); }
-.checklist-deps .rail-pin { min-width: 32px; min-height: 32px; padding: 0; }
 .checklist-dependency-add { display: flex; gap: var(--space-2); margin: 0 0 var(--space-2) 2rem; }
 .checklist-dependency-add select { min-width: 0; max-width: 18rem; }
 .detail-row label.subtask[data-blocked="true"] { color: var(--warn-text); }
 @media (max-width: 40rem) {
   .checklist-children { margin-inline-start: var(--space-2); padding-inline-start: var(--space-2); }
   .checklist-dependency-add { flex-wrap: wrap; }
-  .checklist-item > .detail-row > .rail-pin { min-width: 44px; min-height: 44px; }
 }
 .detail-row label.subtask {
   flex: 1; min-width: 0; text-transform: none; letter-spacing: normal;
@@ -1771,10 +1567,6 @@ button.rail-group:hover { color: var(--fg); }
 /* Drawn icons take their colour from the text they sit in and never carry
    their own weight scale. */
 .icon { flex: none; display: block; }
-.rail-pin { display: inline-flex; align-items: center; justify-content: center; }
-.rail-pin[data-on="true"] { color: var(--accent); }
-.rail-pin[data-on="true"] .icon path:nth-child(2) { fill: currentColor; }
-
 /* Labels in the goal and card forms wrap onto their own line, the way
    .run-picker's already do; without it the second label orphans against the
    right edge at 390px. */
@@ -1818,12 +1610,11 @@ button.rail-group:hover { color: var(--fg); }
 }
 
 /* alive polish: control-cabinet lamps and fleet accents fade rather than snap */
-.rail-tab[aria-selected="true"]::before { transition: box-shadow 180ms ease-out, opacity 180ms ease-out, background 180ms ease-out; }
 @keyframes lamp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
 @keyframes lamp-steady { 0%, 100% { opacity: 0.7; } 50% { opacity: 0.92; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .fleet-card, .card, .rail-tab[aria-selected="true"]::before { transition: none; }
+  .fleet-card, .card { transition: none; }
   .turn[data-phase="ask"]::before,
   .turn[data-phase="llm"]::before { animation: none; }
   .card:hover { transform: none; box-shadow: var(--lift); }
@@ -1858,10 +1649,5 @@ button.rail-group:hover { color: var(--fg); }
      textarea's 13px rule is declared after that guard. */
   .board-quick-add .board-add-form textarea { font-size: 16px; }
 }@media (max-width: 40rem) {
-  /* The view-scoped fields carry their own 16px reset as a utility on the
-     field, beside the class that gave them their desktop size. This one stays:
-     the rail's workspace picker is part of the first paint. */
-  .rail-workspace-bar select {
-    font-size: 16px;
-  }
+  /* Every view-scoped field carries its own 16px reset as a utility now. */
 }

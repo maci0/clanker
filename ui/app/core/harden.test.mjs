@@ -117,7 +117,10 @@ test("channel name pattern explains the allowed characters", function () {
 });
 
 test("workspace plus minus hit 44px on coarse pointers", function () {
-  assert.match(css, /@media \(pointer: coarse\) \{\s*\.rail-ws-btn \{ min-width: 44px; min-height: 44px; \}/);
+  // The buttons are utilities now: the floor rides the element as a variant
+  // rather than a media block naming a hook class.
+  assert.match(html, /id="workspace-new"[^>]*pointer-coarse:min-h-11|pointer-coarse:min-h-11[^>]*id="workspace-new"/);
+  assert.match(html, /id="workspace-remove"[^>]*pointer-coarse:min-h-11|pointer-coarse:min-h-11[^>]*id="workspace-remove"/);
 });
 
 test("config file picker has a visible label", function () {
@@ -685,11 +688,8 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const roomsField = /<input class="([^"]*)" type="text" id="chat-text"/.exec(html);
   assert.ok(roomsField, "missing the rooms composer field");
   assert.match(roomsField[1], /max-\[640px\]:\[font-size:16px\]/, "phone Rooms composer must override the desktop size");
-  // The rail's workspace picker keeps its own 16px guard in app.css (it is
-  // first paint); it must come after the desktop 12px rule in the same sheet.
-  const wsDesktop = css.indexOf(".rail-workspace-bar select {\n");
-  const wsPhone = css.lastIndexOf(".rail-workspace-bar select {\n    font-size: 16px;");
-  assert.ok(wsDesktop >= 0 && wsPhone > wsDesktop, "phone workspace picker must override the 12px desktop size");
+  // The rail's workspace picker carries its own guard beside the desktop size.
+  assert.match(html, /\[&_select\]:max-\[640px\]:\[font-size:16px\]/, "phone workspace picker must override the desktop size");
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {

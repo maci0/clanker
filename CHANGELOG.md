@@ -560,6 +560,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `tailwind.test.mjs`). The page makes one fewer request and first paint falls
   to 59.7K gz; `app.css` is the last cabinet sheet.
 
+- The rail is utilities: its channel tabs (the eight in the markup and every
+  tab a plugin registers wear one class list, exported from `core/ui.js` since
+  a plugin adds to the same strip), the conversation rows and their overflow
+  pins, the workspace header and its picker, New chat, the archived filter, the
+  group folds with their caret, the empty states, and the phone drawer's scrim.
+  The engaged channel's lamp, the fold's caret and the pin's lit icon stay
+  component rules — a pseudo-element carrying a dome, or a `path` inside an
+  icon, is what no utility composes. First paint 59.7 → 59.3K gz; the sheet's
+  accounting figure goes to 112K.
+- Two guards moved with their rules: the workspace plus/minus buttons carry
+  `pointer-coarse:min-h-11`/`min-w-11` (and the phone width beside it) instead
+  of a media block naming a hook class, and the workspace picker's 16px phone
+  reset rides on the row as `[&_select]:max-[640px]:[font-size:16px]`.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`
