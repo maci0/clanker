@@ -6956,7 +6956,8 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
         }
         try out.writeStreamingAll(io, "\n");
     } else if (std.mem.eql(u8, opts.chat_sub, "send")) {
-        const msg = try chatrooms.sendMessage(base, io, gpa, arena, state_dir, &cfg, init.environ_map, opts.room.?, opts.message.?);
+        const sent = try chatrooms.sendMessage(base, io, gpa, arena, state_dir, &cfg, init.environ_map, opts.room.?, opts.message.?);
+        const msg = sent.msg;
         const line = try std.fmt.allocPrint(arena, "sent to #{s} as {s} (ts {d}, id {s})\n", .{ msg.room, msg.from, msg.ts, msg.id });
         try out.writeStreamingAll(io, line);
     } else if (std.mem.eql(u8, opts.chat_sub, "history")) {
@@ -8851,12 +8852,21 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
             return;
         };
     }
-    const msg = chatrooms.sendMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, environ_map, room, text) catch |err| {
-        log.log(.error_, "POST /api/chat/send room={s}: {s}", .{ room, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
-        return;
+    const sent = chatrooms.sendMessageOpts(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, environ_map, room, text, null, parsed.id) catch |err| switch (err) {
+        error.InvalidMessageId => {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"id must be 1-64 characters of letters, digits, dash, or underscore\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/chat/send room={s}: {s}", .{ room, @errorName(err) });
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"send failed\"}");
+            return;
+        },
     };
-    live.noteChat(msg.room, msg.id, msg.from, msg.text, msg.ts);
+    const msg = sent.msg;
+    // A replay under an id the log already holds stored nothing, so nobody
+    // hears about it twice: not the live bus, not the peers.
+    if (sent.stored) live.noteChat(msg.room, msg.id, msg.from, msg.text, msg.ts);
     var buf: [8 * 1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
@@ -8867,6 +8877,10 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     s.write(msg.id) catch return;
     s.objectField("ts") catch return;
     s.write(msg.ts) catch return;
+    if (!sent.stored) {
+        s.objectField("duplicate") catch return;
+        s.write(true) catch return;
+    }
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
 }
@@ -9073,6 +9087,10 @@ fn handleChatPins(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
 const ChatSendBody = struct {
     room: ?[]const u8 = null,
     text: ?[]const u8 = null,
+    /// Caller-chosen message id. A client that retries a send whose response
+    /// it lost reuses the id it first sent, and the retry stores nothing and
+    /// reaches no peer. Validated in chatrooms.sendMessageOpts.
+    id: ?[]const u8 = null,
 };
 
 const ChatSubscribeBody = struct {

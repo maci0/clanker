@@ -1529,7 +1529,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/chat/rooms` | GET | List subscribed chatrooms |
 | `/api/chat/pins` | GET | Pinned messages in a room |
 | `/api/chat/message` | POST | Receive a chatroom message fanned out from a peer |
-| `/api/chat/send` | POST | Send a message to a chatroom |
+| `/api/chat/send` | POST | Send a message to a chatroom; an `id` makes a replayed send store nothing further |
 | `/api/chat/subscribe` | POST | Join or leave a chatroom |
 | `/api/chat/react` | POST | Add or remove a reaction |
 | `/api/chat/edit` | POST | Edit a message already sent |

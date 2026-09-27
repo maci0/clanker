@@ -7,7 +7,7 @@
 //! ck_chat; this module only reads its op, forwards the tool arguments, and
 //! passes the host JSON back.
 //!
-//!   chat_send:      {"room":"dev","text":"hello"}
+//!   chat_send:      {"room":"dev","text":"hello","id":"optional-key"}
 //!   chat_dm:        {"to":"other-clanker","text":"hello"}
 //!   chat_history:   {"room":"dev","after":0}
 //!   chat_rooms:     {}
@@ -21,6 +21,12 @@
 //! on the absent "room" field; see src/agent/private_todos.zig). A todo op
 //! that does name a room is refused by the host with a pointer at the board:
 //! room todo lists are kanban cards now (src/sandbox/host.zig, ckChat).
+//!
+//! A send without "id" always writes a new message. A send that names one is
+//! idempotent: repeating it under the same id stores nothing further and
+//! reaches no peer, and the answer carries "duplicate":true. Name an id when
+//! the same call may be re-issued (a retry after a lost result, a resumed
+//! run); leave it out when each call is a new thing to say.
 
 const std = @import("std");
 const lib = @import("lib.zig");

@@ -377,7 +377,11 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_d
 /// cross-process case; the read-modify-write below is safe only because of
 /// the exclusive `lock_file_name` lock, not because of any single-threading
 /// assumption.
-pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
+///
+/// Returns whether a line was written: false means `msg.id` is already in the
+/// retained window and the append was skipped, so a caller that also delivers
+/// the message onward knows not to deliver it twice.
+pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !bool {
     return appendInner(base, io, gpa, arena, state_dir, cfg, msg, true);
 }
 
@@ -385,13 +389,15 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// (`sendMessageOpts`): the id comes from `makeId` (pid + monotonic counter),
 /// so it cannot already exist in the log, and skipping the dedup scan avoids
 /// JSON-parsing up to `max_history` lines of the retained window on every
-/// local send. Wire-delivered messages keep going through `append` (and its
-/// dedup), because a redelivery can repeat an id another process appended.
+/// local send. A send that names its own id goes through `append` instead,
+/// because only there can the id repeat. Wire-delivered messages keep going
+/// through `append` (and its dedup), because a redelivery can repeat an id
+/// another process appended.
 pub fn appendLocal(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
-    return appendInner(base, io, gpa, arena, state_dir, cfg, msg, false);
+    _ = try appendInner(base, io, gpa, arena, state_dir, cfg, msg, false);
 }
 
-fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message, dedup: bool) !void {
+fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message, dedup: bool) !bool {
     if (state_dir.len > 0) try ensure_dir.ensureDir(base, io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
 
@@ -416,19 +422,20 @@ fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     const existing = maybe_existing orelse &[_]u8{};
 
     // A peer redelivering a message (retry after a lost response, at-least-once
-    // delivery) must not duplicate it. Checked under the same lock as the
-    // write below, so two racing deliveries of the same id cannot both pass
-    // the check and both append. Empty ids (messages from a peer too old to
-    // send one) are never deduped, matching the pre-existing behaviour for
-    // them. The log never holds more than `max_history` entries after an
-    // append (trimLog keeps exactly the newest `max`), and a redelivery is a
-    // retry of a just-appended message, so scanning the tail of the retained
-    // window finds any duplicate: parsing every record in the log used to cost
-    // one JSON parse per message on every send.
+    // delivery) must not duplicate it, and neither must a caller repeating its
+    // own send under the same id. Checked under the same lock as the write
+    // below, so two racing deliveries of the same id cannot both pass the check
+    // and both append. Empty ids (messages from a peer too old to send one) are
+    // never deduped, matching the pre-existing behaviour for them. The log
+    // never holds more than `max_history` entries after an append (trimLog
+    // keeps exactly the newest `max`), and a redelivery is a retry of a
+    // just-appended message, so scanning the tail of the retained window finds
+    // any duplicate: parsing every record in the log used to cost one JSON
+    // parse per message on every send.
     if (dedup and msg.id.len > 0) {
         if (hasMessageId(arena, existing, msg.id, cfg.chatrooms.max_history)) {
             log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
-            return;
+            return false;
         }
     }
 
@@ -445,7 +452,7 @@ fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     // must replace the file.
     if (max > 0 and jsonlLineCount(existing) + 1 <= max) {
         try appendLogLine(base, io, path, existing, line);
-        return;
+        return true;
     }
 
     var out_list = std.ArrayList(u8).empty;
@@ -457,6 +464,7 @@ fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     try trimLog(gpa, arena, &out_list, max);
     // Owner-only: the chat log holds room messages between peers.
     try atomic_write.writeFilePerms(io, base, path, out_list.items, atomic_write.private_file);
+    return true;
 }
 
 fn jsonlLineCount(raw: []const u8) usize {
@@ -573,7 +581,7 @@ fn trimLog(gpa: std.mem.Allocator, arena: std.mem.Allocator, out: *std.ArrayList
 pub fn receive(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !bool {
     if (!cfg.chatrooms.on) return false;
     if (!isSubscribed(base, io, arena, state_dir, cfg, msg.room)) return false;
-    try append(base, io, gpa, arena, state_dir, cfg, msg);
+    _ = try append(base, io, gpa, arena, state_dir, cfg, msg);
     return true;
 }
 
@@ -826,13 +834,36 @@ pub fn getPins(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir
 
 // ------------------------------------------------------------------ sending --
 
+/// What a send produced: the message as stored (ts and id filled in), and
+/// whether this call is the one that put it there. `stored` is false only for
+/// a repeat under an id already in the log, and every outward effect of a
+/// send (the peer fan-out, the live-bus note) rides on it, so a replay leaves
+/// no second copy anywhere.
+pub const Delivery = struct {
+    msg: Message,
+    stored: bool,
+};
+
 /// Appends the message locally and fans it out to every configured peer's
-/// POST /api/chat/message. Returns the message (with ts + id filled in).
-pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8) !Message {
-    return sendMessageOpts(base, io, gpa, arena, state_dir, cfg, environ_map, room, text, null);
+/// POST /api/chat/message.
+pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8) !Delivery {
+    return sendMessageOpts(base, io, gpa, arena, state_dir, cfg, environ_map, room, text, null, null);
 }
 
-pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8, thread_ts: ?[]const u8) !Message {
+/// `id` is the caller's own message id, or null to mint one. A caller that
+/// names one makes the whole send idempotent: a repeat under the same id
+/// appends no second line and fans out to no peer, and answers the same
+/// message. That is what lets a client retry a POST whose response was lost
+/// without saying it twice.
+pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8, thread_ts: ?[]const u8, id: ?[]const u8) !Delivery {
+    // An absent or empty id means "mint one", the way an id-less peer message
+    // means "never deduped". A non-empty one is the caller's key and must be
+    // inside the alphabet.
+    const client_id: ?[]const u8 = if (id) |given| blk: {
+        if (given.len == 0) break :blk null;
+        if (!validMessageId(given)) return error.InvalidMessageId;
+        break :blk given;
+    } else null;
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     // argv is the only source that can carry non-UTF-8 bytes (the HTTP path
     // JSON-parses first). The log is JSON every reader parses as UTF-8 — and
@@ -847,12 +878,33 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
         .from = cfg.instance.name,
         .text = safe_text,
         .ts = ts,
-        .id = try makeId(arena, ts),
+        .id = client_id orelse try makeId(arena, ts),
         .thread_ts = thread_ts,
     };
-    try appendLocal(base, io, gpa, arena, state_dir, cfg, msg);
-    fanOut(io, gpa, arena, environ_map, cfg, msg);
-    return msg;
+    // A caller-named id is the only id that can already be in the log, so only
+    // that path pays for the dedup scan. The peer fan-out rides the same
+    // answer: a message that was already stored here is one the peers already
+    // got, and delivering it again is the duplicate the key exists to stop.
+    const written = if (client_id != null)
+        try append(base, io, gpa, arena, state_dir, cfg, msg)
+    else blk: {
+        try appendLocal(base, io, gpa, arena, state_dir, cfg, msg);
+        break :blk true;
+    };
+    if (written) fanOut(io, gpa, arena, environ_map, cfg, msg);
+    return .{ .msg = msg, .stored = written };
+}
+
+/// The alphabet a message id may be written in, for an id this harness did not
+/// mint: 1..64 ASCII alphanumerics, dashes, or underscores, the same fragment
+/// rule session ids obey. `makeId` output is inside it; a caller's own id is
+/// refused before it can reach the log or a peer's dedup check.
+pub fn validMessageId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 64) return false;
+    for (id) |c| {
+        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
+    }
+    return true;
 }
 
 /// Per-peer delivery cooldown. A peer that is unreachable (a down dummy, a
@@ -1280,9 +1332,9 @@ test "append + readHistory + listRooms round-trip" {
     cfg.chatrooms.max_history = 100;
 
     const m1 = Message{ .room = "dev", .from = "test-clanker", .text = "hello world", .ts = 1000, .id = "m1" };
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m1);
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m1);
     const m2 = Message{ .room = "dev", .from = "other", .text = "hi back", .ts = 1001, .id = "m2" };
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m2);
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m2);
 
     const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 2), hist.len);
@@ -1318,14 +1370,14 @@ test "append dedups a redelivered id even when an older text holds the id byte p
     // The first message's text contains the exact `"id":"m42"` field pattern:
     // the byte prefilter in `hasMessageId` must not stop at that false match
     // and miss the real `id` field of the later redelivery.
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "a",
         .text = "look: \"id\":\"m42\"",
         .ts = 1,
         .id = "m1",
     });
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "b",
         .text = "real",
@@ -1333,7 +1385,7 @@ test "append dedups a redelivered id even when an older text holds the id byte p
         .id = "m42",
     });
     // Redelivery of m42: dropped despite the false byte pattern in m1's text.
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "b",
         .text = "real again",
@@ -1384,7 +1436,7 @@ test "sendMessageOpts sanitizes argv bytes before storing" {
     const safe_room: []const u8 = &.{ 'd', 0xEF, 0xBF, 0xBD, 'v' }; // U+FFFD
     const safe_text: []const u8 = &.{ 'h', 0xEF, 0xBF, 0xBD, 'i' }; // U+FFFD
 
-    _ = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, bad_room, bad_text, null);
+    _ = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, bad_room, bad_text, null, null);
 
     const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, safe_room, 0, 50);
     try std.testing.expectEqual(@as(usize, 1), hist.len);
@@ -1409,13 +1461,75 @@ test "appendLocal skips dedup while append keeps it" {
     const m = Message{ .room = "dev", .from = "test-clanker", .text = "hello", .ts = 1, .id = "m1-2-1" };
     try appendLocal(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
     try appendLocal(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
-    // A redelivery of the same id through the wire path must still dedup.
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    // A redelivery of the same id through the wire path must still dedup, and
+    // say so in its answer so the caller can hold back its own delivery.
+    try std.testing.expect(!try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m));
 
     const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 2), hist.len);
     try std.testing.expectEqualStrings("hello", hist[0].text);
     try std.testing.expectEqualStrings("hello", hist[1].text);
+}
+
+test "a send replayed under the caller's own id stores one line and says duplicate" {
+    // The retry of a send whose response was lost: same room, same text, same
+    // client id. One line in the log, one id answered back, and the second
+    // call reporting that it stored nothing, which is what keeps the live
+    // bus and the peer fan-out from saying it twice as well.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ.deinit();
+
+    const first = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "hello", null, "webui-7");
+    try std.testing.expect(first.stored);
+    try std.testing.expectEqualStrings("webui-7", first.msg.id);
+
+    const replay = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "hello", null, "webui-7");
+    try std.testing.expect(!replay.stored);
+    try std.testing.expectEqualStrings("webui-7", replay.msg.id);
+
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
+    try std.testing.expectEqual(@as(usize, 1), hist.len);
+    try std.testing.expectEqualStrings("webui-7", hist[0].id);
+
+    // A different key is a different thing to say, so it still goes through.
+    const other = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "hello again", null, "webui-8");
+    try std.testing.expect(other.stored);
+    try std.testing.expectEqual(@as(usize, 2), (try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50)).len);
+
+    // Without a key there is nothing to dedup on, and every call is a new
+    // message, which is what a caller that did not ask for a key gets.
+    const keyed = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "unkeyed", null, null);
+    const keyed_again = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "unkeyed", null, null);
+    try std.testing.expect(keyed.stored and keyed_again.stored);
+    try std.testing.expect(!std.mem.eql(u8, keyed.msg.id, keyed_again.msg.id));
+
+    // An id outside the alphabet is refused rather than stored: it reaches the
+    // log, and a peer's id compare against it, as a plain string.
+    try std.testing.expectError(error.InvalidMessageId, sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "x", null, "bad id"));
+    try std.testing.expectError(error.InvalidMessageId, sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, "dev", "x", null, "a/b"));
+    try std.testing.expectEqual(@as(usize, 4), (try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50)).len);
+}
+
+test "validMessageId holds the fragment alphabet makeId already speaks" {
+    try std.testing.expect(validMessageId("m1758000000-4242-1"));
+    try std.testing.expect(validMessageId("webui-7"));
+    try std.testing.expect(!validMessageId(""));
+    try std.testing.expect(!validMessageId("a b"));
+    try std.testing.expect(!validMessageId("a/b"));
+    try std.testing.expect(!validMessageId("../x"));
+    var too_long: [65]u8 = .{'x'} ** 65;
+    try std.testing.expect(!validMessageId(&too_long));
 }
 
 test "append trims to max_history and keeps the newest lines" {
@@ -1435,7 +1549,7 @@ test "append trims to max_history and keeps the newest lines" {
     // memory and the log came back corrupted / the write EFAULTed).
     var i: usize = 0;
     while (i < 6) : (i += 1) {
-        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "test-clanker",
             .text = try std.fmt.allocPrint(arena, "line {d}", .{i}),
@@ -1475,7 +1589,7 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     const text = "x" ** 4096;
     var i: usize = 0;
     while (i < 300) : (i += 1) {
-        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "test-clanker",
             .text = text,
@@ -1503,7 +1617,7 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     // must dedup even though its line sits at the end of a > 1 MiB log. The
     // old scan walked the tail of the truncated 1 MiB prefix -- the middle
     // of the file -- and appended a duplicate.
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "test-clanker",
         .text = text,
@@ -1554,9 +1668,9 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
         .{ .ts = 2, .id = "d" },
     };
     for (specs) |sp| {
-        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "board", .from = "t", .text = "x", .ts = sp.ts, .id = sp.id });
+        _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "board", .from = "t", .text = "x", .ts = sp.ts, .id = sp.id });
     }
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "dev", .from = "t", .text = "x", .ts = 2, .id = "zz" });
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "dev", .from = "t", .text = "x", .ts = 2, .id = "zz" });
 
     // limit 2 cuts inside the ts=2 group: the page must extend through it
     // (4 messages: ts 1, 2, 2, 2), or the caller's next `after` cursor of 2
@@ -1598,7 +1712,7 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
     var i: usize = 0;
     while (i < inbox_limit + 2) : (i += 1) {
         const id = try std.fmt.allocPrint(arena, "burst-{d}", .{i});
-        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "peer",
             .text = "burst",
@@ -1774,7 +1888,7 @@ test "messages from concurrent senders are all kept" {
             var i: usize = 0;
             while (i < per_sender) : (i += 1) {
                 const id = std.fmt.allocPrint(arena, "s{d}-{d}", .{ self.id, i }) catch return;
-                append(self.dir, self.io, self.gpa, arena, "state", self.cfg, .{
+                _ = append(self.dir, self.io, self.gpa, arena, "state", self.cfg, .{
                     .room = "dev",
                     .from = "tester",
                     .text = "hello",
@@ -1905,7 +2019,7 @@ test "edit, delete and react distinguish missing from not-owner" {
     cfg.chatrooms.rooms = &.{"dev"};
     cfg.chatrooms.max_history = 100;
 
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "alice",
         .text = "mine",
@@ -2007,21 +2121,21 @@ test "listRooms orders rooms newest-first by last activity" {
     // Appended in chronological order. Without the sort, listRooms returns
     // hash-map insertion order (oldest room first), contradicting its
     // "newest-first by last activity" contract.
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "a",
         .text = "old dev",
         .ts = 1000,
         .id = "m1",
     });
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "ops",
         .from = "b",
         .text = "latest ops",
         .ts = 5000,
         .id = "m2",
     });
-    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "a",
         .text = "newer dev",

@@ -80,6 +80,7 @@ const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
 const slash_plugins = @import("slash_plugins.zig");
 const session_sync = @import("../peers/session_sync.zig");
+const elapsed = @import("../util/elapsed.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.

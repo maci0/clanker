@@ -2408,6 +2408,9 @@ const ChatOp = struct {
     emoji: ?[]const u8 = null,
     topic: ?[]const u8 = null,
     thread_ts: ?[]const u8 = null,
+    // Caller-named message id for `send` (see chatrooms.sendMessageOpts).
+    // A repeat under the same id stores nothing new and tells no peer.
+    id: ?[]const u8 = null,
 };
 
 /// A direct message remains an ordinary chatroom so history, persistence and
@@ -2434,9 +2437,12 @@ const chat_history_text_preview_bytes = 600;
 /// ck_chat(op_json), chatroom operations for the chat_* tools, plus the
 /// private-list todo_* ops (see below).
 /// Input:  {"op":"send|history|rooms|subscribe|todo_add|todo_claim|todo_close|todo_list",
-///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...}
+///          "room"|"to":..., "text":..., "after":..., "on":..., "title":..., "todo":...,
+///          "id":...}
 /// Output (in the host arena):
-///   send:      {"ok":true,"ts":...,"id":"..."}
+///   send:      {"ok":true,"ts":...,"id":"..."} — plus "duplicate":true when an
+///              "id" the log already holds was replayed, so a guest retrying
+///              a send whose answer it lost can tell a replay from a new one
 ///   history:   {"ok":true,"messages":[{room,from,text,ts,id},...],"has_more":bool}
 ///              (newest-first; {"oldest":true} pages oldest-first for log
 ///              folds, extending through a shared boundary timestamp)
@@ -2515,10 +2521,11 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             return Err.invalid;
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
-        const msg = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, h.sandbox.environ_map, room, text, parsed.thread_ts) catch |err| {
+        const sent = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, h.sandbox.environ_map, room, text, parsed.thread_ts, parsed.id) catch |err| {
             log.log(.warn, "[chat] send failed: {s}", .{@errorName(err)});
             return Err.invalid;
         };
+        const msg = sent.msg;
         s.beginObject() catch return Err.too_large;
         s.objectField("ok") catch return Err.too_large;
         s.write(true) catch return Err.too_large;
@@ -2526,6 +2533,10 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.print("{d}", .{msg.ts}) catch return Err.too_large;
         s.objectField("id") catch return Err.too_large;
         s.write(msg.id) catch return Err.too_large;
+        if (!sent.stored) {
+            s.objectField("duplicate") catch return Err.too_large;
+            s.write(true) catch return Err.too_large;
+        }
         if (msg.thread_ts) |tts| {
             s.objectField("thread_ts") catch return Err.too_large;
             s.write(tts) catch return Err.too_large;
