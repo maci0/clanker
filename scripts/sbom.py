@@ -202,16 +202,39 @@ def npm_direct_devdeps() -> list:
 def vendored_web() -> list:
     text = read("ui/vendor/README.md")
     rows = re.findall(
-        r"\| `([^`]+)` \| \[([^\]]+)\]\(([^)]*)\)[^|]*\| ([^|`]+) \| ([A-Za-z0-9 .-]+) \|",
+        r"\| `([^`]+)` \| \[([^\]]+)\]\(([^)]*)\)[^|]*\| ([^|`]+) \| ([A-Za-z0-9 .-]+) \|"
+        r" `([0-9a-f]{64})` \|",
         text,
     )
     return [
         {
             "file": f, "upstream": u, "url": url,
-            "version": v.strip(), "license": lic.strip(),
+            "version": v.strip(), "license": lic.strip(), "sha256": sha,
         }
-        for f, u, url, v, lic in rows
+        for f, u, url, v, lic, sha in rows
     ]
+
+
+# --- recorded digests of the vendored trees ---------------------------------
+
+def recorded_digests() -> list:
+    """(in-tree path, recorded sha256) for every vendored file that records one.
+
+    ui/vendor/README.md carries a digest per file, vendor/sqlite/README.md one
+    per amalgamation file, and vendor/toml/ records only a source commit (its
+    files are patched, so a digest would pin clanker's patch rather than
+    upstream and tell a reader nothing). scripts/test_sbom.py checks each
+    recorded digest against the committed bytes, so a re-vendored file that
+    skipped the table is drift this repository refuses to ship.
+    """
+    digests = [("ui/vendor/" + w["file"], w["sha256"]) for w in vendored_web()]
+    sq = vendored_sqlite()
+    if sq:
+        if sq["c_sha256"]:
+            digests.append(("vendor/sqlite/sqlite3.c", sq["c_sha256"]))
+        if sq["h_sha256"]:
+            digests.append(("vendor/sqlite/sqlite3.h", sq["h_sha256"]))
+    return digests
 
 
 # --- optional kernel interpreter (scripts/setup-python-wasi.sh) --------------
@@ -357,6 +380,7 @@ def build() -> dict:
     for w in vendored_web():
         name = w["upstream"].strip()
         version_cell = w["version"].strip()
+        sha_prop = "clanker:sha256-" + re.sub(r"[^A-Za-z0-9]+", "-", w["file"]).strip("-")
         # Sanitize version cells like "r180 module" / "10.x ESM" into a
         # version plus a kind note; keep the committed file as the real pin.
         kind = ""
@@ -381,9 +405,11 @@ def build() -> dict:
             "files": [],
             "urls": [],
             "kinds": [],
+            "digests": [],
         })
         entry["files"].append("ui/vendor/" + w["file"])
         entry["urls"].append(w["url"])
+        entry["digests"].append({"name": sha_prop, "value": w["sha256"]})
         if kind:
             entry["kinds"].append(kind)
 
@@ -397,6 +423,8 @@ def build() -> dict:
             props.append({"name": "clanker:upstream-url", "value": u})
         for k in sorted(set(e["kinds"])):
             props.append({"name": "clanker:vendor-kind", "value": k})
+        for d in sorted(e["digests"], key=lambda v: v["name"]):
+            props.append(d)
         name = e["name"]
         purl_name = name.replace("@", "%40")
         comps.append(component({

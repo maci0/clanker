@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import subprocess
 import sys
@@ -93,9 +94,57 @@ class SbomTest(unittest.TestCase):
         names = [d["name"] for d in sbom.zig_dependencies()]
         names += sbom.npm_direct_devdeps()
         names += [w["upstream"].strip() for w in sbom.vendored_web()]
+        sqlite = sbom.vendored_sqlite()
+        self.assertIsNotNone(sqlite)
+        names += [sqlite["name"], sbom.vendored_toml()["name"]]
         for name in names:
             with self.subTest(dependency=name):
                 self.assertIn(name, inventory)
+
+    def test_vendored_digests_match_the_committed_bytes(self) -> None:
+        # ui/vendor/README.md calls its SHA-256 column "the integrity
+        # reference for the committed bytes" and vendor/sqlite/README.md the
+        # only integrity reference the amalgamation zip had. Nothing checked
+        # either against the file, so a re-vendored, re-minified or edited
+        # copy left a table asserting a digest the served bytes never had.
+        digests = sbom.recorded_digests()
+        self.assertTrue(digests)
+        for path, recorded in digests:
+            with self.subTest(path=path):
+                full = sbom.REPO_ROOT / path
+                self.assertTrue(full.is_file(), f"{path} is recorded but absent")
+                self.assertEqual(
+                    hashlib.sha256(full.read_bytes()).hexdigest(), recorded
+                )
+
+    def test_every_vendored_file_records_a_digest(self) -> None:
+        recorded = {path for path, _ in sbom.recorded_digests()}
+        present = {
+            str(p.relative_to(sbom.REPO_ROOT))
+            for p in sorted((sbom.REPO_ROOT / "ui/vendor").iterdir())
+            if p.suffix == ".js"
+        }
+        self.assertTrue(present)
+        self.assertEqual(present - recorded, set())
+
+    def test_web_vendor_digests_reach_the_document(self) -> None:
+        # A digest that stays in the README is a promise in prose; a consumer
+        # or scanner reads the document, so the hash has to be in it.
+        for w in sbom.vendored_web():
+            component = next(
+                c for c in self.components.values() if c["name"] == w["upstream"].strip()
+            )
+            with self.subTest(file=w["file"]):
+                self.assertIn(
+                    "ui/vendor/" + w["file"],
+                    [p["value"] for p in component["properties"]
+                     if p["name"] == "clanker:vendor-path"],
+                )
+                self.assertIn(
+                    w["sha256"],
+                    [p["value"] for p in component["properties"]
+                     if p["name"].startswith("clanker:sha256-")],
+                )
 
 
 if __name__ == "__main__":
