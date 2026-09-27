@@ -358,17 +358,7 @@ pub fn main(init: std.process.Init) !void {
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ shown, shown }),
             error.OutOfMemory => unreachable,
         }
-        // These messages already name the next keystroke or the command's
-        // own help. Repeating `clanker --help` after them restates the list.
-        // UnknownCommand is handled whole inside printUnknownCommand
-        // (did-you-mean, and the hint only when there is no suggestion), so
-        // it always skips the hint here.
-        const skip_hint = switch (err) {
-            error.MissingTask, error.ExtraTask, error.MissingArg, error.BadSessionId, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
-            error.UnknownCommand => true,
-            error.UnknownArg => cli.suggestFlag(diag) != null,
-            else => false,
-        };
+        const skip_hint = skipUsageHint(err, diag, err == error.UnknownArg and cli.suggestFlag(diag) != null);
         if (!skip_hint) {
             if (err == error.UnknownCommand or arg_list.items.len < 2) {
                 cli.printUsageHint(init.io);
@@ -473,6 +463,35 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
+/// Whether the "Run `clanker ... --help` for usage" line is suppressed after
+/// a parse diagnostic. These messages already name the next keystroke or the
+/// command's own help, so repeating `clanker --help` after them restates the
+/// list. `flag_suggested` is the UnknownArg case only, where the did-you-mean
+/// already spells the flag.
+///
+/// A missing positional is named, with a full example, by
+/// `cli.missing_arg_lines`, so the hint would only restate it. A flag left
+/// without its value gets the bare `'--provider' needs a value` form, which
+/// names neither the shape it wants nor where to read it: it was the one usage
+/// error that left the operator nowhere to go.
+fn skipUsageHint(err: anyerror, diag: []const u8, flag_suggested: bool) bool {
+    return switch (err) {
+        error.MissingTask,
+        error.ExtraTask,
+        error.BadSessionId,
+        error.FlagNotForCommand,
+        error.BadSubcommand,
+        error.PromptLooksLikeCommand,
+        // UnknownCommand is handled whole inside printUnknownCommand
+        // (did-you-mean, and the hint only when there is no suggestion).
+        error.UnknownCommand,
+        => true,
+        error.MissingArg => !std.mem.startsWith(u8, diag, "-"),
+        error.UnknownArg => flag_suggested,
+        else => false,
+    };
+}
+
 /// The operator-facing recovery line for a failure, or null when the bare
 /// error name is all there is to say. A function rather than an inline switch
 /// because `--dump-config` needs the same table: it used to `catch null` the
@@ -535,4 +554,19 @@ test "a missing tool descriptor does not send the operator to rebuild wasm" {
     try std.testing.expect(std.mem.find(u8, descriptor, "agent.tools_dir") != null);
     // The wasm remedy stays on the wasm failure, and only there.
     try std.testing.expect(std.mem.find(u8, wasm, "zig build tools") != null);
+}
+
+test "a flag left without its value still gets a help hint" {
+    // `clanker run --provider` used to print one line, "'--provider' needs a
+    // value", and stop: no shape, no example, no page to read. Every other
+    // parse diagnostic names where to go next.
+    try std.testing.expect(!skipUsageHint(error.MissingArg, "--provider", false));
+    try std.testing.expect(!skipUsageHint(error.MissingArg, "--mascot-size", false));
+    // A missing positional keeps the hint off: missing_arg_lines already
+    // names the command and a full invocation.
+    try std.testing.expect(skipUsageHint(error.MissingArg, "<peer>", false));
+    // An unrecognized flag is only self-explaining when there is no
+    // did-you-mean to read instead.
+    try std.testing.expect(skipUsageHint(error.UnknownArg, "--providr", true));
+    try std.testing.expect(!skipUsageHint(error.UnknownArg, "--providr", false));
 }

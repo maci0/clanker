@@ -1595,6 +1595,11 @@ const command_aliases = std.StaticStringMap(Command).initComptime(.{
     .{ "workflows", .workflow },
     .{ "plugin", .plugins },
     .{ "history", .sessions },
+    // `clanker help help` asks for help's own page, and help is a command
+    // with no spec of its own, so it renders the command list, the same answer
+    // `clanker help --help` gives. Without this row the lookup missed and the
+    // tool answered "unknown command 'help'" about itself.
+    .{ "help", .help },
 });
 
 fn commandForHelp(name: []const u8) ?Command {
@@ -2180,7 +2185,7 @@ const Flag = enum {
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
             .reports_kind => "narrow a reports search: all, report, or runbook",
             .records_replace_all => "update: rewrite every copy of the old text, not just a unique one",
-            .commit_all => "group every tracked change, not just what is staged",
+            .commit_all => "group every change in the working tree, new files included, not just what is staged",
             .profile => "use a named config profile from profiles/<name>.toml",
             .dump_config => "print the merged config as JSON and exit",
             .preset => "run with a preset from presets/<name>.toml",
@@ -7147,13 +7152,17 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
             printUsageError(io, "refusing to commit: stdin is not a terminal, so `Proceed? [y/N]` cannot be answered; pass --yes to apply the plan above, or --dry-run to only print it", .{});
             std.process.exit(1);
         }
-        try writeStdOut(io, "Proceed? [y/N] ");
+        // The prompt and the abort are conversation, not the plan: stdout
+        // above is the data a caller pipes or redirects, and git keeps its
+        // confirmation on stderr for the same reason. The plan is the only
+        // thing a script reading stdout should have to parse.
+        writeStdErr(io, "Proceed? [y/N] ") catch {};
         var buf: [8]u8 = undefined;
         // readStreaming takes a vector of buffers, not one buffer.
         const n = std.Io.File.stdin().readStreaming(io, &.{&buf}) catch 0;
         const ans = std.mem.trim(u8, buf[0..n], " \t\r\n");
         if (!(std.mem.eql(u8, ans, "y") or std.mem.eql(u8, ans, "Y") or std.mem.eql(u8, ans, "yes"))) {
-            try writeStdOut(io, "aborted\n");
+            writeStdErr(io, "aborted\n") catch {};
             return;
         }
     }
