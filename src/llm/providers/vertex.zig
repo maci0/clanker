@@ -33,6 +33,7 @@ pub const provider: api.Provider = .{
         .vtable_messages = true,
         .always_vtable_url = true,
         .rewrite_vertex_body = true,
+        .refuses_model = refusesProxyModel,
     },
     .buildRequest = buildRequest,
     .parseResponse = parseResponse,
@@ -56,6 +57,13 @@ pub fn isAnthropicModel(name: []const u8) bool {
         if (std.ascii.startsWithIgnoreCase(name[i..], "anthropic")) return true;
     }
     return false;
+}
+
+/// Vertex's Gemini and Gemma models are not on the OpenAI/Anthropic proxy,
+/// so the proxy asks the vtable rather than naming the kind itself.
+fn refusesProxyModel(model: []const u8) ?[]const u8 {
+    if (isAnthropicModel(model)) return null;
+    return "Vertex Gemini is not available on the OpenAI/Anthropic proxy";
 }
 
 fn looksLikeGemini(body: []const u8) bool {

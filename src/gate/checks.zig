@@ -244,12 +244,13 @@ test "providerKindLeakGate reads files past the 1 MiB scan cap" {
 /// that scan deterministic for the two shapes the audits search for: a
 /// comparison against a kind tag, or a kind-switch on the provider.
 ///
-/// One comparison is legal and is allowed structurally rather than by path:
-/// the proxy's Vertex Gemini model-name sniff, which decides on the *model*
-/// name (`isAnthropicModel`), not the kind. Any other kind reference that
-/// compares (`==`) or sits inside a `switch (` outside `src/llm/providers/`
-/// trips the gate. `forKind(...)` lookups and `@tagName(...)` messages are
-/// not kind-switches and pass.
+/// The proxy once carried the only legal comparison, the Vertex Gemini
+/// model-name sniff, and was exempted by a structural rule: any line naming
+/// `isAnthropicModel` passed. The kind check it was hiding is now a vtable
+/// field (`Proxy.refuses_model`), so the exemption is gone and no kind
+/// reference that compares (`==`) or sits inside a `switch (` outside
+/// `src/llm/providers/` passes. `forKind(...)` lookups and `@tagName(...)`
+/// messages are not kind-switches and still pass.
 ///
 /// The scan is conservative about what counts as a kind reference so a
 /// neighbour does not trip it: the name must be a word start (`provider.kind`
@@ -304,9 +305,6 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
                     idx = pos + used;
                     continue;
                 }
-                // The one legal comparison: the Vertex Gemini model-name
-                // sniff, which decides on the model name, not the kind.
-                if (std.mem.find(u8, line, "isAnthropicModel") != null) break;
                 hit_w.print("{s}:{d}: {s}; ", .{ f, line_no, std.mem.trim(u8, line, " \t") }) catch {};
                 hits += 1;
                 break;
@@ -343,12 +341,19 @@ test "providerKindLeakGate: vtable, forKind and tagName pass; comparisons and sw
     try providers_dir.writeFile(io, .{ .sub_path = "openai.zig", .data = "switch (provider." ++ "kind) { .openai => 1 }\n" });
     // Vtable lookups and tagName messages are not kind-switches.
     try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "const impl = providers.forKind(provider.kind);\nlog(@tagName(provider.kind));\n" });
-    // The proxy's Vertex Gemini model-name sniff is the one legal comparison:
-    // it decides on the model name, not the kind.
-    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
+    // The proxy asks the vtable instead of naming a kind.
+    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (impl.proxy.refuses_model) |refuse| { _ = refuse(model); }\n" });
 
     const clean = try providerKindLeakGate(gpa, io, tmp.dir, &.{ "src/llm/providers/openai.zig", "src/cli.zig", "src/serve/proxy.zig" });
     try std.testing.expect(clean.ok);
+
+    // The old proxy sniff, now a vtable call: the kind comparison it guarded
+    // is no longer exempted by the model name appearing on the same line.
+    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
+    var dirty_proxy = try providerKindLeakGate(gpa, io, tmp.dir, &.{"src/serve/proxy.zig"});
+    defer dirty_proxy.deinit(gpa);
+    try std.testing.expect(!dirty_proxy.ok);
+    try std.testing.expect(std.mem.find(u8, dirty_proxy.detail, "src/serve/proxy.zig") != null);
 
     // A comparison outside providers/ leaks, in both the full and short name.
     try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "if (p." ++ "kind == .vertex) {}\n" });

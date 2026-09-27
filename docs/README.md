@@ -412,8 +412,9 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   import it and nothing compiles it, so it rots against zwasm API changes in
   silence while reading like a live part of the ABI.
 - `provider-kind`: no `switch (provider.kind)` (or kind comparison) outside
-  `src/llm/providers/`. The proxy's Vertex Gemini model-name sniff is the
-  sole allowed comparison, and it is on the model name, not the kind.
+  `src/llm/providers/`, with no exemption. A provider whose models split
+  across wires (Vertex: Claude ids on the Anthropic publisher, the rest on
+  Gemini) answers in `Proxy.refuses_model`, so the host never names a kind.
 - `webui-budget`: first-paint `/webui/` assets named by `ui/app/index.html`
   stay under the size budget `src/gate/checks.zig` pins.
 - `tools-ts-toolchain`: `tools/ts/package.json` declares only assemblyscript

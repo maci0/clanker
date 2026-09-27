@@ -368,7 +368,8 @@ crept back outside `providers/`)**
 - `src/serve/proxy.zig` kind-switches — done (`Provider.proxy` on the
   vtable: family, speaks, enabled, chat_only, vtable_chat/messages,
   always_vtable_url, rewrite_vertex_body, vertex_body, overlay_anthropic).
-  The Vertex Gemini model-name sniff stays: that is the model, not the kind.
+  The Vertex Gemini model-name sniff moved to `Proxy.refuses_model`, so the
+  proxy no longer names a kind and the gate lost its only exemption.
 - `auth.zig`'s `quotaProject` switch — done (`Spec.quota_from_project`).
   `catalog.zig`'s anthropic `/v1` fixup — done (`NpmRow.path_if_api_ends_v1`
   and `needs_base`; `classify` has no `row.kind ==`).

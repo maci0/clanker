@@ -17,7 +17,6 @@ const elapsed = @import("../util/elapsed.zig");
 const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
-const vertex = @import("../llm/providers/vertex.zig");
 const xcode = @import("proxy_transcode.zig");
 const http = @import("http.zig");
 const build_options = @import("build_options");
@@ -275,8 +274,10 @@ fn forward(ctx: Ctx, family: Family) u16 {
     if (!impl.proxy.enabled) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "this provider is not available on the OpenAI/Anthropic proxy");
     }
-    if (resolved.provider.kind == .vertex and !vertex.isAnthropicModel(resolved.provider.wireModelName())) {
-        return writeEnvelope(ctx, 400, "protocol_mismatch", "Vertex Gemini is not available on the OpenAI/Anthropic proxy");
+    if (impl.proxy.refuses_model) |refuse| {
+        if (refuse(resolved.provider.wireModelName())) |why| {
+            return writeEnvelope(ctx, 400, "protocol_mismatch", why);
+        }
     }
 
     var upstream_body = ctx.body;
@@ -1686,6 +1687,21 @@ test "proxy policy is on the vtable, not a kind switch" {
     try std.testing.expect(speaks(.vertex_anthropic, .anthropic));
     try std.testing.expectEqual(Family.anthropic, upstreamFamily(.vertex));
     try std.testing.expectEqual(Family.openai, upstreamFamily(.gemini));
+}
+
+test "the model-refusal rule is the vtable's, and only Vertex answers it" {
+    const refuse_vertex = providers.forKind(.vertex).proxy.refuses_model;
+    try std.testing.expect(refuse_vertex != null);
+    // A Claude id rides the Anthropic publisher and is served; a Gemini one
+    // is not, and the vtable carries the sentence rather than the host.
+    try std.testing.expect(refuse_vertex.?("claude-opus-4-6") == null);
+    try std.testing.expectEqualStrings(
+        "Vertex Gemini is not available on the OpenAI/Anthropic proxy",
+        refuse_vertex.?("gemini-2.5-flash").?,
+    );
+    // Every other kind states no rule, so nothing is refused by accident.
+    try std.testing.expect(providers.forKind(.openai_compat).proxy.refuses_model == null);
+    try std.testing.expect(providers.forKind(.anthropic).proxy.refuses_model == null);
 }
 
 test "authorize accepts Bearer and x-api-key" {

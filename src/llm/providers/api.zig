@@ -131,6 +131,13 @@ pub const Proxy = struct {
     vertex_body: bool = false,
     /// Overlay client `anthropic-version` / `anthropic-beta` headers.
     overlay_anthropic: bool = false,
+    /// Answers, for a resolved model name, the reason this kind cannot serve
+    /// it on the proxy, or null when it can. Null here means "no rule" and
+    /// every model is served. A provider whose models split across wires
+    /// answers from the model name, because only it knows the split (Vertex
+    /// routes a Claude id to the Anthropic publisher and everything else to
+    /// Gemini, which the proxy does not carry).
+    refuses_model: ?*const fn (model: []const u8) ?[]const u8 = null,
 };
 
 /// One provider. Registered in `../registry.zig`; adding a provider is this
