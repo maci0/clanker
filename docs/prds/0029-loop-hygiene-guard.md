@@ -119,6 +119,19 @@ stuck).
 | Chain spans a compaction event | Not reset by compaction; counting continues |
 | Past the highest configured threshold | No further reminders fire for that run of repeats; the chain keeps counting silently |
 | No agent object available (a direct tool call outside a run) | Guard does not apply; nothing to key the chain on |
+| Chain count reaches `agent.repeat_tool_abort_threshold` (default 0, off) | Not in this PRD's scope and not covered by its "advisory only" claim below: `src/agent/loop.zig:1263` returns `error.RepeatedToolCalls` before `executeCalls`, so the repeated call is stopped rather than reminded about. Two mechanisms now share one chain counter; see the note under Acceptance criteria |
+
+## Known issues
+
+- **"Advisory only" holds for `repeat_tool_thresholds`, not for the chain.**
+  Goal 4, the non-goal and the first acceptance criterion below all say the
+  guard never blocks or denies a tool call. That is true of the reminder path
+  this PRD specifies, but `agent.repeat_tool_abort_threshold` (default 0, so
+  off unless an operator sets it) reads the same chain counter and does stop
+  the run: `src/agent/loop.zig:1263` returns `error.RepeatedToolCalls` before
+  the calls are dispatched. Neither PRD's text nor the other key's was
+  changed, because whether the abort tier belongs here or under a separate
+  decision is a product call.
 
 ## Acceptance criteria
 

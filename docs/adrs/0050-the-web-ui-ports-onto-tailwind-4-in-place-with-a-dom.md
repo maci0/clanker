@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-09-27.
+Accepted — 2026-09-27. Amended 2026-09-28: the port is finished, so the two ordering sentences in Decision and Consequences that described a staged migration are now past tense.
 
 ## Context
 
@@ -15,5 +15,33 @@ Tailwind 4 via @tailwindcss/cli, compiled from ui/app/tailwind.src.css into a co
 ## Consequences
 
 Editing a class in ui/app or ui/plugins now requires bun run css:build, or the element silently styles nothing; tailwind.test.mjs fails instead, which is the guard, and every migrated file must keep resolving. The compiled sheet is a committed build product with its own weight budget, in the first-paint accounting and with its own asset cache kind in webui_assets.zig. The port deletes app.css and views.css only as views move over, so ordering matters: utilities win on equal specificity by being later, and preflight stays out until the last cabinet rule is gone. (The PatternFly sheet named in Context was already unlinked and deleted once its last `pf-v6-*` class left the markup; the bridges it fed are being dismantled family by family, with `ui/app/core/harden.test.mjs` failing if a caller outlives its bridge.) The kit only gains a component when a caller exists. Bundled CSS is not the only path: a view that never uses a utility costs nothing in the sheet, because Tailwind emits only the classes the sources name.
+
+## Amendment 2026-09-28 — the port is complete; there is one sheet, and preflight is in
+
+The Decision and Consequences above were written on 2026-09-27, when the port
+was still per file. It is done, and three of their sentences described a state
+the tree has since left.
+
+- **The page loads one stylesheet.** `ui/app/index.html` links
+  `/webui/tailwind.css` and nothing else; `ui/app/app.css` and
+  `ui/app/views.css` are deleted. The Decision's "render-blocking after
+  app.css" and Consequences' "deletes app.css and views.css only as views move
+  over" described the ordering constraint that existed while both sheets were
+  present.
+- **Preflight landed.** `ui/app/tailwind.src.css` imports
+  `tailwindcss/preflight.css` in `layer(base)`, ahead of the cabinet's own
+  element layer. "Preflight is deliberately not imported yet" and "preflight
+  stays out until the last cabinet rule is gone" are spent: the last cabinet
+  rule is gone.
+- **The token block moved with the element layer.** `@theme` entries are
+  still `var()` references to tokens, but the tokens they read are now declared
+  in `tailwind.src.css` itself rather than in a sheet that no longer exists.
+
+Unchanged and still binding: `bun run css:build` after any class edit, the
+committed `ui/app/tailwind.css`, `ui/app/tailwind.test.mjs`'s `migrated`
+ledger as the guard, the cabinet radius scale with Tailwind's own
+`rounded-sm/md/lg` cleared, and `ui/app/core/kit.js` as the re-cut shadcn
+source. The `upgradePf*` bridges named in Consequences are still being
+dismantled family by family under `ui/app/core/harden.test.mjs`.
 
 What this forecloses: the cabinet's styles stop being readable in one place. A class's appearance is now split between the utility string at its call site, the @theme mapping, and whatever app.css has not been moved yet, so a reader of a ported view must open tailwind.src.css as well. Reversing means porting every utility back into CSS, because no sheet holds the declaration. It also fixes the component vocabulary early: shadcn snippets copied in later arrive with React imports and rounded-md, and both have to be re-cut on arrival rather than dropped in.

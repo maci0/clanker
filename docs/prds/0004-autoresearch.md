@@ -103,6 +103,15 @@ surface.
 
 ## Known issues
 
+- **The ledger has no size ceiling.** The failure-mode row below promises that
+  an oversized `ledger.jsonl` makes `appendEntry` return
+  `error.StreamTooLong` with the file untouched, and marks it test-covered.
+  `appendEntry` (`tools/zig/autoresearch.zig:30`) has no size check, the
+  append path's only bound is `sandbox.max_fs_bytes` (1 MiB default) against
+  the *payload* of one call, and no test names this. The row is left in the
+  table rather than deleted, because dropping a size ceiling silently is a
+  product decision; what is missing is the check and the test.
+
 - **(Fixed) `--budget` used to be advisory only.** Commit 8e3bdcfa
   (2026-08-19, "autoresearch: enforce budget_seconds as a real harness
   timeout") made it a real per-experiment wall clock: `runHarness` passes a
@@ -126,7 +135,7 @@ surface.
 | Harness exits non-zero | `ok=false` in the ledger entry, not an improvement |
 | Harness produces no parseable metric | `metric=null` in the ledger entry, `isBetter` treats it as not an improvement |
 | Harness runs long past `--budget` | Killed at the deadline and reaped; ledger entry records `timed_out` (test: "runHarness kills a harness that outlives its budget") |
-| `ledger.jsonl` already over 10 MiB | `appendEntry` returns `error.StreamTooLong`, existing file left untouched (test-covered) |
+| `ledger.jsonl` already over 10 MiB | **Not implemented.** `appendEntry` (`tools/zig/autoresearch.zig:30`) has no size check and appends; the only ceiling in the path is `sandbox.max_fs_bytes` (1 MiB default) bounding the per-call payload at `src/sandbox/host.zig:4791`, which says nothing about the file already on disk. No test covers this row. See Known issues |
 
 ## Acceptance criteria
 

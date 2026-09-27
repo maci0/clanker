@@ -163,7 +163,20 @@ requirement.
 
 ## Known issues
 
-None open. The three below were fixed together; kept here so a reader does not
+- **The preset roots are not configurable, only the requirement says they are.**
+  Goal 2 and the acceptance criterion below both ask `clanker preset list` to
+  enumerate "every preset under the configured roots (a shipped set plus a
+  user directory)". There is no `preset` key in `src/config.zig`; the loader
+  opens the single hardcoded `presets/` directory (`src/preset/preset.zig:2`
+  says so in its own header, and the `cmdPreset` call sites
+  `src/cli.zig:4446,6258,6307` pass that path through). So a user directory
+  can neither be added nor searched, and `clanker preset list` shows the
+  shipped set only. The requirement text is left as written: whether presets
+  gain a root list is a product decision, not a documentation one.
+  `src/preset/preset.zig` already carries the "(plus user-configured roots in
+  future)" note, so the gap is known to the code too.
+
+The three below were fixed together; kept here so a reader does not
 re-diagnose them from an older report.
 
 1. ~~**A denied tool is still offered; only the dispatch gate refuses it.**~~

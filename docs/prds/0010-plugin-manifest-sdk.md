@@ -235,7 +235,7 @@ existing docs:
 
 - [x] `manifest_version` parsed; absent means 1; unsupported is refused, not downgraded
 - [x] All 121 shipped manifests load unchanged and validate with zero errors and zero warnings, pinned by a test
-- [x] Pure validator in `src/toolhost/manifest.zig`, 11 unit tests, no I/O
+- [x] Pure validator in `src/toolhost/manifest.zig`, unit-tested there, no I/O
 - [x] Findings carry the file and the offending key, and say what the key does or fails to do
 - [x] Fuel ceiling, `network_allow`/`fs_prefixes`/`exec_allow` shape, and the model-call declaration rule are all checked
 - [x] `clanker plugins list|validate|new`, with `list` delegating to the existing `plugins` guest

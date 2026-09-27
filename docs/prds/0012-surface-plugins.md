@@ -12,7 +12,9 @@ via `window.clanker.registerView()` (`ui/app/core/plugins.js`),
 toggled in System → Web UI plugins, state in `state/webui_plugins.json`.
 Ten plugin directories ship on disk today (`activity`, `arena3d`, `files`,
 `health`, `mesh`, `music`, `office`, `schedule`, `search`, `compare`); a fresh checkout
-seeds `files`, `music`, `schedule`, `search`, `compare`, `mesh` on. No PRD or ADR
+seeds `files`, `music`, `schedule`, `search`, `compare`, `mesh`, `arena3d` on
+(the full set is `webui_addon_logic.default_enabled`; the Design section below
+names which of them also inherit on). No PRD or ADR
 covered the web UI half before this one; its prior documentation was
 `ui/plugins/README.md` plus the review log
 `docs/reviews/webui-plugins.md`, which is why its design decisions (CSP-only

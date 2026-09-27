@@ -147,7 +147,7 @@ with `reports`, `research` and `rfc`, so a defect in it is never one store's.
 | `append` content headed by a section that already has a body | Lands at the end, unchanged: moving an author's paragraph under someone else's text is worse than a duplicate heading |
 | A record's status word is unrecognised | Listed under its literal wording (`OTHER` for `prd list`), never dropped |
 | A record cannot be read at all | Still listed, with an empty status, because the path is what a reader needs in order to go look |
-| More than 60 records in a store | The remainder are listed without their status and the answer says so, rather than exhausting the 1 MiB host arena |
+| More than 60 records in a store | The remainder are listed without their status and the answer says so, rather than exhausting the 2 MiB host arena |
 | A `prd create` note contains `|` | Refused: it is written into a Markdown table cell and would shift every column after it |
 
 ## Acceptance criteria

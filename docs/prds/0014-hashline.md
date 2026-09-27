@@ -205,6 +205,22 @@ mention `hashes: true` and the `hashline` operation.
 | `hashes: true` on a file with lines longer than 1 MB | Line is hashed normally; no special treatment (the hash covers the raw bytes regardless of length) |
 | `op: "hashline"` on a file that was not read with `hashes: true` | No error; the model just has to supply correct hashes. If it supplies wrong hashes it gets a mismatch error |
 
+## Known issues
+
+- **The rejection message does not name the line or the expected/actual hash.**
+  Goal 3, the example at Design line ~152 (`hashline mismatch at line 3:
+  expected hash c7de, got 9a12`) and the first two failure-mode rows all
+  describe a message carrying the offending line number and the two hashes.
+  The shipped messages are generic and carry neither:
+  `tools/zig/edit_file.zig:162-165` emits "hashline mismatch: anchor hash not
+  found within ±10 lines of the given line", "…old_count extends past the end
+  of the file", "…hunks replace overlapping line ranges" and "…a line hash did
+  not match", keyed on the error only. So the model is told the patch was
+  refused and roughly why, and is left to re-read the file to find which line
+  moved. The requirement text is left as written: whether the richer message
+  is owed is a product call, and the error taxonomy would have to grow to
+  carry the values.
+
 ## Acceptance criteria
 
 - [x] `read_file` with `{"hashes": true}` returns output annotated with

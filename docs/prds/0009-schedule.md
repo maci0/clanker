@@ -109,7 +109,7 @@ printing a table cannot block behind a run that takes minutes.
 
 | Field | Meaning |
 |---|---|
-| `id` | `sch-N`, sequential, never reused (a removed id is not handed out again, so the ledger's history keeps meaning one job) |
+| `id` | `sch-N`, sequential. **Requirement not met:** the id is *not* never-reused as the rest of this row says. `logic.nextId` (`tools/zig/schedule_logic.zig:88`) returns `highest + 1` over the *live* entry ids it is handed, so removing the highest-numbered entry and adding a new one hands the same id out again, and the ledger's history no longer distinguishes the two jobs. See Known issues |
 | `cron` | the 5-field spec, stored as written |
 | `task` | the prompt, 1–4000 bytes; what `clanker run` would take |
 | `provider` / `model` | optional overrides, absent when unset (no `null` keys in the file) |
@@ -231,7 +231,7 @@ otherwise an ordinary run, including goal steering (see Design decisions).
 | `enable <id>` / `disable <id>` | re-enabling sets `last_run = now`, so an entry parked for a month does not come back owing a run |
 | `run <id>` | fires one entry immediately whatever its schedule says. Counts as a real run: it advances the window and lands in the ledger as `"manual"`. A disabled entry still runs — the operator asked for it by id |
 | `run-due` | the cron entry point |
-| `log` | the last 20 ledger records, newest first |
+| `log` | the last 20 ledger records, newest first, when a count is given. **Requirement not met:** a bare `schedule log` passes no count, so `cmdScheduleLog` (`src/schedule/command.zig:106`) leaves `limit = maxInt(usize)` and prints the whole ledger. See Known issues |
 
 Flags: `--provider`, `--model` (recorded on the entry by `add`, an override
 for everything else), `--goal` (recorded on the entry by `add`; see Design
@@ -246,6 +246,19 @@ so on every add, and `schedule --help` gives the crontab line:
 ```
 
 ## Known issues
+
+- **Ids are reused; the requirement says they are not.** Design above asks for
+  a never-reused `sch-N` so one ledger row means one job.
+  `logic.nextId` (`tools/zig/schedule_logic.zig:88`) only sees the live entries
+  (`tools/zig/schedule.zig:130`), so `highest + 1` reissues the id of a
+  removed highest entry. Two jobs then share an id across the ledger's
+  history. Fix is one line in `nextId` (mint from a persisted high-water mark
+  rather than from the live set); the requirement text is left as written
+  because dropping it is a product decision, not a documentation one.
+- **A bare `clanker schedule log` prints the whole ledger.** Design above
+  specifies the last 20. `cmdScheduleLog` (`src/schedule/command.zig:106`)
+  defaults `limit` to `maxInt(usize)` when no count argument is given, so the
+  cap only exists for the form that supplies one.
 
 - (Fixed) A run that ended in `error.MaxIterationsExceeded` or
   `error.SessionTokenBudgetExceeded` — or any other run error — used to call

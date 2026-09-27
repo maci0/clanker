@@ -6,7 +6,7 @@ Shipped. Single source of truth: `tools/zig/board.zig` + `tools/zig/cards.zig`.
 Surface: web UI board view + ten agent-facing tools (`kanban_list`,
 `kanban_add`, `kanban_move`, `kanban_update`, `kanban_claim`, `kanban_log`,
 `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_delete`, plus the
-multiplexed internal `board` entry point the web UI calls).
+multiplexed internal `kanban` entry point the web UI calls at `/api/board`).
 
 ## Problem
 
@@ -77,7 +77,7 @@ rejects a self-dependency and rejects a cycle. Eight of the ten
 agent-facing tools pin their op in the descriptor's `config`; `kanban_subtask`
 and `kanban_depend` instead take `op` as a request field (one tool, several
 sub-ops each) since a subtask/dependency action needs more than a fixed verb.
-The internal multiplexed `board` entry point always names the op in the
+The internal multiplexed `kanban` entry point always names the op in the
 request. Aliases (`subtask`/`subtask_id`, `on`/`depends_on`, `run`/`run_id`,
 and `who`/`assignee` on create and update) are accepted so old callers keep
 working. `create`/`kanban_add` takes `assignee` too, so a card can be put on
@@ -86,8 +86,10 @@ itself, and a later `assign` or `claim` outranks it by the usual rule.
 
 **Ops ↔ tools.** Eight agent-facing tools pin their op in descriptor
 `config`; `kanban_subtask` and `kanban_depend` take `op` as a request field.
-The internal multiplexed `board` entry point (web UI / `/api/board`) always
-names the op in the request. Same wasm (`board.wasm`) for all of them.
+The internal multiplexed `kanban` entry point (web UI / `/api/board`) always
+names the op in the request. Same wasm (`board.wasm`) for all of them; only
+the manifest and the tool name are `kanban`, the HTTP route stays
+`/api/board`.
 
 | Tool | Op(s) | Key fields |
 |---|---|---|
@@ -101,7 +103,7 @@ names the op in the request. Same wasm (`board.wasm`) for all of them.
 | `kanban_depend` | `depend_add` / `depend_remove` | `id`, `op`, `depends_on`; optional `room` |
 | `kanban_cost` | `usage` | `id`; optional `prompt_tokens`, `completion_tokens`, `cost`, `run_id`, `room` |
 | `kanban_delete` | `delete` | `id`; optional `room` |
-| `board` (internal) | any op above, plus `assign` / `close` | `op` required; fields as for that op |
+| `kanban` (internal) | any op above, plus `assign` / `close` | `op` required; fields as for that op |
 
 **Validation lives in the guest.** Title 1–512 chars, bounded body, known
 column, priority in {low, normal, high}, existing card id, no

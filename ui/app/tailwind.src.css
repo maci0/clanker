@@ -5,11 +5,11 @@
    comptime, and there is no bundler on either side of that boundary. Rebuild
    after touching this file or a class name in any source `@source` reaches.
 
-   Theme values are `var()` references to tokens app.css already declares, not
-   copies of them. That keeps one authoring site per value, so the seven named
-   themes and the dark media query keep overriding the token and every utility
-   follows — and no Tailwind theme key collides with a token it reads (a
-   self-referential `--radius-sm: var(--radius-sm)` computes to nothing).
+   Theme values are `var()` references to the cabinet tokens declared below,
+   not copies of them. That keeps one authoring site per value, so the seven
+   named themes and the dark media query keep overriding the token and every
+   utility follows — and no Tailwind theme key collides with a token it reads
+   (a self-referential `--radius-sm: var(--radius-sm)` computes to nothing).
 
    The radius scale is deliberately *not* Tailwind's: `rounded-plate`,
    `rounded-plate-sm`, `rounded-plate-lg` and `rounded-capsule` are the cabinet
@@ -17,11 +17,13 @@
    snippet that asks for `rounded-md` then matches nothing instead of silently
    rounding a plate into a SaaS card.
 
-   Two imports, not `@import "tailwindcss"`: preflight is not here yet. It
-   resets margins, headings and controls, and app.css still owns those
-   declarations; landing it now would repaint every unported view at once. It
-   arrives with the last cabinet sheet. The one rule the utility layer needs
-   from it — a border style to carry `border` + `border-rule` — is below. */
+   Three imports, not `@import "tailwindcss"`: preflight is scoped to
+   `layer(base)` so it lands ahead of the cabinet's own element layer rather
+   than after it, which is what keeps the element rules winning. It resets
+   margins, headings and controls, and the cabinet token block below owns those
+   declarations, so the two compose. The one rule the utility layer needs from
+   preflight — a border style to carry `border` + `border-rule` — is inlined
+   below. */
 
 @import "tailwindcss/theme.css";
 @import "tailwindcss/utilities.css";
