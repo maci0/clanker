@@ -94,7 +94,7 @@ test("configured empty state offers Add model instead of only config.toml", func
 });
 
 test("Configured table folds alias variants behind a group toggle", function () {
-  assert.match(js, /models-group-toggle/);
+  assert.match(js, /GROUP_TOGGLE_CLASS/);
   assert.match(js, /data-group/);
   assert.match(js, /variants\.length > 1/);
 });

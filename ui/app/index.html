@@ -744,16 +744,16 @@ lamps carry further). The seven named palettes ride the same tokens.
            `clanker providers fill` prints. Shown as selectable text rather than
            only copied, because navigator.clipboard needs a secure context and
            `clanker serve` speaks plain http. -->
-      <div id="models-snippet" class="models-snippet" role="region" aria-label="config.local.toml entry" hidden>
-        <div class="models-snippet-head">
-          <code id="models-snippet-title"></code>
+      <div id="models-snippet" class="mt-4 rounded-plate-lg border border-border bg-surface-2 p-3" role="region" aria-label="config.local.toml entry" hidden>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <code class="flex-1 font-mono text-sm text-accent-text" id="models-snippet-title"></code>
           <button type="button" class="secondary" id="models-snippet-copy">Copy</button>
           <button type="button" class="primary" id="models-snippet-save">Save to config.local.toml</button>
           <button type="button" class="secondary" id="models-snippet-default">Set as default</button>
           <button type="button" class="secondary" id="models-snippet-close">Close</button>
         </div>
-        <pre id="models-snippet-body" tabindex="0"></pre>
-        <p class="models-snippet-note" id="models-snippet-note" hidden></p>
+        <pre class="m-0 overflow-x-auto rounded-plate-sm border border-rule bg-surface px-3 py-2 font-mono text-sm leading-normal text-fg whitespace-pre select-all focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" id="models-snippet-body" tabindex="0"></pre>
+        <p class="mt-2 text-sm text-fg-muted" id="models-snippet-note" hidden></p>
       </div>
       <!-- Editing (or hand-adding) a configured model writes the same kind of
            [models."…"] block, but from form fields instead of a catalog
@@ -763,24 +763,24 @@ lamps carry further). The seven named palettes ride the same tokens.
            edit that omitted a field would silently reset it to config.Model's
            struct default the next time clanker serve restarts. -->
       <div id="models-edit" class="models-snippet" role="region" aria-label="Edit model configuration" hidden>
-        <div class="models-snippet-head">
-          <code id="models-edit-title"></code>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <code class="flex-1 font-mono text-sm text-accent-text" id="models-edit-title"></code>
           <button type="button" class="primary" id="models-edit-save">Save changes</button>
           <button type="button" class="secondary" id="models-edit-toml" aria-pressed="false" title="Edit this model's TOML table directly">TOML</button>
           <button type="button" class="secondary danger" id="models-edit-remove">Remove</button>
           <button type="button" class="secondary" id="models-edit-close">Close</button>
         </div>
-        <form id="models-edit-form" class="models-edit-form" onsubmit="return false">
-          <label>Provider<input type="text" id="models-edit-provider" autocomplete="off" required></label>
-          <label>Local name<input type="text" id="models-edit-model" autocomplete="off" required></label>
-          <label title="The model name sent to the provider. Leave blank to use the local name.">API model id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
-          <label>Display name<input type="text" id="models-edit-display" autocomplete="off"></label>
-          <label>Category<input type="text" id="models-edit-category" autocomplete="off"></label>
-          <label>Context window<input type="number" id="models-edit-context" min="0" step="1"></label>
-          <label>Max tokens<input type="number" id="models-edit-max-tokens" min="0" step="1"></label>
-          <label>Temperature<input type="number" id="models-edit-temperature" min="0" max="2" step="0.01" placeholder="(unset)"></label>
-          <label>Top P<input type="number" id="models-edit-top-p" min="0" max="1" step="0.01" placeholder="(unset)"></label>
-          <label>Reasoning effort
+        <form id="models-edit-form" class="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-x-3 gap-y-2" onsubmit="return false">
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Provider<input type="text" id="models-edit-provider" autocomplete="off" required></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Local name<input type="text" id="models-edit-model" autocomplete="off" required></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden" title="The model name sent to the provider. Leave blank to use the local name.">API model id<input type="text" id="models-edit-id" autocomplete="off" placeholder="same as local name"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Display name<input type="text" id="models-edit-display" autocomplete="off"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Category<input type="text" id="models-edit-category" autocomplete="off"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Context window<input type="number" id="models-edit-context" min="0" step="1"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Max tokens<input type="number" id="models-edit-max-tokens" min="0" step="1"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Temperature<input type="number" id="models-edit-temperature" min="0" max="2" step="0.01" placeholder="(unset)"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Top P<input type="number" id="models-edit-top-p" min="0" max="1" step="0.01" placeholder="(unset)"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden">Reasoning effort
             <select id="models-edit-reasoning">
               <option value="">(unset)</option>
               <option value="none">none</option>
@@ -790,10 +790,10 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="max">max</option>
             </select>
           </label>
-          <label title="Input price in US dollars per million tokens">Input cost ($/1M tokens)<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
-          <label title="Output price in US dollars per million tokens">Output cost ($/1M tokens)<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
-          <label title="Maximum requests per minute this model may send">Requests per minute<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
-          <label class="models-edit-wide">Capabilities (comma-separated)<input type="text" id="models-edit-capabilities" autocomplete="off" placeholder="tools, vision, reasoning"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden" title="Input price in US dollars per million tokens">Input cost ($/1M tokens)<input type="number" id="models-edit-cost-in" min="0" step="0.001" placeholder="(unset)"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden" title="Output price in US dollars per million tokens">Output cost ($/1M tokens)<input type="number" id="models-edit-cost-out" min="0" step="0.001" placeholder="(unset)"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted [hidden]:hidden" title="Maximum requests per minute this model may send">Requests per minute<input type="number" id="models-edit-rpm" min="0" step="1" placeholder="(unset)"></label>
+          <label class="[hidden]:hidden col-span-full flex flex-col gap-1 text-xs text-fg-muted">Capabilities (comma-separated)<input type="text" id="models-edit-capabilities" autocomplete="off" placeholder="tools, vision, reasoning"></label>
         </form>
         <!-- The OpenShift-console pattern: the same resource, editable as its
              raw table. Saved through /api/config/table/set, which validates
@@ -802,7 +802,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <pre class="config-editor-highlight" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
           <textarea id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
         </div>
-        <p class="models-snippet-note" id="models-edit-note" hidden></p>
+        <p class="mt-2 text-sm text-fg-muted" id="models-edit-note" hidden></p>
       </div>
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
     </section>

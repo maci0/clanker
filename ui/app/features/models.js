@@ -4,6 +4,23 @@
 import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
+/* The Models view's own shapes, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css). The grid strings are spelled the same way
+   core/usage.js spells them: the two tables are one presentation. */
+var WRAP_CLASS = "overflow-x-auto";
+var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
+var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted uppercase tracking-label whitespace-nowrap";
+var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
+var NUM_CLASS = "text-right tabular-nums";
+var EMPTY_CLASS = "mt-4 font-mono text-sm text-fg-muted";
+/* A variant row is indented under the row it belongs to, and hidden until its
+   group is unfolded. */
+var VARIANT_ROW_CLASS = "hidden [&>td:nth-child(3)]:pl-6";
+var UNCALLABLE_CLASS = "opacity-55";
+var ENABLED_TOGGLE_CLASS = "inline-grid w-8 min-h-8 cursor-pointer place-items-center [&_input]:m-0 [&_input]:h-4 [&_input]:w-4 [&_input]:accent-accent has-[:focus-visible]:rounded-plate-sm has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent has-[:focus-visible]:outline-offset-1";
+var GROUP_TOGGLE_CLASS = "secondary min-h-7 cursor-pointer rounded-none border-0 bg-transparent px-0 py-0.5 font-semibold text-fg hover:text-accent";
+var SNIPPET_BTN_CLASS = "whitespace-nowrap";
+
 function askConfirm(message, opts) {
   return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
 }
@@ -16,13 +33,14 @@ function askConfirm(message, opts) {
    than a copy of that renderer. */
 function table(headers, rows) {
   var wrap = document.createElement("div");
-  wrap.className = "usage-wrap";
+  wrap.className = WRAP_CLASS;
   var t = document.createElement("table");
-  t.className = "usage";
+  t.className = TABLE_CLASS;
   var thead = document.createElement("thead");
   var hr = document.createElement("tr");
-  headers.forEach(function (h) {
+  headers.forEach(function (h, i) {
     var th = document.createElement("th");
+    th.className = i === 0 ? TH_CLASS : TH_CLASS + " " + NUM_CLASS;
     th.textContent = h;
     hr.appendChild(th);
   });
@@ -33,12 +51,13 @@ function table(headers, rows) {
     var tr = document.createElement("tr");
     cells.forEach(function (c, i) {
       var td = document.createElement("td");
+      td.className = TD_CLASS;
       // A cell is text, or a control: the catalog's rows carry a per-row
       // "config.toml" button in their last column.
       if (c && c.nodeType === 1) td.appendChild(c);
       else {
         td.textContent = c;
-        if (i > 0 && /^[\d.,$]/.test(c)) td.className = "num";
+        if (i > 0 && /^[\d.,$]/.test(c)) td.className = TD_CLASS + " " + NUM_CLASS;
       }
       tr.appendChild(td);
     });
@@ -51,7 +70,7 @@ function table(headers, rows) {
 
 function empty(text) {
   var p = document.createElement("p");
-  p.className = "usage-empty";
+  p.className = EMPTY_CLASS;
   p.textContent = text;
   return p;
 }
@@ -273,7 +292,7 @@ function copySnippet() {
 function snippetButton(m) {
   var btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "secondary models-snippet-btn";
+  btn.className = "secondary " + SNIPPET_BTN_CLASS;
   btn.textContent = "config.local.toml";
   btn.setAttribute("aria-label", "Show the config.local.toml entry for " + m.provider + "/" + m.id);
   btn.addEventListener("click", function () { showSnippet(m); });
@@ -434,11 +453,11 @@ function loadConfigured() {
         var meta = rowMeta[i];
         if (meta && meta.variant) {
           tr.hidden = true;
-          tr.className = "models-variant-row";
+          tr.className = VARIANT_ROW_CLASS;
           tr.setAttribute("data-group", meta.group);
         }
         if (meta && meta.uncallable) {
-          tr.classList.add("models-uncallable-row");
+          tr.className = tr.className ? tr.className + " " + UNCALLABLE_CLASS : UNCALLABLE_CLASS;
           tr.title = "Not callable from this server: " + meta.uncallable;
         }
       });
@@ -477,7 +496,7 @@ function saveModelEntry(entry, checkbox) {
 
 function enabledCheckbox(entry) {
   var label = document.createElement("label");
-  label.className = "models-enabled-toggle";
+  label.className = ENABLED_TOGGLE_CLASS;
   var checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = entry.enabled !== false;
@@ -496,7 +515,7 @@ function enabledCheckbox(entry) {
 function groupToggle(label, count, groupKey) {
   var btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "secondary models-group-toggle";
+  btn.className = GROUP_TOGGLE_CLASS;
   btn.setAttribute("aria-expanded", "false");
   btn.textContent = "▸ " + label + " · " + count + " variants";
   btn.addEventListener("click", function () {
@@ -515,7 +534,7 @@ function groupToggle(label, count, groupKey) {
 function editButton(entry) {
   var btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "secondary models-snippet-btn";
+  btn.className = "secondary " + SNIPPET_BTN_CLASS;
   btn.textContent = "Edit";
   btn.setAttribute("aria-label", "Edit " + entry.provider + "/" + entry.model);
   btn.addEventListener("click", function () { showEditPanel(entry, false); });
@@ -756,7 +775,7 @@ function loadLive() {
       var rows = (d.models || []).map(function (m) {
         var btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "secondary models-snippet-btn";
+        btn.className = "secondary " + SNIPPET_BTN_CLASS;
         btn.textContent = "config.local.toml";
         btn.setAttribute("aria-label", "Show the config.local.toml entry for " + provider + "/" + m.id);
         btn.addEventListener("click", function () {

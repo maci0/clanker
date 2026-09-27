@@ -1,24 +1,37 @@
 // Vanilla, no bundler. Usage table — token/cost totals by provider/model.
 import { fmtPct } from "./utils.js";
 
+/* The grid's shapes as Tailwind utilities (ui/app/tailwind.src.css); the
+   Models view spells them the same way for its own columns. */
+var WRAP_CLASS = "overflow-x-auto";
+var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
+var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted uppercase tracking-label whitespace-nowrap";
+var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
+var NUM_CLASS = "text-right tabular-nums";
+var FOOT_CLASS = "border-t border-border border-b-0 font-bold";
+var MODEL_CLASS = "text-accent-text";
+
 function usageColumns() {
   return [
-    ["Provider / model", ""], ["Calls", "num"], ["Failed", "num"], ["Prompt", "num"],
-    ["Completion", "num"], ["Cache hit", "num"], ["Tok/s", "num"], ["Cost", "num"],
+    ["Provider / model", TH_CLASS],
+    ["Calls", TH_CLASS + " " + NUM_CLASS], ["Failed", TH_CLASS + " " + NUM_CLASS],
+    ["Prompt", TH_CLASS + " " + NUM_CLASS], ["Completion", TH_CLASS + " " + NUM_CLASS],
+    ["Cache hit", TH_CLASS + " " + NUM_CLASS], ["Tok/s", TH_CLASS + " " + NUM_CLASS],
+    ["Cost", TH_CLASS + " " + NUM_CLASS],
   ];
 }
 
 function usageName(r, modelLabel, T) {
   var shown = modelLabel(r.provider, r.model);
-  if (shown === r.provider) return T.td(r.provider);
-  return T.td(r.provider + " / ", T.span({ class: "model" }, shown));
+  if (shown === r.provider) return T.td({ class: TD_CLASS }, r.provider);
+  return T.td({ class: TD_CLASS }, r.provider + " / ", T.span({ class: MODEL_CLASS }, shown));
 }
 
 function usageRow(r, modelLabel, fmtInt, fmtCost, T) {
   return T.tr(usageName(r, modelLabel, T), [
     fmtInt(r.calls), fmtInt(r.error_calls || 0), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
     fmtPct(r.cache_hit_rate), fmtInt(Math.round(r.tokens_per_sec || 0)), fmtCost(r.cost),
-  ].map(function (v) { return T.td({ class: "num" }, v); }));
+  ].map(function (v) { return T.td({ class: TD_CLASS + " " + NUM_CLASS }, v); }));
 }
 
 export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
@@ -32,8 +45,8 @@ export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
     return a;
   }, { calls: 0, failed: 0, prompt: 0, completion: 0, cost: 0 });
   var cols = usageColumns();
-  return T.div({ class: "usage-wrap" },
-    T.table({ class: "usage" },
+  return T.div({ class: WRAP_CLASS },
+    T.table({ class: TABLE_CLASS },
       T.thead(T.tr(cols.map(function (col) {
         var th = T.th({ class: col[1] || null }, col[0]);
         th.setAttribute("scope", "col");
@@ -41,7 +54,7 @@ export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
       }))),
       T.tbody(rows.map(function (r) { return usageRow(r, modelLabel, fmtInt, fmtCost, T); })),
       T.tfoot(T.tr(
-        T.td(fmtInt(rows.length) + (rows.length === 1 ? " model" : " models")),
+        T.td({ class: TD_CLASS + " " + FOOT_CLASS }, fmtInt(rows.length) + (rows.length === 1 ? " model" : " models")),
         [fmtInt(totals.calls), fmtInt(totals.failed), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
-          .map(function (v) { return T.td({ class: "num" }, v); })))));
+          .map(function (v) { return T.td({ class: TD_CLASS + " " + NUM_CLASS + " " + FOOT_CLASS }, v); })))));
 }

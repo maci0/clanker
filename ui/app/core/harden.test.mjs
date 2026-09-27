@@ -635,7 +635,11 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(system, /stdio needs a command to spawn/);
   assert.match(html, /data-mcp-for="stdio"/);
   assert.match(html, /data-mcp-for="http"/);
-  assert.match(css, /\.models-edit-form label\[hidden\] \{ display: none; \}/);
+  // The form's labels carry `flex`, which outranks the UA [hidden] default, so
+  // each of them states the hidden case. This was a `.models-edit-form label
+  // [hidden]` rule in views.css.
+  const models = readFileSync(join(here, "../index.html"), "utf8");
+  assert.match(models, /class="[^"]*\[hidden\]:hidden[^"]*">Local name</);
   assert.match(logs, /els\.logView\.textContent = msg/);
   assert.match(app, /Could not load rooms: /);
   assert.match(app, /Try again/);

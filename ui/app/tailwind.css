@@ -72,6 +72,9 @@
 .col-2 {
   grid-column: 2;
 }
+.col-span-full {
+  grid-column: 1 / -1;
+}
 .row-2 {
   grid-row: 2;
 }
@@ -192,6 +195,9 @@
 .inline-flex {
   display: inline-flex;
 }
+.inline-grid {
+  display: inline-grid;
+}
 .table {
   display: table;
 }
@@ -264,6 +270,9 @@
 }
 .w-4 {
   width: var(--space-4);
+}
+.w-8 {
+  width: calc(var(--spacing) * 8);
 }
 .w-\[1\.7rem\] {
   width: 1.7rem;
@@ -391,6 +400,9 @@
 .flex-wrap {
   flex-wrap: wrap;
 }
+.place-items-center {
+  place-items: center;
+}
 .items-baseline {
   align-items: baseline;
 }
@@ -516,6 +528,10 @@
   border-bottom-style: var(--tw-border-style);
   border-bottom-width: 1px;
 }
+.border-b-0 {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 0px;
+}
 .border-dashed {
   --tw-border-style: dashed;
   border-style: dashed;
@@ -568,6 +584,9 @@
 .p-\[13px\] {
   padding: 13px;
 }
+.px-0 {
+  padding-inline: 0px;
+}
 .px-0\.5 {
   padding-inline: calc(var(--spacing) * 0.5);
 }
@@ -619,8 +638,14 @@
 .pr-0 {
   padding-right: 0px;
 }
+.pr-3 {
+  padding-right: var(--space-3);
+}
 .pb-1 {
   padding-bottom: var(--space-1);
+}
+.pl-0 {
+  padding-left: 0px;
 }
 .text-justify {
   text-align: justify;
@@ -668,6 +693,10 @@
   --tw-leading: var(--leading-snug);
   line-height: var(--leading-snug);
 }
+.font-bold {
+  --tw-font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-bold);
+}
 .font-medium {
   --tw-font-weight: var(--font-weight-medium);
   font-weight: var(--font-weight-medium);
@@ -698,6 +727,9 @@
 }
 .whitespace-nowrap {
   white-space: nowrap;
+}
+.whitespace-pre {
+  white-space: pre;
 }
 .whitespace-pre-wrap {
   white-space: pre-wrap;
@@ -764,6 +796,9 @@
 }
 .opacity-40 {
   opacity: 40%;
+}
+.opacity-55 {
+  opacity: 55%;
 }
 .shadow {
   --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
@@ -842,6 +877,10 @@
 .outline-none {
   --tw-outline-style: none;
   outline-style: none;
+}
+.select-all {
+  -webkit-user-select: all;
+  user-select: all;
 }
 .\[dateof\:3\.3\.8\] {
   dateof: 3.3.8;
@@ -958,6 +997,19 @@
   outline-offset: 2px;
 }
 .focus-visible\:outline-accent:focus-visible {
+  outline-color: var(--accent);
+}
+.has-\[\:focus-visible\]\:rounded-plate-sm:has(:is(:focus-visible)) {
+  border-radius: var(--radius-sm);
+}
+.has-\[\:focus-visible\]\:outline-2:has(:is(:focus-visible)) {
+  outline-style: var(--tw-outline-style);
+  outline-width: 2px;
+}
+.has-\[\:focus-visible\]\:outline-offset-1:has(:is(:focus-visible)) {
+  outline-offset: 1px;
+}
+.has-\[\:focus-visible\]\:outline-accent:has(:is(:focus-visible)) {
   outline-color: var(--accent);
 }
 .aria-selected\:border-accent[aria-selected="true"] {
@@ -1092,6 +1144,24 @@
   .pointer-coarse\:min-w-11 {
     min-width: calc(var(--spacing) * 11);
   }
+}
+.\[\&_input\]\:m-0 input {
+  margin: 0px;
+}
+.\[\&_input\]\:h-4 input {
+  height: var(--space-4);
+}
+.\[\&_input\]\:w-4 input {
+  width: var(--space-4);
+}
+.\[\&_input\]\:accent-accent input {
+  accent-color: var(--accent);
+}
+.\[hidden\]\:hidden:is(hidden) {
+  display: none;
+}
+.\[\&\>td\:nth-child\(3\)\]\:pl-6 > td:nth-child(3) {
+  padding-left: var(--space-6);
 }
 *, ::before, ::after {
   border: 0 solid;

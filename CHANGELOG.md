@@ -115,6 +115,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   used since the goal card was rewritten (`.goal-field`) are deleted rather
   than ported, and the two `goal-actions` rows in `index.html` move with them.
 
+- The Models view (`ui/app/features/models.js` and its markup in
+  `ui/app/index.html`) and the usage table (`ui/app/core/usage.js`) are styled
+  with Tailwind utilities; their rules left `views.css`. The two grids spell
+  the same strings for the same presentation, which is what the shared `.usage`
+  class used to say, and the edit form's labels state `[hidden]:hidden` where a
+  `.models-edit-form label[hidden]` rule did (a label carrying `flex` outranks
+  the UA default). `config-editor`, `models-edit-toml-editor` and their
+  highlight layer stay: System and Fleet share them.
+- The eager-JS weight budget is 146K gz, raised from 145 on purpose. A ported
+  module states its shapes as class strings, so bytes move from the sheets into
+  whichever module is on the critical path — `core/usage.js` is preloaded, and
+  its grid strings cost ~0.2K gz. The number comes back down when the port is
+  finished and the last sheet is gone.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

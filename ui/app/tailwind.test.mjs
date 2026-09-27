@@ -40,6 +40,8 @@ const migrated = [
   "features/prompts.js",
   "features/knowledge.js",
   "features/goals.js",
+  "features/models.js",
+  "core/usage.js",
   "core/kit.js",
 ];
 
@@ -53,7 +55,10 @@ const content_ok = /^empty:before:content-\[/;
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
-const variant_bracket_ok = /^(max|min|data|group-data)-\[/;
+/// An arbitrary *variant* is not an arbitrary value: `[&_input]:h-4` and
+/// `has-[:focus-visible]:outline-2` reach a descendant or a child state, and
+/// only the utility they carry is checked against the scale.
+const variant_bracket_ok = /^(?:\[&|has-\[|max-\[|min-\[|data-\[|group-data-\[)/;
 
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

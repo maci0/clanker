@@ -307,7 +307,7 @@ export function loadGoals() {
     .catch(function (err) {
       el.goals.textContent = "";
       var p = document.createElement("p");
-      p.className = "usage-empty";
+      p.className = "mt-4 font-mono text-sm text-fg-muted";
       p.textContent = "Could not load goals: " + err.message;
       el.goals.appendChild(p);
     });
