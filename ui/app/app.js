@@ -2399,7 +2399,7 @@ function paintRunMetrics() {
     el.runMetrics.textContent = "";
     cells.forEach(function (p) {
       var s = document.createElement("span");
-      s.className = "run-metrics-cell" + (p.key === "scope" ? " run-metrics-scope" : "");
+      s.className = "whitespace-nowrap" + (p.key === "scope" ? " font-bold uppercase tracking-label" : "");
       s.setAttribute("data-m", p.key);
       s.textContent = p.text;
       el.runMetrics.appendChild(s);

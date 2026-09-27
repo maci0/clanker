@@ -298,22 +298,22 @@ lamps carry further). The seven named palettes ride the same tokens.
                   aria-controls="prompt-list" aria-autocomplete="list"></textarea>
         <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       </div>
-      <div class="run-options">
+      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-rule/45 pt-2">
         <select id="model-select" class="sr-only" aria-hidden="true" tabindex="-1"
                 title="Active model (driven by the model picker)"></select>
         <details class="more" id="params">
-          <summary>Advanced</summary>
+          <summary class="min-h-8 rounded-capsule px-3 py-1 text-xs">Advanced</summary>
           <div class="more-actions params-grid">
-            <label for="fallback-provider">Fallback provider</label>
+            <label class="text-xs" for="fallback-provider">Fallback provider</label>
             <select id="fallback-provider" class="model-select"
                     title="If a run's API request to the selected provider fails, retry it automatically with this provider. None disables auto-retry.">
               <option value="">None (no auto-retry)</option>
             </select>
-            <label for="param-temp">Temperature</label>
+            <label class="basis-full text-xs" for="param-temp">Temperature</label>
             <input type="number" id="param-temp" min="0" max="2" step="0.05" placeholder="model default">
-            <label for="param-topp">Top-p</label>
+            <label class="basis-full text-xs" for="param-topp">Top-p</label>
             <input type="number" id="param-topp" min="0" max="1" step="0.05" placeholder="model default">
-            <label for="param-effort">Reasoning effort</label>
+            <label class="basis-full text-xs" for="param-effort">Reasoning effort</label>
             <select id="param-effort" class="model-select"
                     title="Pin this chat's reasoning effort ahead of the auto-thinking classifier and the model's own setting. Default leaves those in charge.">
               <option value="">Default (classifier / model / profile)</option>
@@ -338,9 +338,9 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="listbox" aria-expanded="false">
             <span class="model-chip__name">…</span>
           </button>
-          <details class="run-shape" id="run-shape">
-            <summary>Run shape</summary>
-            <div class="run-shape-body">
+          <details class="group relative" id="run-shape">
+            <summary class="max-w-56 min-h-8 cursor-pointer list-none truncate rounded-capsule border border-rule bg-surface px-2 py-1 font-mono text-xs font-semibold uppercase tracking-label text-fg-muted group-open:border-accent group-open:text-fg group-data-[active=true]:border-accent group-data-[active=true]:text-fg [&::-webkit-details-marker]:hidden">Run shape</summary>
+            <div class="absolute bottom-[calc(100%+0.35rem)] left-0 z-4 flex min-w-64 flex-wrap gap-2 rounded-plate border border-rule bg-surface p-2 shadow-[var(--lift)]">
           <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
@@ -370,16 +370,16 @@ lamps carry further). The seven named palettes ride the same tokens.
            frame. Tokens, cache and tok/s follow mid-run usage events plus
            a live output estimate from streamed text. New chat, a session
            switch, or a reload clears it. aria-live stays off while live. -->
-      <p class="meta run-metrics" id="run-metrics" hidden></p>
-      <div class="chat-steer" id="steer-row" hidden>
-        <label for="steer-input">Steer this turn</label>
-        <textarea id="steer-input" rows="2" wrap="soft" maxlength="8000" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
+      <p class="meta m-0 mt-1 flex flex-wrap gap-x-3 gap-y-px tabular-nums wrap-anywhere [hidden]:hidden" id="run-metrics" hidden></p>
+      <div class="flex flex-wrap items-center gap-3 border-t border-rule px-3 py-2 [hidden]:hidden" id="steer-row" hidden>
+        <label class="m-0 basis-full" for="steer-input">Steer this turn</label>
+        <textarea class="min-h-14 max-h-32 min-w-0 flex-1 resize-y leading-snug" id="steer-input" rows="2" wrap="soft" maxlength="8000" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>
-        <span class="meta" id="steer-hint"></span>
+        <span class="meta truncate" id="steer-hint"></span>
         <!-- Ledger of this turn's steering messages: sending / queued /
              applied / failed per entry, so a second send is visibly a
              second entry instead of silently replacing the first. -->
-        <ul class="steer-sent" id="steer-sent" aria-live="polite" hidden></ul>
+        <ul class="m-0 basis-full list-none p-0 text-xs text-fg-muted [hidden]:hidden" id="steer-sent" aria-live="polite" hidden></ul>
       </div>
       <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
     </form>

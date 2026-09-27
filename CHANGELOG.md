@@ -233,6 +233,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   should land beside an app.css port (the board, the rail, chat). The eager-JS
   budget is 149K gz.
 
+- The composer's chrome is styled with Tailwind utilities: the option row with
+  its Advanced fold, the Run shape fold and its panel, the session metrics line
+  and the mid-run steer row, all in `ui/app/index.html`, plus the metrics cells
+  `ui/app/app.js` builds. ~3 KB leaves `app.css`, which is the render-blocking
+  sheet — first paint falls with it rather than rising. A fold's open state is
+  `group-open:` on the summary reading its parent, the `[hidden]`-beaten-by-
+  `flex` cases are `[hidden]:hidden` on the element, and the Advanced summary
+  carries the size the composer-specific rule gave it.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

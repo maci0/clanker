@@ -90,6 +90,9 @@
 .bottom-4 {
   bottom: var(--space-4);
 }
+.bottom-\[calc\(100\%\+0\.35rem\)\] {
+  bottom: calc(100% + 0.35rem);
+}
 .left-0 {
   left: 0px;
 }
@@ -104,6 +107,9 @@
 }
 .z-1 {
   z-index: 1;
+}
+.z-4 {
+  z-index: 4;
 }
 .z-40 {
   z-index: 40;
@@ -400,6 +406,9 @@
 .max-w-2xl {
   max-width: var(--container-2xl);
 }
+.max-w-56 {
+  max-width: calc(var(--spacing) * 56);
+}
 .max-w-72 {
   max-width: calc(var(--spacing) * 72);
 }
@@ -438,6 +447,9 @@
 }
 .min-w-48 {
   min-width: calc(var(--spacing) * 48);
+}
+.min-w-64 {
+  min-width: calc(var(--spacing) * 64);
 }
 .flex-1 {
   flex: 1;
@@ -480,6 +492,9 @@
 }
 .basis-auto {
   flex-basis: auto;
+}
+.basis-full {
+  flex-basis: 100%;
 }
 .caption-bottom {
   caption-side: bottom;
@@ -613,6 +628,9 @@
 .gap-y-2 {
   row-gap: var(--space-2);
 }
+.gap-y-px {
+  row-gap: 1px;
+}
 .self-start {
   align-self: flex-start;
 }
@@ -712,6 +730,9 @@
 .border-accent {
   border-color: var(--accent);
 }
+.border-accent\! {
+  border-color: var(--accent) !important;
+}
 .border-border {
   border-color: var(--border);
 }
@@ -720,6 +741,12 @@
 }
 .border-rule {
   border-color: var(--rule);
+}
+.border-rule\/45 {
+  border-color: var(--rule);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in oklab, var(--rule) 45%, transparent);
+  }
 }
 .border-transparent {
   border-color: transparent;
@@ -823,6 +850,9 @@
 .p-0 {
   padding: 0px;
 }
+.p-2 {
+  padding: var(--space-2);
+}
 .p-3 {
   padding: var(--space-3);
 }
@@ -882,6 +912,9 @@
 }
 .pt-0 {
   padding-top: 0px;
+}
+.pt-2 {
+  padding-top: var(--space-2);
 }
 .pr-0 {
   padding-right: 0px;
@@ -1214,6 +1247,18 @@
 }
 .\[ttsr\:\<name\>\] {
   ttsr: <name>;
+}
+.group-open\:border-accent:is(:where(.group):is([open], :popover-open, :open) *) {
+  border-color: var(--accent);
+}
+.group-open\:text-fg:is(:where(.group):is([open], :popover-open, :open) *) {
+  color: var(--fg);
+}
+.group-data-\[active\=true\]\:border-accent:is(:where(.group)[data-active="true"] *) {
+  border-color: var(--accent);
+}
+.group-data-\[active\=true\]\:text-fg:is(:where(.group)[data-active="true"] *) {
+  color: var(--fg);
 }
 .group-data-\[current\=true\]\:font-semibold:is(:where(.group)[data-current="true"] *) {
   --tw-font-weight: var(--font-weight-semibold);

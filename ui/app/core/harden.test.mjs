@@ -414,7 +414,7 @@ test("rooms filter and message search are search inputs", function () {
 });
 
 test("steer row has a visible label", function () {
-  assert.match(html, /<label for="steer-input">Steer this turn<\/label>/);
+  assert.match(html, /<label[^>]*for="steer-input"[^>]*>Steer this turn<\/label>/);
 });
 
 test("empty Run control explains the disabled state", function () {
@@ -497,7 +497,10 @@ test("Run shape summary names the modes that are on", function () {
   assert.match(app, /function syncRunShape/);
   assert.match(app, /bits\.join\(" · "\)/);
   assert.match(app, /el\.worktreeMode\.addEventListener\("change", updateComposerModeHint\)/);
-  assert.match(css, /\.run-shape\[data-active="true"\]/);
+  // The active state is a utility on the element now (group-data-[active=true]
+  // on the summary, which reads the details' data-active), not a sheet rule.
+  const html2 = readFileSync(join(here, "../index.html"), "utf8");
+  assert.match(html2, /group-data-\[active=true\]:border-accent/);
 });
 
 test("rail Watch and Set up folds persist across loads", function () {
