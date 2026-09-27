@@ -21,7 +21,12 @@ code wins.
   `config.local.toml.example`.
 - **`.env`** — API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
-  `api_key_env`. Keys never go in the TOML.
+  `api_key_env`. Keys never go in the TOML. A line that is neither a comment
+  nor a `KEY=VALUE` assignment, one with an empty key, and one whose value
+  opens a quote it never closes each warn and name their file and line,
+  because a line dropped in silence surfaces later as "X_API_KEY not set" with
+  nothing pointing at the line that caused it. The rest of the file still
+  loads.
 
 TOML is the only supported format (there is no JSON config). A missing key
 takes its default; an unknown key logs a warning and is ignored (so a typo like

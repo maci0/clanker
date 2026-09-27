@@ -42,9 +42,12 @@ fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Env
         };
     defer gpa.free(data);
 
+    const file_name = path orelse ".env";
     var loaded: usize = 0;
+    var line_no: usize = 0;
     var it = std.mem.splitScalar(u8, data, '\n');
     while (it.next()) |raw| {
+        line_no += 1;
         var line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
         if (std.mem.startsWith(u8, line, "export")) {
@@ -53,16 +56,31 @@ fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Env
                 line = std.mem.trimStart(u8, after_export, " \t");
             }
         }
-        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, line, '=') orelse {
+            log.log(.warn, "{s}:{d}: '{s}' is not KEY=VALUE, skipped", .{ file_name, line_no, line });
+            continue;
+        };
         const key = std.mem.trim(u8, line[0..eq], " \t");
-        if (key.len == 0) continue;
-        const value = valuePart(line[eq + 1 ..]);
+        if (key.len == 0) {
+            log.log(.warn, "{s}:{d}: assignment has an empty key, skipped", .{ file_name, line_no });
+            continue;
+        }
+        const raw_value = line[eq + 1 ..];
+        const value = valuePart(raw_value);
+        if (unterminatedQuote(value)) {
+            // The value is still taken literally (bash and python-dotenv
+            // both refuse the line outright, but refusing here would drop a
+            // key this process used to have), so the note has to name the
+            // line: the quote travels with the value and every consumer of
+            // the key then fails as a bad credential instead.
+            log.log(.warn, "{s}:{d}: {s} value opens a quote it never closes, so the quote is part of the value", .{ file_name, line_no, key });
+        }
         if (environ_map.get(key) != null) continue; // real env vars win
         environ_map.put(key, value) catch continue;
         loaded += 1;
     }
     if (loaded > 0) {
-        log.log(.debug, "loaded {d} key(s) from {s}", .{ loaded, path orelse ".env" });
+        log.log(.debug, "loaded {d} key(s) from {s}", .{ loaded, file_name });
     }
 }
 
@@ -82,6 +100,14 @@ fn valuePart(raw: []const u8) []const u8 {
         return kept;
     }
     return trimmed;
+}
+
+/// A value that opens with a quote character and does not end with the same
+/// one, so the quote survives into the value instead of being stripped.
+fn unterminatedQuote(value: []const u8) bool {
+    if (value.len == 0) return false;
+    if (value[0] != '"' and value[0] != '\'') return false;
+    return value.len < 2 or value[value.len - 1] != value[0];
 }
 
 fn quoted(value: []const u8) ?[]const u8 {
@@ -173,4 +199,104 @@ test "dotenv accepts a tab after export" {
     loadFromDir(io, std.testing.allocator, &env, tmp.dir);
 
     try std.testing.expectEqualStrings("tab value", env.get("TABBED").?);
+}
+
+/// Captured log lines for the malformed-line test. A sink rather than
+/// `log.setLevel`: the warnings under test are the only records this test
+/// produces, and stderr output from a test breaks the runner's --listen
+/// protocol.
+const Capture = struct {
+    buf: [4096]u8 = undefined,
+    len: usize = 0,
+
+    fn write(ctx: *const anyopaque, line: []const u8) void {
+        const self: *Capture = @ptrCast(@alignCast(@constCast(ctx)));
+        const room = self.buf.len - self.len;
+        const n = @min(room, line.len);
+        @memcpy(self.buf[self.len..][0..n], line[0..n]);
+        self.len += n;
+    }
+
+    fn text(self: *const Capture) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+test "dotenv names a malformed line and still loads the rest of the file" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const saved_level = log.getLevel();
+    log.setLevel(.warn);
+    defer log.setLevel(saved_level);
+    var capture: Capture = .{};
+    log.setSink(.{ .ctx = &capture, .write = Capture.write });
+    defer log.setSink(null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data =
+        \\GOOD=first
+        \\this line has no equals sign
+        \\=orphan value
+        \\HALF="unterminated
+        \\LAST=last
+    });
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    loadFromDir(io, std.testing.allocator, &env, tmp.dir);
+
+    // One bad line must not cost the file: each malformed entry is named
+    // with the file and line that carries it, and every well-formed key
+    // around it still lands. A silent skip is the failure this replaces --
+    // the operator sees "X_API_KEY not set" and never learns the line existed.
+    try std.testing.expectEqualStrings("first", env.get("GOOD").?);
+    try std.testing.expectEqualStrings("last", env.get("LAST").?);
+    try std.testing.expectEqualStrings("\"unterminated", env.get("HALF").?);
+    const lines = capture.text();
+    try std.testing.expect(std.mem.indexOf(u8, lines, ".env:2:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, "not KEY=VALUE") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, ".env:3:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, "empty key") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, ".env:4:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, "never closes") != null);
+}
+
+test "a quoted value closes, so it is not reported as unterminated" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const saved_level = log.getLevel();
+    log.setLevel(.warn);
+    defer log.setLevel(saved_level);
+    var capture: Capture = .{};
+    log.setSink(.{ .ctx = &capture, .write = Capture.write });
+    defer log.setSink(null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // The .env.example shape: a quoted value followed by a side note, which
+    // must not read as an unclosed quote.
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data = "CLOSED=\"a b\"  # note\nPLAIN=v\n" });
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    loadFromDir(io, std.testing.allocator, &env, tmp.dir);
+
+    try std.testing.expectEqualStrings("a b", env.get("CLOSED").?);
+    try std.testing.expectEqualStrings("v", env.get("PLAIN").?);
+    try std.testing.expect(std.mem.indexOf(u8, capture.text(), "never closes") == null);
+}
+
+test "an unterminated quote is detected on the value that survives" {
+    try std.testing.expect(unterminatedQuote("\"unterminated"));
+    try std.testing.expect(unterminatedQuote("'x"));
+    try std.testing.expect(unterminatedQuote("\""));
+    try std.testing.expect(!unterminatedQuote("\"closed\""));
+    try std.testing.expect(!unterminatedQuote("'closed'"));
+    try std.testing.expect(!unterminatedQuote(""));
+    try std.testing.expect(!unterminatedQuote("a\"b"));
 }
