@@ -5200,7 +5200,7 @@ function loadLog(name) { return loadLogsModule().then(function (m) { return m.lo
 el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
 wireRefresh(el.logsRefresh, loadLogList);
 
-// Phase 5 progress streaming — reuses /api/run event channel shape via fetch + reader.
+// Progress streaming — reuses /api/run event channel shape via fetch + reader.
 // History lists recent runs from /api/runs (the same graph guest the Gate view reads);
 // the Revert button only confirms — the actual revert is the CLI's `clanker revert <run-id>`.
 (function(){

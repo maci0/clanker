@@ -6566,4 +6566,3 @@ test "documentsKey does not accept a coincidental substring" {
     try std.testing.expect(documentsKey(text, "chunk"));
     try std.testing.expect(!documentsKey(text, "vector"));
 }
-// --- memory helpers (appended via patch) ---

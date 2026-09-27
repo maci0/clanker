@@ -32,7 +32,6 @@ function shippedPaletteRefs() {
     }
   }
   assert.ok(end !== -1, "the paletteRefs literal is closed");
-  // eslint-disable-next-line no-new-func
   return new Function("return " + appSource.slice(open, end + 1) + ";")();
 }
 
