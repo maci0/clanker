@@ -604,10 +604,8 @@ pub fn build(b: *std.Build) void {
     })).step);
     // The sandbox tests load zig-out/tools/*.wasm, which is build output and
     // therefore absent from a fresh checkout: `zig build test` failed there
-    // with FileNotFound on a tool nobody had built yet. The improvement engine
-    // already runs the tools gate before the test gate for this reason; the
-    // dependency belongs here so the same holds for anyone typing the command
-    // by hand. Declared after tools_step exists, further down.
+    // with FileNotFound on a tool nobody had built yet. The dependency is
+    // declared with tools_step below, where the step it names exists.
 
     // -------------------------------------------------------------- fmt gate
     // `zig build fmt`: format-check the checkout without the agent loop or an
@@ -644,6 +642,11 @@ pub fn build(b: *std.Build) void {
     // and the host-tested helpers listed above are skipped) into a
     // wasm32-freestanding module installed at zig-out/tools/<name>.wasm.
     const tools_step = b.step("tools", "Compile tools/zig/*.zig into zig-out/tools/*.wasm");
+    // The dependency the sandbox tests need, declared here because tools_step
+    // does not exist above: without it `zig build test` on a fresh checkout
+    // fails with FileNotFound on zig-out/tools/*.wasm, since that is build
+    // output and nothing has built it yet.
+    test_step.dependOn(tools_step);
     const tool_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
