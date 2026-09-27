@@ -2745,7 +2745,9 @@ pub const Engine = struct {
 
     /// Removes a directory tree rooted at `rel` (relative to cwd). Only
     /// called on paths under state/staging/ whose names match the id
-    /// pattern this engine generates.
+    /// pattern this engine generates. Every call site is a failure or
+    /// completion path, so a tree that survives is leaked space nobody is
+    /// told about; the refusal and the partial removal are both named.
     fn removeTree(self: *Engine, rel: []const u8) void {
         // A recursive delete that takes a path is one wrong argument away from
         // eating the working tree. Only ever a staging directory of this
@@ -2755,7 +2757,9 @@ pub const Engine = struct {
             log.log(.warn, "refusing to remove '{s}': not a staging directory", .{rel});
             return;
         }
-        self.removeTreeAt(std.Io.Dir.cwd(), rel);
+        if (!self.removeTreeAt(std.Io.Dir.cwd(), rel)) {
+            log.log(.warn, "staging tree '{s}' was not fully removed", .{rel});
+        }
     }
 
     /// Exactly `state/staging/imp-<digits>` and nothing else.
@@ -2767,10 +2771,11 @@ pub const Engine = struct {
         return isImpId(name);
     }
 
-    /// Removes a directory tree rooted at `rel` under `base`. Split from
-    /// removeTree so the unit test can operate on a tmpDir instead of cwd.
-    fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) void {
-        disk_cap.removeTree(self.ctx.gpa, self.ctx.io, base, rel);
+    /// Removes a directory tree rooted at `rel` under `base`, reporting
+    /// whether it is gone afterwards. Split from removeTree so the unit test
+    /// can operate on a tmpDir instead of cwd.
+    fn removeTreeAt(self: *Engine, base: std.Io.Dir, rel: []const u8) bool {
+        return disk_cap.removeTree(self.ctx.gpa, self.ctx.io, base, rel);
     }
 
     /// Looks like an id this engine mints: "imp-" followed by digits.
@@ -4880,7 +4885,7 @@ test "pruneStaging keeps the newest N and removes the rest" {
         defer std.testing.allocator.free(path);
         // Use the engine's removeTree indirectly: it operates on cwd, but
         // we can verify the logic with manual deletion on tmp.dir.
-        engine.removeTreeAt(tmp.dir, path);
+        try std.testing.expect(engine.removeTreeAt(tmp.dir, path));
     }
     // imp-100 should be gone (its file too).
     const absent = tmp.dir.readFileAlloc(io, "state/staging/imp-100/file.txt", std.testing.allocator, .limited(64));

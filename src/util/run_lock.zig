@@ -57,7 +57,11 @@ pub fn acquire(
     } else {
         log.log(.info, "clearing a run lock with no readable owner", .{});
     }
-    dir.deleteFile(io, path) catch {};
+    dir.deleteFile(io, path) catch |err| {
+        // The retry below re-reads the same stale owner, so a delete that did
+        // not happen ends as `Busy` naming a process that is already gone.
+        log.log(.warn, "could not clear the stale run lock {s}: {s}", .{ path, @errorName(err) });
+    };
 
     if (try tryCreate(io, gpa, dir, path)) |lock| return lock;
     // Someone else won the race for the stale lock; theirs is valid.
@@ -85,15 +89,24 @@ fn tryCreate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const 
     var buf: [64]u8 = undefined;
     var w = file.writer(io, &buf);
     w.interface.writeAll(text) catch |err| {
-        dir.deleteFile(io, path) catch {};
+        discardUnwritten(io, dir, path);
         return err;
     };
     w.interface.flush() catch |err| {
-        dir.deleteFile(io, path) catch {};
+        discardUnwritten(io, dir, path);
         return err;
     };
 
     return .{ .dir = dir, .io = io, .path = path, .held = true };
+}
+
+/// A lock file whose pid never landed holds nobody, so the only thing left is
+/// to take it away. Its failure is what leaves the next acquirer stuck on a
+/// lock no process owns, hence the name.
+fn discardUnwritten(io: std.Io, dir: std.Io.Dir, path: []const u8) void {
+    dir.deleteFile(io, path) catch |err| {
+        log.log(.warn, "could not remove the run lock {s} left unwritten: {s}", .{ path, @errorName(err) });
+    };
 }
 
 fn readOwner(io: std.Io, _: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ?u32 {

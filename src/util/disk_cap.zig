@@ -14,10 +14,18 @@ const log = @import("log.zig");
 
 /// Total bytes of the regular files under `rel`, following no symlinks.
 /// Missing directory means zero, not an error: there is nothing to cap.
+/// Any other failure to open is a measurement, not a zero-byte tree, so it
+/// is named before the cap decides it is under the limit.
 pub fn dirSize(io: std.Io, base: std.Io.Dir, gpa: std.mem.Allocator, rel: []const u8) u64 {
     // A cache path can be replaced by a symlink between runs. Following it
     // would measure (and later remove) an unrelated tree outside the checkout.
-    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch return 0;
+    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => {
+            log.log(.warn, "could not measure '{s}': {s}", .{ rel, @errorName(err) });
+            return 0;
+        },
+    };
     defer dir.close(io);
 
     var total: u64 = 0;
@@ -28,7 +36,10 @@ pub fn dirSize(io: std.Io, base: std.Io.Dir, gpa: std.mem.Allocator, rel: []cons
         switch (entry.kind) {
             .directory => total += dirSize(io, base, gpa, sub),
             .file => {
-                const st = base.statFile(io, sub, .{}) catch continue;
+                const st = base.statFile(io, sub, .{}) catch |err| {
+                    log.log(.warn, "could not size '{s}': {s}", .{ sub, @errorName(err) });
+                    continue;
+                };
                 total += st.size;
             },
             else => {},
@@ -61,7 +72,13 @@ pub fn capBuildCache(
         size >> 20,
         limit >> 20,
     });
-    removeTree(gpa, io, base, rel);
+    if (!removeTree(gpa, io, base, rel)) {
+        // The tree is still there, so the next run measures the same size and
+        // repeats this work. Saying the cache was dropped when nothing went is
+        // the failure mode this cap exists to prevent going silent.
+        log.log(.warn, "build cache {s} was not fully removed; the next run will try again", .{rel});
+        return false;
+    }
     return true;
 }
 
@@ -78,22 +95,46 @@ pub fn isBuildCachePath(rel: []const u8) bool {
 /// Recursively deletes `rel` (relative to `base`), including symlinks and
 /// other non-directory entries. Callers are responsible for validating that
 /// `rel` is safe to remove: this walks and deletes unconditionally.
-pub fn removeTree(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir, rel: []const u8) void {
+///
+/// Reports whether the tree is gone afterwards, so a caller that announced a
+/// removal can tell a delete that did not happen from one that did.
+pub fn removeTree(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir, rel: []const u8) bool {
     // Keep the same no-follow boundary as dirSize. This also closes the race
     // where a directory discovered by the iterator is swapped for a symlink
     // before the recursive open.
-    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch return;
+    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return true,
+        else => {
+            log.log(.warn, "could not open '{s}' to remove it: {s}", .{ rel, @errorName(err) });
+            return false;
+        },
+    };
+    var complete = true;
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
-        const sub = std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
+        const sub = std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel, entry.name }) catch {
+            log.log(.warn, "could not name an entry under '{s}': out of memory", .{rel});
+            complete = false;
+            continue;
+        };
         defer gpa.free(sub);
         switch (entry.kind) {
-            .directory => removeTree(gpa, io, base, sub),
-            else => base.deleteFile(io, sub) catch {},
+            .directory => complete = removeTree(gpa, io, base, sub) and complete,
+            else => base.deleteFile(io, sub) catch |err| {
+                log.log(.warn, "could not remove '{s}': {s}", .{ sub, @errorName(err) });
+                complete = false;
+            },
         }
     }
     dir.close(io);
-    base.deleteDir(io, rel) catch {};
+    base.deleteDir(io, rel) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => {
+            log.log(.warn, "could not remove directory '{s}': {s}", .{ rel, @errorName(err) });
+            complete = false;
+        },
+    };
+    return complete;
 }
 
 // ------------------------------------------------------------------- tests --

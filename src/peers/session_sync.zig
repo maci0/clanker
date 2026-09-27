@@ -117,11 +117,13 @@ pub fn receive(
 const config_mod = @import("../config.zig");
 const http_client = @import("../util/http_client.zig");
 
+/// The fetch keeps the transport's own error: every caller here reports
+/// through `fanoutFailed`/`backfillFailed`, which log `@errorName(err)`, and
+/// flattening a timeout, a refused connect and a 500 into one `HttpStatus`
+/// made every mesh sync failure read the same in the log and the failure
+/// counter.
 fn httpFetch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) ![]const u8 {
-    return http_client.fetch(io, gpa, arena, method, url, body, null, http_client.default_timeout_ms) catch |err| switch (err) {
-        error.HttpStatus => return error.HttpStatus,
-        else => return error.HttpStatus,
-    };
+    return http_client.fetch(io, gpa, arena, method, url, body, null, http_client.default_timeout_ms);
 }
 
 fn ownerId(cfg: *const config_mod.Config) []const u8 {

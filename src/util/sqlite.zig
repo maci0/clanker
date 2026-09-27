@@ -17,6 +17,7 @@ const c = @import("sqlite3_h");
 // std.Io handle to create the file through, so this module chmods the path
 // the C library opened for it.
 const atomic_write = @import("atomic_write.zig");
+const log = @import("log.zig");
 
 pub const Error = error{
     OpenFailed,
@@ -227,9 +228,15 @@ pub const Transaction = struct {
         self.active = false;
     }
 
+    /// Undoes an unfinished transaction. A failure here leaves the connection
+    /// inside an open transaction, so every later statement joins it instead
+    /// of autocommitting, and the caller has already returned the error that
+    /// sent it down the rollback path. Say so rather than dropping it.
     pub fn rollback(self: *Transaction) void {
         if (self.active) {
-            self.conn.exec("ROLLBACK;") catch {};
+            self.conn.exec("ROLLBACK;") catch |err| {
+                log.log(.warn, "sqlite rollback failed: {s}", .{@errorName(err)});
+            };
             self.active = false;
         }
     }
