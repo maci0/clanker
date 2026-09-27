@@ -1,5 +1,5 @@
 import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
+import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
@@ -378,7 +378,6 @@ function renderSessionChip() {
     el.sessionChip.textContent = "session " + sessionId.slice(0, 8);
     el.sessionChip.hidden = false;
     el.sessionChip.removeAttribute("aria-hidden");
-    upgradePfChip(el.sessionChip);
   }
   var sel = el.modelSelect ? el.modelSelect.value : "";
   var label = "";
@@ -688,7 +687,7 @@ function setRailOpen(open) {
     // Focus would otherwise scroll the drawer so Work (Chat/Board) sits
     // above the fold and the first visible tab is Files.
     el.rail.scrollTop = 0;
-    var body = el.rail.querySelector(".pf-v6-c-page__sidebar-body");
+    var body = el.rail.querySelector("#rail-list");
     if (body) body.scrollTop = 0;
     if (el.sessionFilter && el.sessionFilter.focus) el.sessionFilter.focus({ preventScroll: true });
   }
@@ -696,11 +695,6 @@ function setRailOpen(open) {
 
 function applyRailCollapsed(collapsed) {
   el.rail.setAttribute("data-collapsed", String(collapsed));
-  /* PatternFly's pf-m-collapsed means "gone" (max-width: 0), not icon rail.
-     Keep pf-m-expanded so the page grid still reserves the sidebar; our own
-     data-collapsed styles shrink it to the icon strip. */
-  el.rail.classList.remove("pf-m-collapsed");
-  el.rail.classList.add("pf-m-expanded");
   var btn = document.getElementById("rail-collapse");
   if (btn) {
     btn.textContent = "";
@@ -712,9 +706,6 @@ function applyRailCollapsed(collapsed) {
 }
 
 (function initRail() {
-  /* Always clear PatternFly's "gone" modifier; icon-rail uses data-collapsed. */
-  el.rail.classList.remove("pf-m-collapsed");
-  el.rail.classList.add("pf-m-expanded");
   /* Do not restore clanker.railCollapsed on load. HTML paints the full rail,
      then app.js used to shrink it to the icon strip a moment later — that
      read as "sidebar visible, then gone". Collapse stays a same-session
@@ -1836,7 +1827,6 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
     btn.type = "button";
     btn.className = "secondary";
     btn.textContent = opt;
-    upgradePfButton(btn);
     btn.addEventListener("click", function () { answerAsk(row, evt.id, opt); });
     group.appendChild(btn);
   });
@@ -2037,7 +2027,6 @@ function renderStats(turn, stats, task) {
   copyBtn.type = "button";
   copyBtn.className = "secondary";
   copyBtn.textContent = "Copy answer";
-  upgradePfButton(copyBtn);
   copyBtn.addEventListener("click", function () {
     copyText(turn.root.markdownSource || turn.answer.textContent, copyBtn, "Copy answer", turn.answer);
   });
@@ -2047,13 +2036,11 @@ function renderStats(turn, stats, task) {
   upBtn.className = "secondary";
   upBtn.textContent = "Up";
   upBtn.title = "Record a thumbs-up. Never sent to the model.";
-  upgradePfButton(upBtn);
   var downBtn = document.createElement("button");
   downBtn.type = "button";
   downBtn.className = "secondary";
   downBtn.textContent = "Down";
   downBtn.title = "Record a thumbs-down. Never sent to the model.";
-  upgradePfButton(downBtn);
   function sendFeedback(rating, btn) {
     var n = parseInt((turn.root.querySelector(".turn-depth") || {}).textContent, 10) || 0;
     utilPostJson("/api/feedback", { rating: rating, session: sessionId, turn: n }).then(function (data) {
@@ -2072,6 +2059,7 @@ function renderStats(turn, stats, task) {
   if (turn.root.getAttribute("data-plan") === "true" && !failed) {
     var applyBtn = document.createElement("button");
     applyBtn.type = "button";
+    applyBtn.className = "secondary";
     applyBtn.textContent = "Apply plan";
     applyBtn.title = "Execute the proposed plan in this conversation";
     applyBtn.addEventListener("click", function () {
@@ -2089,7 +2077,6 @@ function renderStats(turn, stats, task) {
     regenBtn.type = "button";
     regenBtn.className = "secondary";
     regenBtn.textContent = "Run again";
-    upgradePfButton(regenBtn);
     regenBtn.title = "Resubmit this task as a new turn";
     regenBtn.addEventListener("click", function () {
       if (busy) return;
@@ -2102,7 +2089,6 @@ function renderStats(turn, stats, task) {
     branchBtn.type = "button";
     branchBtn.className = "secondary";
     branchBtn.textContent = "Branch";
-    upgradePfButton(branchBtn);
     branchBtn.title = "Continue from this turn in a new conversation";
     branchBtn.addEventListener("click", function () {
       // The turn's own stratum index, which is the same 1-based number the
@@ -2145,7 +2131,6 @@ function renderStats(turn, stats, task) {
     editBtn.type = "button";
     editBtn.className = "secondary";
     editBtn.textContent = "Edit & resend";
-    upgradePfButton(editBtn);
     editBtn.title = "Put this task back in the composer to change it";
     editBtn.addEventListener("click", function () {
       el.task.value = task;
@@ -2162,7 +2147,6 @@ function renderStats(turn, stats, task) {
     copyTurnBtn.type = "button";
     copyTurnBtn.className = "secondary";
     copyTurnBtn.textContent = "Copy turn";
-    upgradePfButton(copyTurnBtn);
     copyTurnBtn.title = "Copy this turn as markdown";
     copyTurnBtn.addEventListener("click", function(){
       var promptText = turnPromptSource(turn.root) || task || "";
@@ -2175,12 +2159,12 @@ function renderStats(turn, stats, task) {
     actions.appendChild(copyTurnBtn);
     if (stopped) {
       var contBtn = document.createElement("button");
-      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue"; upgradePfButton(contBtn);
+      contBtn.type = "button"; contBtn.className = "secondary"; contBtn.textContent = "Continue";
       contBtn.title = "Continue this run from where it stopped";
       contBtn.addEventListener("click", function(){ if(busy) return; el.task.value = "Continue where you left off."; el.form.requestSubmit(); });
       actions.appendChild(contBtn);
       var regenEditBtn = document.createElement("button");
-      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate"; upgradePfButton(regenEditBtn);
+      regenEditBtn.type = "button"; regenEditBtn.className = "secondary"; regenEditBtn.textContent = "Regenerate";
       regenEditBtn.title = "Run this task again from scratch";
       regenEditBtn.addEventListener("click", function(){ if(busy) return; el.task.value = task; el.form.requestSubmit(); });
       actions.appendChild(regenEditBtn);
@@ -3518,12 +3502,11 @@ function buildChatMessage(m) {
   var threadKey = chatMessageKey(m);
   var replies = threadStore[threadKey] || [];
   var threadBar = document.createElement("div"); threadBar.className = CHAT_THREAD_BAR_CLASS;
-  var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary"; upgradePfButton(threadCount);
+  var threadCount = document.createElement("button"); threadCount.type="button"; threadCount.className="secondary";
   function renderThreadBar(){
     if(!replies.length){ threadBar.hidden=true; return; }
     threadBar.hidden=false;
     threadCount.textContent = "↳ " + replies.length + (replies.length===1?" reply":" replies");
-    upgradePfButton(threadCount);
     threadBar.title = replies.slice(-2).map(function(r){return r.from+": "+r.text;}).join("\n");
   }
   threadBar.appendChild(threadCount);
@@ -3538,7 +3521,7 @@ function buildChatMessage(m) {
   }
   threadCount.addEventListener("click", function(e){ e.stopPropagation(); threadList.hidden=!threadList.hidden; });
   threadBar.appendChild(threadList);
-  var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply"; upgradePfButton(replyBtn);
+  var replyBtn = document.createElement("button"); replyBtn.type="button"; replyBtn.className="secondary"; replyBtn.textContent="Reply";
   replyBtn.addEventListener("click", function(e){
     e.stopPropagation();
     uiPrompt("Reply in thread", "", { confirmLabel: "Reply", maxlength: 4096 }).then(function (t) {
@@ -3556,12 +3539,12 @@ function buildChatMessage(m) {
   actions.className = CHAT_ACTIONS_CLASS;
   actions.setAttribute("data-role", "actions");
   var copyBtn = document.createElement("button");
-  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
   copyBtn.setAttribute("aria-label", "Copy message");
   copyBtn.addEventListener("click", function(e){ e.stopPropagation(); copyText(m.text, copyBtn, "Copy", text); });
   actions.appendChild(copyBtn);
   if (canAct) EMOJIS.forEach(function(emoji){
-    var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; upgradePfButton(b); b.title="React "+emoji;
+    var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.textContent=emoji; b.title="React "+emoji;
     b.setAttribute("aria-label", "React " + emoji);
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleReact(emoji); });
     actions.appendChild(b);
@@ -3572,7 +3555,6 @@ function buildChatMessage(m) {
     pinBtn.type = "button"; pinBtn.className = "secondary"; pinBtn.title = "Pin/Unpin";
     pinBtn.setAttribute("aria-label", "Pin message");
     pinBtn.appendChild(icon("pin", 14));
-    upgradePfButton(pinBtn);
     pinBtn.addEventListener("click", function(e){ e.stopPropagation();
       fetch("/api/chat/pin", { method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
@@ -3588,7 +3570,7 @@ function buildChatMessage(m) {
   // Edit + Delete only for own messages
   if (m.from === instanceName && canAct) {
     var editBtn = document.createElement("button");
-    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "Edit"; upgradePfButton(editBtn); editBtn.title = "Edit message";
+    editBtn.type = "button"; editBtn.className = "secondary"; editBtn.textContent = "Edit"; editBtn.title = "Edit message";
     editBtn.setAttribute("aria-label", "Edit message");
     editBtn.addEventListener("click", function(e){ e.stopPropagation();
       var cur = text.childNodes[0] ? text.childNodes[0].textContent || text.textContent : m.text;
@@ -3619,7 +3601,7 @@ function buildChatMessage(m) {
     });
     actions.appendChild(editBtn);
     var delBtn = document.createElement("button");
-    delBtn.type = "button"; delBtn.className = "secondary danger"; delBtn.textContent = "Delete"; upgradePfButton(delBtn); delBtn.title = "Delete message";
+    delBtn.type = "button"; delBtn.className = "secondary danger"; delBtn.textContent = "Delete"; delBtn.title = "Delete message";
     delBtn.setAttribute("aria-label", "Delete message");
     delBtn.addEventListener("click", function(e){ e.stopPropagation();
       uiConfirm("Delete this message?", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
@@ -5426,7 +5408,7 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
         openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+fmtUnit(r.duration_ms||0, "millisecond");
         openRunBtn.addEventListener("click", function(){ if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(openRunBtn);
-        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="How to revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="How to revert"; rev.style.marginLeft="var(--space-3)";
         rev.title="Revert is a CLI verb and takes an improvement id (imp-...), not a run id";
         rev.addEventListener("click", function(){
           append("Reverting is done from the terminal: `clanker revert <improvement-id>`, where the id is the imp-… entry that applied the change in state/improvements.jsonl. "+r.run_id+" is a run, not an improvement, so it has nothing to revert.\n");
@@ -5505,11 +5487,9 @@ dialogBindDialog(el, overlayOpen, overlayClose);
 
 function mountIcon(node, name, size) {
   if (!node) return;
-  upgradePfButton(node);
   node.textContent = "";
   node.appendChild(icon(name, size || 15));
 }
-upgradePfUi(document);
 mountIcon(el.helpOpen, "help", 15);
 mountIcon(document.getElementById("rail-collapse"), "panel", 15);
 mountIcon(document.getElementById("voice-btn"), "mic", 16);

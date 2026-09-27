@@ -44,16 +44,27 @@ test("author CSS hides a hidden form so PF display cannot leak it", function () 
   assert.match(body, /display:\s*none/);
 });
 
-test("the form bridge stamps nothing", function () {
-  // It used to add pf-v6-c-form to a visible form and skip a hidden one, so PF
-  // could own the field layout. The cabinet styles a control by tag and type,
-  // so the bridge is a no-op now — and it must stay one: the contract the page
-  // depends on is that a control is not given a class that names a sheet the
-  // page no longer loads.
-  const m = /export function upgradePfForm\(el\) \{ ([^}]*)\}/.exec(uiSrc);
-  assert.ok(m, "upgradePfForm missing from ui.js");
-  assert.match(m[1], /return el;/, "upgradePfForm must return the element untouched");
-  assert.doesNotMatch(uiSrc, /pf-v6-c-form["']/, "no bridge may name a PatternFly form class");
+test("the page does not call a removed bridge", function () {
+  // Built from pieces so this file itself does not contain the banned spellings.
+  const bridge = ["up", "grade", "P", "f"].join("");
+  const klass = ["p", "f-", "v", "6-"].join("");
+  const { readdirSync } = require("node:fs");
+  const roots = [join(here, ".."), join(here, "..", "..", "plugins")];
+  const hits = [];
+  function walk(dir) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === "vendor" || e.name === "node_modules") continue;
+        walk(p);
+      } else if (/\.(js|mjs|html|css)$/.test(e.name)) {
+        const src = readFileSync(p, "utf8");
+        if (src.includes(bridge) || src.includes(klass)) hits.push(p.slice(join(here, "..", "..").length + 1));
+      }
+    }
+  }
+  for (const r of roots) walk(r);
+  assert.deepEqual(hits, [], "a bridge name or a library class is still in the page");
 });
 
 test("rooms log is not a live region; status is", function () {
@@ -714,8 +725,7 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {
-  // The guard is gone with the PatternFly button bridge: no button carries a
-  // pf-v6-c-button class, so a bare `button` rule still must not paint accent.
+  // A bare `button` rule still must not paint accent.
   // `button.primary, #submit` is the accent pill; a selector list that only
   // names bare `button` must not paint it.
   assert.doesNotMatch(css, /(^|[,\s])button\s*(,[^{]*)?\{[^}]*background:\s*var\(--accent\)/m);
@@ -868,38 +878,4 @@ test("rooms own-message actions are labeled and report a failed write", function
   assert.doesNotMatch(app, /delBtn\.textContent = "🗑️"/);
 });
 
-// The page calls a family of bridges that the PatternFly removal is dismantling
-// one at a time, and a bridge that is deleted while a caller remains is a
-// ReferenceError at page load, not a test failure: nothing here evaluates
-// `upgradePfUi`'s body, so the suite stayed green while the shipped page threw.
-// This checks the family by name across every JS file the page serves.
-test("every upgradePf* name the page calls is defined in ui.js", function () {
-  const defined = new Set();
-  for (const m of uiSrc.matchAll(/\bfunction\s+(upgradePf\w+)/g)) defined.add(m[1]);
-  const dirs = [here, join(here, ".."), join(here, "..", "..", "plugins")];
-  const sources = [uiSrc];
-  const { readdirSync } = require("node:fs");
-  for (const dir of dirs) {
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-    for (const e of entries) {
-      if (e.isFile() && e.name.endsWith(".js") && !e.name.endsWith(".test.mjs")) {
-        sources.push(readFileSync(join(dir, e.name), "utf8"));
-      }
-      if (e.isDirectory() && e.name !== "vendor") {
-        for (const inner of readdirSync(join(dir, e.name), { withFileTypes: true })) {
-          if (inner.isFile() && inner.name.endsWith("app.js")) {
-            sources.push(readFileSync(join(dir, e.name, inner.name), "utf8"));
-          }
-        }
-      }
-    }
-  }
-  const missing = new Set();
-  for (const src of sources) {
-    for (const m of src.matchAll(/\b(upgradePf\w+)\s*\(/g)) {
-      if (!defined.has(m[1])) missing.add(m[1]);
-    }
-  }
-  assert.deepEqual([...missing], [], "called but never defined in ui/app/core/ui.js");
-});
+

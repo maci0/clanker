@@ -84,53 +84,11 @@ export function bind(node, st, render) {
   });
 }
 
-/* The button vocabulary is the kit's now. A control states its variant as the
-   cabinet class the theme already knows, and the base button rule spaces an
-   icon and a label on its own: the PatternFly content spans existed only so
-   PF's flex layout could, and PF's own button rules are what the cabinet's
-   `.secondary`/`.primary` rules were fighting. `upgradePfButton` stays the name
-   its ~30 call sites use; it now only guarantees a variant, because the
-   callers set `className` themselves and this is the seam that used to fill
-   the rest in. */
-var BUTTON_VARIANT_CLASSES = ["primary", "secondary", "danger", "chip-btn", "scroll-bottom", "rail-new"];
-
-function buttonVariantMissing(el) {
-  for (var i = 0; i < BUTTON_VARIANT_CLASSES.length; i++) {
-    if (el.classList.contains(BUTTON_VARIANT_CLASSES[i])) return false;
-  }
-  return true;
-}
-
-export function upgradePfButton(el) {
-  if (!el || el.tagName !== "BUTTON") return el;
-  if (buttonVariantMissing(el)) el.classList.add("secondary");
-  return el;
-}
-
-export function upgradePfButtons(root) {
-  var scope = root || document;
-  scope.querySelectorAll("button").forEach(function (btn) { upgradePfButton(btn); });
-  return scope;
-}
-
-/* The field, label, check and chip bridges are gone: the cabinet styles a
-   control by its tag and type (`input[type="text"]`, `select`, `.checkbox-row`,
-   `.detail-row label`), so a class saying "this is a form control" only handed
-   the element to PatternFly. The names stay, because call sites in this file
-   and across the page use them, and they do nothing now. Deleting those call
-   sites is a separate sweep. */
-export function upgradePfFormControl(el) { return el; }
-export function upgradePfLabel(el) { return el; }
-export function upgradePfForm(el) { return el; }
-export function upgradePfForms(root) { return root || document; }
-export function upgradePfChip(el) { return el; }
-export function upgradePfChips(root) { return root || document; }
-
 /* A toast's text sits in its own flex child so the dismiss control keeps its
-   place: that child used to be PatternFly's alert title. */
+   place. */
 var TOAST_TITLE_CLASS = "min-w-0 flex-1";
 
-function upgradePfToastNode(node) {
+function ensureToastTitle(node) {
   if (!node || !node.classList.contains("toast")) return node;
   if (!node.querySelector(":scope > ." + TOAST_TITLE_CLASS.split(" ")[0])) {
     var title = document.createElement("span");
@@ -140,18 +98,6 @@ function upgradePfToastNode(node) {
     node.appendChild(title);
   }
   return node;
-}
-
-/** Put the controls in a subtree into the cabinet's vocabulary. The PatternFly
-    class bridges are gone; the remaining calls are the ones that still have a
-    job, and the name stays because app.js and the plugins use it. */
-export function upgradePfUi(root) {
-  var scope = root || document;
-  upgradePfButtons(scope);
-  upgradePfForms(scope);
-  upgradePfChips(scope);
-  scope.querySelectorAll(".toast").forEach(upgradePfToastNode);
-  return scope;
 }
 
 // A fixed timer is too short to read a long message, so hovering or
@@ -179,7 +125,7 @@ export function toast(msg, kind) {
     node.remove();
   });
   node.appendChild(dismiss);
-  upgradePfToastNode(node);
+  ensureToastTitle(node);
   node.addEventListener("click", function () { node.remove(); });
   node.addEventListener("keydown", function (event) {
     if (event.key !== "Enter" && event.key !== " " && event.key !== "Escape") return;
@@ -227,7 +173,6 @@ export function showLoadError(container, message, retryFn) {
         else done();
       } catch (_) { done(); }
     });
-    upgradePfButton(btn);
     p.appendChild(btn);
   }
   container.appendChild(p);
@@ -272,14 +217,12 @@ function dialogActions(form, okLabel, danger, onCancel, onOk) {
   cancel.type = "button";
   cancel.className = "secondary";
   cancel.textContent = "Cancel";
-  upgradePfButton(cancel);
   cancel.addEventListener("click", onCancel);
   actions.appendChild(cancel);
   var ok = document.createElement("button");
   ok.type = "button";
-  ok.className = danger ? "danger" : "";
+  ok.className = danger ? "danger" : "secondary";
   ok.textContent = okLabel;
-  upgradePfButton(ok);
   ok.addEventListener("click", onOk);
   actions.appendChild(ok);
   form.appendChild(actions);
@@ -331,8 +274,6 @@ export function uiPrompt(message, initial, opts) {
       });
     }
     form.appendChild(input);
-    upgradePfFormControl(input);
-    upgradePfLabel(label);
     dialogActions(form, opts.confirmLabel || "Save", false,
       function () { done(null); }, function () { done(input.value); });
     window.setTimeout(function () { input.focus(); input.select(); }, 0);

@@ -5,6 +5,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-28
+
+### Changed
+
+- The web UI no longer carries the old button bridge or library class names.
+  A button names its variant (`primary`, `secondary`, `danger`, or a rail or
+  chip class) where it is created. The cabinet sheet no longer aliases the
+  removed library's theme tokens, and the win2k skin targets the page's own
+  elements. The committed stylesheet is rebuilt from that source.
+
 ## [0.6.0] - 2026-09-28
 
 Compatibility-breaking minor. The changes that break a consumer are under

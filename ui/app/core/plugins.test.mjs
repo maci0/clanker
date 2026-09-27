@@ -198,16 +198,16 @@ function makePage() {
   root.appendChild(rail);
 
   const tablist = makeElement("nav");
-  tablist.className = "pf-v6-c-nav rail-nav rail-places";
+  tablist.className = "rail-nav rail-places";
   tablist.setAttribute("role", "tablist");
   rail.appendChild(tablist);
 
   function group(host, label, heading) {
     const h = makeElement(heading);
-    h.className = "pf-v6-c-nav__section-title rail-group";
+    h.className = "rail-group";
     h.textContent = label;
     const list = makeElement("ul");
-    list.className = "pf-v6-c-nav__list";
+    list.className = "m-0 list-none p-0";
     if (heading === "summary") {
       const details = makeElement("details");
       details.appendChild(h);
@@ -217,7 +217,7 @@ function makePage() {
       host.appendChild(details);
     } else {
       const section = makeElement("section");
-      section.className = "pf-v6-c-nav__section";
+      section.className = "";
       section.appendChild(h);
       section.appendChild(list);
       host.appendChild(section);
@@ -226,7 +226,7 @@ function makePage() {
   }
 
   const settings = makeElement("nav");
-  settings.className = "pf-v6-c-nav rail-nav rail-settings";
+  settings.className = "rail-nav rail-settings";
 
   const lists = {
     "Work": group(tablist, "Work", "h2"),
@@ -238,7 +238,7 @@ function makePage() {
   const tabs = {};
   for (const [view, name] of BUILT_INS) {
     const li = makeElement("li");
-    li.className = "pf-v6-c-nav__item";
+    li.className = "";
     const tab = makeElement("button");
     tab.className = "rail-tab";
     tab.id = "tab-" + view;
@@ -286,7 +286,6 @@ function loadHost(page, extras) {
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
-    upgradePfButton: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
     liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},
     copyText: () => {}, scrollTo: () => {}, paintTomlInto: () => {},

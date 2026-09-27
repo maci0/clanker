@@ -11,7 +11,7 @@
 // than being re-derived here. Everything else is imported directly, which is
 // what takes `lib/runs-list.js` off the eager path with this module.
 import { fmtInt, fmtMs, fmtUnit, plural, escapeHtml, readJson } from "../core/utils.js";
-import { skeletonRows, toolRow as chrome, upgradePfButton, showLoadError } from "../core/ui.js";
+import { skeletonRows, toolRow as chrome, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { loadD3, copyText, scrollTo } from "../core/vendor.js";
 import { runLabel } from "../core/labels.js";
@@ -523,10 +523,10 @@ function drawRun(g) {
   if (g.provider) { var hp = document.createElement("span"); hp.className = chrome.toolRow.tag; hp.textContent = g.provider; head.appendChild(hp); }
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
   if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
-  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id"; upgradePfButton(copyHead);
+  var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
   copyHead.addEventListener("click", function(){ copyText(g.run_id, copyHead, "Copy id", head); });
   head.appendChild(copyHead);
-  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link"; upgradePfButton(copyLink);
+  var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
   copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
   copyLink.addEventListener("click", function(){
     var sel = el.runGraph.querySelector("[data-run-node][data-selected]");
@@ -535,7 +535,7 @@ function drawRun(g) {
     copyText(u, copyLink, "Copy link", head);
   });
   head.appendChild(copyLink);
-  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html"; upgradePfButton(exportBtn);
+  var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html";
   exportBtn.title = "Download this run as a self-contained HTML file";
   exportBtn.addEventListener("click", function(){
     try{
@@ -578,7 +578,7 @@ function drawRun(g) {
   });
   head.appendChild(exportBtn);
   if (g.parent_run_id) {
-    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8); upgradePfButton(par);
+    var par = document.createElement("button"); par.type = "button"; par.className = "secondary"; par.textContent = "↑ Parent " + g.parent_run_id.slice(0,8);
     par.title = "Open parent run " + g.parent_run_id;
     par.addEventListener("click", function(){ openRun(g.parent_run_id); });
     head.appendChild(par);
@@ -619,11 +619,11 @@ function drawRun(g) {
   graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
   graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
-  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next"; upgradePfButton(graphNextBtn);
+  var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
   graphNextBtn.title = "Next match (n)";
-  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear filter"; upgradePfButton(graphClearBtn);
+  var graphClearBtn = document.createElement("button"); graphClearBtn.type = "button"; graphClearBtn.className = "secondary"; graphClearBtn.textContent = "Clear filter";
   graphClearBtn.title = "Clear filter";
-  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit"; upgradePfButton(graphFitBtn);
+  var graphFitBtn = document.createElement("button"); graphFitBtn.type = "button"; graphFitBtn.className = "secondary"; graphFitBtn.textContent = "Fit";
   graphFitBtn.title = "Fit graph to view (0)";
   graphSearch.appendChild(graphSearchInput); graphSearch.appendChild(graphNextBtn); graphSearch.appendChild(graphClearBtn); graphSearch.appendChild(graphFitBtn);
   var graphHint = document.createElement("span"); graphHint.className = "meta"; graphHint.textContent = "/ filter · n next · F failed · j/k iter · arrows walk · +/− zoom · click node to pin link";
@@ -637,7 +637,7 @@ function drawRun(g) {
   graphKindBar.className = KIND_BAR_CLASS;
   graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
   [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
-    var b = document.createElement("button"); b.type = "button"; b.className = KIND_BTN_CLASS; b.textContent = opt.label; upgradePfButton(b);
+    var b = document.createElement("button"); b.type = "button"; b.className = KIND_BTN_CLASS; b.textContent = opt.label;
     b.dataset.kind = opt.k; b.setAttribute("aria-pressed", String(opt.k === _kindFilter));
     if (opt.k === "failed") b.title = "Only failed nodes";
     b.addEventListener("click", function(){
@@ -656,7 +656,7 @@ function drawRun(g) {
   crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
   built.stages.forEach(function(st, idx){
     var chip = document.createElement("button");
-    chip.type = "button"; chip.className = CRUMB_BTN_CLASS; chip.textContent = "iter " + st.iteration; upgradePfButton(chip);
+    chip.type = "button"; chip.className = CRUMB_BTN_CLASS; chip.textContent = "iter " + st.iteration;
     chip.dataset.crumb = "";
     chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
     chip.addEventListener("click", function(){
@@ -723,9 +723,9 @@ function drawRun(g) {
   })();
   var zoomWrap = document.createElement("div");
   zoomWrap.style.display = "flex"; zoomWrap.style.gap = "var(--space-2)"; zoomWrap.style.marginTop = "var(--space-2)";
-  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom"; upgradePfButton(zoomInBtn);
-  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom"; upgradePfButton(zoomOutBtn);
-  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset"; upgradePfButton(zoomResetBtn);
+  var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom";
+  var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom";
+  var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset";
   var zoomLevel = 1;
   function applyZoom(){ canvas.style.transform = zoomLevel === 1 ? "" : "scale(" + zoomLevel + ")"; canvas.style.transformOrigin = "top left"; }
   zoomInBtn.addEventListener("click", function(){ zoomLevel = Math.min(1.8, zoomLevel + 0.15); applyZoom(); });
@@ -929,7 +929,7 @@ function drawRun(g) {
     matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
   }
   // An error lens — one button jumps to failed nodes
-  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed"; upgradePfButton(graphFailedBtn);
+  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
   graphFailedBtn.title = "Next failed node";
   graphSearch.appendChild(graphFailedBtn);
   function focusNextFailed(){
@@ -1129,14 +1129,14 @@ function showNodeDetail(kind, node) {
   (function(){
     var m = (node.output || "").match(/\[subagent run:\s*(sub-\d+)\]/);
     if (m) {
-      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1]; upgradePfButton(j);
+      var j = document.createElement("button"); j.type = "button"; j.className = "secondary"; j.textContent = "↗ " + m[1];
       j.title = "Open sub-run " + m[1];
       j.addEventListener("click", function(){ openRun(m[1]); });
       head.appendChild(j);
     }
   })();
   var copyBtn = document.createElement("button");
-  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy"; upgradePfButton(copyBtn);
+  copyBtn.type = "button"; copyBtn.className = "secondary"; copyBtn.textContent = "Copy";
   copyBtn.title = "Copy this node's output";
   copyBtn.addEventListener("click", function(){
     var t = node.output || "";
@@ -1147,7 +1147,6 @@ function showNodeDetail(kind, node) {
   closeBtn.type = "button";
   closeBtn.className = "secondary";
   closeBtn.textContent = "Close";
-  upgradePfButton(closeBtn);
   closeBtn.addEventListener("click", closeNodeDetail);
   head.appendChild(closeBtn);
 
@@ -1187,7 +1186,7 @@ function showNodeDetail(kind, node) {
     var ref = m[1];
     if (seen[ref]) continue; seen[ref] = true; cnt++;
     (function(r){
-      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; upgradePfButton(b); b.title = "Search for " + r;
+      var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = r; b.title = "Search for " + r;
       b.addEventListener("click", function(){
         // cross-link to graph search and file search where available
         var s = document.querySelector("#run-filter"); if (s) { s.value = r.split(":")[0]; s.dispatchEvent(new Event("input",{bubbles:true})); }
@@ -1201,7 +1200,7 @@ function showNodeDetail(kind, node) {
   var subRe = /\[subagent run:\s*(sub-\d+)\]/g, sm;
   while ((sm = subRe.exec(rawOut)) !== null) {
     var sid = sm[1];
-    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid; upgradePfButton(sb);
+    var sb = document.createElement("button"); sb.type = "button"; sb.className = "secondary"; sb.textContent = "↗ " + sid;
     sb.title = "Open sub-run " + sid;
     (function(id){ sb.addEventListener("click", function(){ if(typeof openRun==="function") openRun(id); }); })(sid);
     traceBar.appendChild(sb);
@@ -1299,9 +1298,9 @@ function showNodeDetail(kind, node) {
       tree.appendChild(buildJsonTree(parsed, null, 0));
       var treeBar = document.createElement("div");
       treeBar.style.display = "flex"; treeBar.style.gap = "var(--space-2)"; treeBar.style.marginBottom = "var(--space-2)";
-      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all"; upgradePfButton(expandAll);
+      var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all";
       expandAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=true; }); });
-      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all"; upgradePfButton(collapseAll);
+      var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all";
       collapseAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=false; }); var first = tree.querySelector("details"); if(first) first.open = true; });
       treeBar.appendChild(expandAll); treeBar.appendChild(collapseAll);
       out.appendChild(treeBar); out.appendChild(tree);

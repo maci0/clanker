@@ -131,7 +131,7 @@ html[data-theme="win2k"] {
    * Title bar — the masthead, with the caption's own gradient
    * =================================================================== */
 
-  #app-masthead.pf-v6-c-masthead {
+  #app-masthead {
     background: linear-gradient(to right, var(--sys-title), var(--sys-title-grad));
     color: var(--sys-title-text);
     border: 0;
@@ -140,7 +140,7 @@ html[data-theme="win2k"] {
     min-height: 20px;
   }
 
-  #app-masthead .pf-v6-c-masthead__logo h1 {
+  #app-masthead h1 {
     color: var(--sys-title-text);
     font-weight: 700;
     font-family: var(--sans);
@@ -149,12 +149,12 @@ html[data-theme="win2k"] {
   /* The inactive caption: grey gradient, dark text, the way a win2k window
      behind the focused one painted itself. The title text is black rather
      than --sys-ititle-text, which the period drew too faint to read. */
-  body:not(:focus-within) #app-masthead.pf-v6-c-masthead {
+  body:not(:focus-within) #app-masthead {
     background: linear-gradient(to right, var(--sys-ititle), var(--sys-ititle-grad));
     color: var(--sys-text);
   }
 
-  body:not(:focus-within) #app-masthead .pf-v6-c-masthead__logo h1 {
+  body:not(:focus-within) #app-masthead h1 {
     color: var(--sys-text);
   }
 
@@ -163,7 +163,7 @@ html[data-theme="win2k"] {
      instead of shrinking the app's targets to period size. */
   #app-masthead .chip,
   #app-masthead .chip-btn,
-  #app-masthead button.pf-v6-c-button {
+  #app-masthead button {
     background-color: var(--sys-face) !important;
     color: var(--sys-text) !important;
     border: 1px solid;
@@ -177,14 +177,12 @@ html[data-theme="win2k"] {
    * Window: rail pane and sunken client area
    * =================================================================== */
 
-  .rail,
-  .pf-v6-c-page__sidebar.rail {
+  .rail {
     background: var(--sys-face);
     border-right: 1px solid var(--sys-shadow);
   }
 
   /* Client area: the white MDI well the panel's controls sit in. */
-  .pf-v6-c-page__main-container.shell,
   .shell {
     background: var(--sys-window);
     color: var(--sys-window-text);
@@ -195,8 +193,7 @@ html[data-theme="win2k"] {
 
   /* Group headings wear the inactive caption gradient, as a toolbox divider. */
   .rail-group,
-  .rail-fold > summary.rail-group,
-  .pf-v6-c-nav__section-title.rail-group {
+  .rail-fold > summary.rail-group {
     background: linear-gradient(to right, var(--sys-ititle), var(--sys-ititle-grad));
     color: var(--sys-text);
     font-weight: 700;
@@ -207,9 +204,8 @@ html[data-theme="win2k"] {
    * Buttons (push button; the primary one carries the default ring)
    * =================================================================== */
 
-  button.pf-v6-c-button,
+  button,
   button.chip-btn,
-  button:not(.pf-v6-c-button),
   input[type="file"]::file-selector-button {
     background-color: var(--sys-face) !important;
     background-image: none !important;
@@ -225,9 +221,8 @@ html[data-theme="win2k"] {
      accepts. Only where the pointer is precise: app.css's 44px coarse-pointer
      targets are for fingers and this sheet must not shrink them. */
   @media (pointer: fine) {
-    button.pf-v6-c-button,
+    button,
     button.chip-btn,
-    button:not(.pf-v6-c-button),
     input[type="file"]::file-selector-button,
     summary,
     select,
@@ -250,8 +245,7 @@ html[data-theme="win2k"] {
   }
 
   /* The default button: same face, black ring inside the edge. */
-  button.pf-v6-c-button.pf-m-primary,
-  button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
+  button.primary {
     background-color: var(--sys-face) !important;
     color: var(--sys-text) !important;
     outline: 1px solid var(--sys-frame);
@@ -259,9 +253,8 @@ html[data-theme="win2k"] {
   }
 
   /* Destructive actions keep the fault colour as ink on the grey face. */
-  button.pf-v6-c-button.pf-m-danger,
-  button.danger:where(:not(.pf-v6-c-button)),
-  button.secondary.danger:where(:not(.pf-v6-c-button)) {
+  button.danger,
+  button.secondary.danger {
     color: var(--danger) !important;
   }
 
@@ -332,7 +325,6 @@ html[data-theme="win2k"] {
    * =================================================================== */
 
   dialog.slack-dialog,
-  .pf-v6-c-modal-box,
   .overlay-box,
   .card-detail-panel {
     background: var(--sys-face);
@@ -342,7 +334,6 @@ html[data-theme="win2k"] {
     padding: 2px;
   }
 
-  .pf-v6-c-modal__header,
   .run-detail-head,
   .card-detail-header {
     background: linear-gradient(to right, var(--sys-title), var(--sys-title-grad));
@@ -352,7 +343,6 @@ html[data-theme="win2k"] {
     padding: 1px 4px;
   }
 
-  .pf-v6-c-modal__title,
   .run-detail-title,
   .card-detail-header h3 {
     color: var(--sys-title-text);
@@ -372,7 +362,6 @@ html[data-theme="win2k"] {
   input[type="tel"],
   input:not([type]),
   textarea,
-  .pf-v6-c-form-control,
   .label-name-input,
   .chat-edit-input,
   .card-desc-edit,
@@ -599,7 +588,6 @@ html[data-theme="win2k"] {
 
   /* The current channel is a selected list row: solid Selection navy. */
   .rail-tab[aria-selected="true"],
-  .rail-tab.pf-m-current,
   .rail-item[aria-current="true"] {
     background: var(--sys-sel) !important;
     color: var(--sys-sel-text) !important;
@@ -630,17 +618,14 @@ html[data-theme="win2k"] {
    * =================================================================== */
 
   /* Toasts take the info window's pale yellow, the period's tooltip. */
-  .toast,
-  .toast.pf-v6-c-alert {
+  .toast {
     background: var(--sys-info);
     color: var(--sys-info-text);
     border: 1px solid var(--sys-frame);
     box-shadow: var(--lift);
   }
 
-  .toast[data-kind="bad"],
-  .toast.pf-v6-c-alert.pf-m-danger,
-  .toast.pf-v6-c-alert[data-kind="bad"] {
+  .toast[data-kind="bad"] {
     color: var(--danger);
     border-color: var(--danger);
   }

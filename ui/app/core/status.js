@@ -1,5 +1,4 @@
 // Vanilla, no bundler. Instance / peers status helpers.
-import { upgradePfChip } from "./ui.js";
 import { plural } from "./utils.js";
 
 function showChip(node, on) {
@@ -13,7 +12,6 @@ export function renderStatusInto(status, els) {
   if (!status) {
     els.instanceChip.textContent = "disconnected";
     els.instanceChip.dataset.state = "down";
-    upgradePfChip(els.instanceChip);
     showChip(els.instanceChip, true);
     showChip(els.peersChip, false);
     els.instance.textContent = "unreachable (is `clanker serve` still running?)";
@@ -24,11 +22,9 @@ export function renderStatusInto(status, els) {
   var instanceName = status.instance.name;
   els.instanceChip.textContent = status.instance.name;
   els.instanceChip.dataset.state = "live";
-  upgradePfChip(els.instanceChip);
   showChip(els.instanceChip, true);
   showChip(els.peersChip, peers.length > 0);
   els.peersChip.textContent = plural(peers.length, { one: "peer", other: "peers" });
-  upgradePfChip(els.peersChip);
   els.instance.textContent = status.instance.name + " (" + status.instance.id + ")";
   els.peers.textContent = "";
   if (peers.length === 0) {

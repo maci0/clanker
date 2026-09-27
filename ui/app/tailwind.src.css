@@ -231,76 +231,6 @@
   --bevel-inset: inset 0 1px 2px rgba(24, 29, 26, 0.08);
   --bevel-pressed: inset 0 1px 2px rgba(24, 29, 26, 0.18);
 
-  /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals.
-     Brand/icon/on-brand must remap too: plain buttons read icon-color, primary
-     reads brand + on-brand text, and those defaults stay light-theme greys. */
-  --pf-t--global--background--color--100: var(--bg);
-  --pf-t--global--background--color--200: var(--surface);
-  --pf-t--global--background--color--300: var(--surface-2);
-  --pf-t--global--background--color--control--default: var(--surface-2);
-  --pf-t--global--background--color--primary--default: var(--accent);
-  --pf-t--global--background--color--primary--hover: color-mix(in srgb, var(--accent) 88%, black);
-  --pf-t--global--background--color--backdrop--default: var(--scrim);
-  --pf-t--global--background--color--action--plain--default: transparent;
-  --pf-t--global--background--color--action--plain--hover: var(--surface-2);
-  --pf-t--global--background--color--action--plain--clicked: var(--surface-2);
-  --pf-t--global--background--color--action--plain--alt--hover: var(--surface-2);
-  --pf-t--global--background--color--action--plain--alt--clicked: var(--surface-2);
-  --pf-t--global--background--color--600: color-mix(in srgb, var(--fg) 12%, transparent);
-  --pf-t--global--text--color--regular: var(--fg);
-  --pf-t--global--text--color--subtle: var(--fg-muted);
-  --pf-t--global--text--color--100: var(--fg);
-  --pf-t--global--text--color--200: var(--fg-muted);
-  --pf-t--global--text--color--on-brand--default: var(--on-accent);
-  --pf-t--global--text--color--on-brand--hover: var(--on-accent);
-  --pf-t--global--text--color--on-brand--clicked: var(--on-accent);
-  --pf-t--global--text--color--inverse: var(--on-accent);
-  --pf-t--global--icon--color--regular: var(--fg-muted);
-  --pf-t--global--icon--color--subtle: var(--fg-muted);
-  --pf-t--global--icon--color--100: var(--fg);
-  --pf-t--global--icon--color--200: var(--fg-muted);
-  --pf-t--global--icon--color--on-brand--default: var(--on-accent);
-  --pf-t--global--icon--color--on-brand--hover: var(--on-accent);
-  --pf-t--global--icon--color--on-brand--clicked: var(--on-accent);
-  --pf-t--global--color--brand--default: var(--accent);
-  --pf-t--global--color--brand--hover: color-mix(in srgb, var(--accent) 88%, black);
-  --pf-t--global--color--brand--clicked: color-mix(in srgb, var(--accent) 80%, black);
-  --pf-t--global--color--brand--200: var(--accent);
-  --pf-t--global--color--brand--300: color-mix(in srgb, var(--accent) 88%, black);
-  --pf-t--global--border--color--default: var(--border);
-  --pf-t--global--color--status--success--default: var(--ok-fill);
-  --pf-t--global--color--status--danger--default: var(--danger);
-  --pf-t--global--color--status--warning--default: var(--warn);
-  --pf-t--global--font--family--body: var(--sans);
-  --pf-t--global--font--family--heading: var(--sans);
-  --pf-t--global--font--family--mono: var(--mono);
-  /* The PatternFly stylesheet is unlinked, so none of these tokens are read
-     by a library rule: they are aliases kept for the handful of `pf-v6-*`
-     class names the rail still ships, and for any rule that names a token
-     directly. PatternFly's own rungs are 4/6/16/24px plus a glass blur,
-     which reintroduce the soft-card look the cabinet radii exist to refuse.
-     Map the rungs onto the plate scale; kill glass. */
-  --pf-t--global--border--radius--0: 0px;
-  --pf-t--global--border--radius--100: var(--radius-sm);
-  --pf-t--global--border--radius--200: var(--radius);
-  --pf-t--global--border--radius--300: var(--radius-lg);
-  --pf-t--global--border--radius--400: var(--radius-lg);
-  --pf-t--global--border--radius--500: var(--radius-pill);
-  --pf-t--global--border--radius--tiny: var(--radius-sm);
-  --pf-t--global--border--radius--small: var(--radius);
-  --pf-t--global--border--radius--medium: var(--radius-lg);
-  --pf-t--global--border--radius--large: var(--radius-lg);
-  --pf-t--global--border--radius--pill: var(--radius-pill);
-  --pf-t--global--border--radius--sharp: 0;
-  --pf-t--global--border--radius--glass--default: var(--radius-lg);
-  --pf-t--global--border--radius--action--default: var(--radius-pill);
-  --pf-t--global--border--radius--action--plain--default: var(--radius);
-  --pf-t--global--border--radius--control--default: var(--radius);
-  --pf-t--global--border--radius--control--form-element: var(--radius);
-  --pf-t--global--background--image--default: none;
-  --pf-t--global--background--filter--glass--blur--primary: none;
-  --pf-t--global--background--color--glass--primary--default: var(--surface);
-  --pf-t--global--box-shadow--glass--default: none;
 }
 
 /* Night-shift cabinet: anthracite backplane, green-grey panel faces.
@@ -516,7 +446,7 @@
      labeled pill so the control still names the action while a turn runs. */
   /* The author display above beats the UA [hidden] rule (same trap as
      .rail-context[hidden]); restate it or the off-duty circle paints. */
-  /* Primary actuators that skip upgradePfButton. A bare `button` must not
+  /* Primary actuators. A bare `button` must not
      inherit the accent pill: plugins and unmarked row controls (filenames,
      crumbs, #card-add) were painted as 40px Run buttons. */
   button.primary {
@@ -541,8 +471,7 @@
     background: var(--danger); color: var(--on-danger); border-color: var(--danger);
   }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
-  /* Keep hit area even when PF plain zeros padding;/* PatternFly modals (step 6): overlay scrim + dialog box. */
-  .overlay[hidden] { display: none; }/* PatternFly alerts (step 7): toast notifications. */
+  .overlay[hidden] { display: none; }
   .toast-dismiss:hover, .toast-dismiss:focus-visible { color: var(--fg); }.toast[data-kind="bad"] {
     border-color: var(--danger);
     color: var(--danger);

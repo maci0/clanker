@@ -6,7 +6,7 @@
    like every other feature view. */
 import { readJson, postJson, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
-import { uiConfirm, showLoadError, upgradePfButton } from "../core/ui.js";
+import { uiConfirm, showLoadError } from "../core/ui.js";
 
 /* ---- config editor (System view) ----------------------------------------
    Raw TOML editing with validate-before-write: POST /api/config/raw refuses
@@ -263,7 +263,6 @@ function bindMcpServers() {
           add.className = "secondary";
           add.textContent = "Add server";
           add.addEventListener("click", function () { openEdit(null); });
-          upgradePfButton(add);
           p.appendChild(add);
           p.appendChild(document.createTextNode(" to record one in config.local.toml. The client bridge that connects is not on yet."));
           list.appendChild(p);

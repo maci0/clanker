@@ -220,9 +220,9 @@ test("a plugin's mount or refresh throw is contained to its own panel", function
 test("every named static import resolves to an export of its module", function () {
   // Lazy view modules were split out of app.js with their imports trimmed to
   // what each actually uses, and two of them called helpers they no longer
-  // imported: system.js's empty MCP list threw ReferenceError on upgradePfButton
-  // before appending its "Add server" button, and runs.js's node detail and
-  // graph controls all threw on upgradePfButton/showLoadError. Nothing ran the
+  // imported: system.js's empty MCP list threw ReferenceError before
+  // appending its "Add server" button, and runs.js's node detail and
+  // graph controls all threw on showLoadError. Nothing ran the
   // modules at build time (the guest embeds the JS as bytes), so the break
   // shipped. Static import/export resolution is the cheapest pin that catches
   // the class: a name a module binds from another module must be exported there.
@@ -312,9 +312,9 @@ test("shared UI helpers are called only where they are imported or defined", fun
   // The link-time check above only proves imports resolve; it cannot see a
   // module *calling* a helper it never imported, which is not a link error —
   // it is a ReferenceError at the first call site, after the view rendered
-  // partway. Both shipped breaks were exactly that shape: system.js called
-  // upgradePfButton while rendering the empty MCP list, runs.js called
-  // upgradePfButton/showLoadError in every node-detail and graph control. Pin
+  // partway. Both shipped breaks were exactly that shape: a view called a
+  // helper while rendering the empty MCP list, and runs.js called
+  // showLoadError in every node-detail and graph control. Pin
   // the shared helper names against each module's imports and local
   // declarations, so a view that stops importing one and keeps calling it
   // fails here instead of in the browser.

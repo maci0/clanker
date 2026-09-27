@@ -192,24 +192,9 @@ test("letter-spacing is --track-label, optical, or none", () => {
   assert.deepEqual(strays, [], `engraved labels use --track-label; headings stay untracked:\n${strays.join("\n")}`);
 });
 
-// PatternFly ships 16px/24px cards and a glass blur. Color remaps do not
-// catch those; a PF class that still reads the library tokens would round
-// a plate into a SaaS card. The rungs have to ride the cabinet scale.
-test("PatternFly radius and glass tokens ride the cabinet scale", () => {
+test("the cabinet sheet does not alias a removed library's theme tokens", () => {
   const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
-  const pairs = [
-    ["--pf-t--global--border--radius--300", "var(--radius-lg)"],
-    ["--pf-t--global--border--radius--400", "var(--radius-lg)"],
-    ["--pf-t--global--border--radius--medium", "var(--radius-lg)"],
-    ["--pf-t--global--border--radius--large", "var(--radius-lg)"],
-    ["--pf-t--global--border--radius--glass--default", "var(--radius-lg)"],
-    ["--pf-t--global--background--filter--glass--blur--primary", "none"],
-    ["--pf-t--global--background--image--default", "none"],
-  ];
-  for (const [token, want] of pairs) {
-    const re = new RegExp(`\\n\\s*${token.replace(/-/g, "\\-")}\\s*:\\s*${want.replace(/[()]/g, "\\$&")}\\s*;`);
-    assert.match(appCss, re, `${token} must be ${want}`);
-  }
+  assert.equal(appCss.includes("--pf-t--"), false);
 });
 
 // The card cover/label palette is the third axis that drifts, and it drifted

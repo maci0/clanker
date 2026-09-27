@@ -7,10 +7,9 @@
 // library: a variant table, a class merge, and call sites that read as
 // components instead of as attribute soup.
 //
-// The variant table spells the cabinet's control classes today (`primary`,
-// `secondary`) because ui/app/app.css still owns them for every view that has
-// not moved yet. When the last of that sheet goes they become utilities in
-// ui/app/tailwind.src.css, and this file is the one place that changes.
+// The variant table spells the cabinet's control classes (`primary`,
+// `secondary`). They live in ui/app/tailwind.src.css, which is the page's
+// only sheet.
 //
 // Only components with a caller exist here. A variant is added the way a
 // plugin is: when something needs it.

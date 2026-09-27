@@ -152,7 +152,7 @@ Depth is structural: panel faces sit on a backplane, controls are raised or pres
 
 ## Shapes
 
-Panels and fields use tight `2–4px` radii, like machined plates rather than soft cards. Pills are reserved for compact actuators, chips, lamps, and status housings. Borders are usually one pixel and use the semantic edge or rule token. The PatternFly stylesheet is gone, so no `pf-v6-*` class name carries a rule with it: the few that survive in the rail markup and plugin host are DOM hooks only, and the `--pf-t--global--border--radius-*` and glass-blur aliases in the cabinet token block of `ui/app/tailwind.src.css` exist so a rule naming a token directly still resolves onto the scale above. Style these surfaces with the cabinet tokens, never by restoring a library default.
+Panels and fields use tight `2–4px` radii, like machined plates rather than soft cards. Pills are reserved for compact actuators, chips, lamps, and status housings. Borders are usually one pixel and use the semantic edge or rule token. The page's only sheet is `ui/app/tailwind.src.css`. Style these surfaces with the cabinet tokens, never by restoring a library default.
 
 ## Components
 
@@ -203,6 +203,6 @@ The lamp is the signature component. Use the shared dome, ring, and glow tokens;
 - **Don't** introduce a second blue or unrelated status palette.
 - **Don't** use lamps, glow, or monospace as decoration.
 - **Don't** round working surfaces into generic soft SaaS cards.
-- **Don't** add a `--pf-t--global--*` token at its library default, or assume a `pf-v6-*` class name styles anything.
+- **Don't** add a library theme-token alias, or assume a vendor class name styles anything.
 - **Don't** add one-off shadows, spacing values, or hard-coded theme colors when a token exists.
 - **Don't** place new non-chat features on the eager load path without updating and justifying the weight budget.

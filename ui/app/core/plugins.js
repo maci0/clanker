@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { RAIL_TAB_CLASS, T, add, bind, effect, showLoadError, skeletonRows, state, toast, UI, uiConfirm, uiPrompt, runDetail, toolRow, upgradePfButton } from "./ui.js";
+import { RAIL_TAB_CLASS, T, add, bind, effect, showLoadError, skeletonRows, state, toast, UI, uiConfirm, uiPrompt, runDetail, toolRow } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
 import { liveOk, makeLineSplitter, onLive, pumpInto } from "./stream.js";
@@ -13,6 +13,19 @@ import {
   fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
   providerUnusableReason, searchFoldFind, searchFold, themeToken, wireRefresh
 } from "./utils.js";
+
+// A plugin that still hands a raw <button> through api.ui.button gets the
+// plate variant when it named none. primary, danger and the rail/chip
+// classes are left alone.
+var BUTTON_VARIANTS = ["primary", "secondary", "danger", "chip-btn", "scroll-bottom", "rail-new"];
+function stampButtonVariant(el) {
+  if (!el || el.tagName !== "BUTTON") return el;
+  for (var i = 0; i < BUTTON_VARIANTS.length; i++) {
+    if (el.classList.contains(BUTTON_VARIANTS[i])) return el;
+  }
+  el.classList.add("secondary");
+  return el;
+}
 
 export var pluginViews = {};
 
@@ -170,7 +183,7 @@ export function pluginApi(spec) {
       skeletonRows: skeletonRows,
       toolRow: toolRow,
       runDetail: runDetail,
-      button: upgradePfButton,
+      button: stampButtonVariant,
       refresh: wireRefresh,
       kit: UI
     },
@@ -530,7 +543,6 @@ export function renderWebuiPlugins(list) {
           reload.type = "button";
           reload.className = "secondary";
           reload.textContent = "Reload page";
-          upgradePfButton(reload);
           reload.addEventListener("click", function () { window.location.reload(); });
           note.appendChild(reload);
           _el.webuiPlugins.appendChild(note);
