@@ -94,7 +94,10 @@ test("summarizeTitle keeps accented and non-Latin letters on word edges", async 
 });
 
 test("Board filters sit behind a disclosure and Only mine is singular", function () {
-  assert.match(html, /class="board-filter-fold"/);
+  // The fold is a disclosure the markup still spells as a <details> wrapping
+  // the filter row; its styling is utilities on that element now.
+  assert.match(html, /<details class="my-3">\s*<summary[^>]*>Filter cards<\/summary>/);
+  assert.match(html, /<div class="transcript-tools[^"]*" id="board-filter">/);
   assert.match(html, /Saves a Ready card/);
   const mines = html.match(/id="board-mine"/g) || [];
   assert.equal(mines.length, 1);

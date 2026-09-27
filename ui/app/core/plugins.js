@@ -1,6 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
 import { T, state, add, effect, showLoadError, upgradePfButton, uiConfirm, uiPrompt, toast } from "./ui.js";
-import * as kit from "./kit.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
@@ -59,6 +58,24 @@ function pluginStorage(spec) {
   };
 }
 
+/* The component kit (core/kit.js) is handed to a plugin and never used by this
+   host, and every plugin loads lazily, so the module is imported on the first
+   plugin load rather than sitting in the page's eager graph: its variant tables
+   and shared surfaces cost ~1.8K gz there for nothing on a chat-only visit.
+   The loader resolves before any plugin script is injected (loadPluginAssets),
+   so a plugin that reaches for api.kit finds it. */
+var kitModule = null;
+/* A host that evaluates this file without a module loader (the suite in
+   ui/app/core/plugins.test.mjs strips the imports and hands them in) replaces
+   the loader through `__kitLoader`; in the browser the import is the real one. */
+var kitLoader = (typeof globalThis !== "undefined" && typeof globalThis.__kitLoader === "function")
+  ? globalThis.__kitLoader
+  : function () { return import("./kit.js"); };
+function loadKit() {
+  if (kitModule) return Promise.resolve(kitModule);
+  return kitLoader().then(function (m) { kitModule = m; return m; });
+}
+
 export function pluginApi(spec) {
   return {
     getJSON: function (path) {
@@ -115,7 +132,7 @@ export function pluginApi(spec) {
     fmt: fmt(),
     // The component kit (core/kit.js): variant tables and shared surfaces, so
     // an addon styles itself the way the page does instead of shipping a sheet.
-    kit: kit,
+    kit: kitModule,
     // Kept under the old name so plugins written against the VanJS-era API
     // keep working: same tags/state/add semantics, now signals-backed.
     van: { tags: T, state: state, add: add, derive: effect },
@@ -389,7 +406,9 @@ export function loadPluginAssets(list) {
     }
     registerDeferredView(p);
   });
-  return Promise.all(pending);
+  // The kit first: a plugin reaches for api.kit as soon as its script runs, so
+  // the import has to be resolved before the first of them is injected.
+  return loadKit().then(function () { return Promise.all(pending); });
 }
 
 export function loadWebuiPlugins() {

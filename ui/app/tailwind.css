@@ -168,6 +168,9 @@
 .my-4 {
   margin-block: var(--space-4);
 }
+.my-5 {
+  margin-block: var(--space-5);
+}
 .mt-0 {
   margin-top: 0px;
 }
@@ -415,6 +418,9 @@
 .max-w-\[52ch\] {
   max-width: 52ch;
 }
+.max-w-\[62ch\] {
+  max-width: 62ch;
+}
 .max-w-\[min\(36rem\,calc\(100vw-2rem\)\)\] {
   max-width: min(36rem, calc(100vw - 2rem));
 }
@@ -549,6 +555,9 @@
 }
 .grid-cols-\[auto_1fr\] {
   grid-template-columns: auto 1fr;
+}
+.grid-cols-\[auto_minmax\(10rem\,1fr\)_auto_auto_auto_minmax\(5rem\,auto\)_auto_minmax\(5rem\,auto\)_auto_minmax\(5rem\,auto\)\] {
+  grid-template-columns: auto minmax(10rem,1fr) auto auto auto minmax(5rem,auto) auto minmax(5rem,auto) auto minmax(5rem,auto);
 }
 .grid-cols-\[minmax\(0\,1fr\)\] {
   grid-template-columns: minmax(0,1fr);
@@ -781,8 +790,20 @@
 .bg-surface-2 {
   background-color: var(--surface-2);
 }
+.bg-surface-2\/60 {
+  background-color: var(--surface-2);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--surface-2) 60%, transparent);
+  }
+}
 .bg-surface-raised {
   background-color: var(--surface-raised);
+}
+.bg-surface\/80 {
+  background-color: var(--surface);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in oklab, var(--surface) 80%, transparent);
+  }
 }
 .bg-transparent {
   background-color: transparent;
@@ -850,6 +871,9 @@
 .p-0 {
   padding: 0px;
 }
+.p-1 {
+  padding: var(--space-1);
+}
 .p-2 {
   padding: var(--space-2);
 }
@@ -879,6 +903,9 @@
 }
 .px-4 {
   padding-inline: var(--space-4);
+}
+.py-0 {
+  padding-block: 0px;
 }
 .py-0\.5 {
   padding-block: calc(var(--spacing) * 0.5);
@@ -915,6 +942,9 @@
 }
 .pt-2 {
   padding-top: var(--space-2);
+}
+.pt-3 {
+  padding-top: var(--space-3);
 }
 .pr-0 {
   padding-right: 0px;
@@ -966,6 +996,9 @@
 }
 .text-base {
   font-size: var(--step-1);
+}
+.text-lg {
+  font-size: var(--step-2);
 }
 .text-sm {
   font-size: var(--step-0);

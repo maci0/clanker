@@ -294,9 +294,10 @@ function loadHost(page, extras) {
     renderMermaidBlocks: () => {},
     boardTimeline: () => [],
     onLive: () => {},
-    // The component kit (core/kit.js), whose variant tables and shared surfaces
-    // reach a plugin through pluginApi().
-    kit: { recordRow: { list: "", row: "", name: "", head: "", outcome: "", snippet: "", foot: "", mark: "" } },
+    // The component kit (core/kit.js) reaches a plugin through pluginApi() and
+    // is imported lazily; this sandbox has no module loader, so the import is
+    // handed in the way the stripped imports are.
+    __kitLoader: () => Promise.resolve({ recordRow: { list: "", row: "", name: "", head: "", outcome: "", snippet: "", foot: "", mark: "" } }),
     icon: () => makeElement("span"),
     searchFoldFind: () => {},
     wireRefresh: () => {},

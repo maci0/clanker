@@ -242,6 +242,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `flex` cases are `[hidden]:hidden` on the element, and the Advanced summary
   carries the size the composer-specific rule gave it.
 
+- The board's chrome is styled with Tailwind utilities: the header plate and
+  its list toggle, the filter fold and its grid, the list controls, both empty
+  states and the activity fold — all static markup in `ui/app/index.html`, so
+  ~4 KB leaves `app.css` without touching `ui/app/features/board.js`. The
+  column and card rules it builds are the next step.
+- `core/kit.js` left the page's eager graph: it is handed to a plugin and used
+  by no eager module, so `core/plugins.js` imports it on the first plugin load
+  instead of at boot. Eager JS 149.0K → 147.6K gz, back under its budget without
+  raising it. A host without a module loader (the plugins suite) replaces the
+  loader through `__kitLoader`.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

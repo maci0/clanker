@@ -630,8 +630,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <!-- Creating a goal creates its durable Kanban card. The completion
            criterion travels with the card as its definition of done. -->
-      <details class="board-create-fold" id="board-create-fold">
-        <summary>New goal</summary>
+      <details class="mb-3 mt-0" id="board-create-fold">
+        <summary class="flex min-h-10 cursor-pointer items-center font-sans text-base font-semibold text-fg">New goal</summary>
       <form id="goal-form" class="goal-form board-goal-form">
         <label for="goal-objective">Goal</label>
         <input type="text" id="goal-objective" placeholder="What should clanker achieve? (completion criterion is optional — it is drafted automatically)" maxlength="2000" autocomplete="off" required>
@@ -652,15 +652,15 @@ lamps carry further). The seven named palettes ride the same tokens.
         <label for="card-title" class="sr-only">Card title</label>
         <input type="text" id="card-title"><label for="card-column" class="sr-only">Column</label><select id="card-column"></select><button type="submit" id="card-add">Add</button>
       </form>
-      <div class="board-header" id="board-header">
-        <span class="board-header-icon" id="board-header-icon"></span>
-        <h2 class="board-header-title" id="board-title">Kanban</h2>
-        <span class="board-header-sep"></span>
-        <button type="button" class="board-header-btn" id="board-toggle-list" title="Toggle list view" aria-label="Switch to list view"></button>
+      <div class="mt-3 flex items-center gap-3 border-b border-rule py-2" id="board-header">
+        <span class="text-xl" id="board-header-icon"></span>
+        <h2 class="m-0 text-lg font-bold text-fg" id="board-title">Kanban</h2>
+        <span class="flex-1"></span>
+        <button type="button" class="inline-flex cursor-pointer items-center gap-1 rounded-plate-lg border border-rule bg-surface/80 px-3 py-1 font-sans text-sm font-medium text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-on-accent" id="board-toggle-list" title="Toggle list view" aria-label="Switch to list view"></button>
       </div>
-      <details class="board-filter-fold">
-        <summary>Filter cards</summary>
-      <div class="transcript-tools board-filter" id="board-filter">
+      <details class="my-3">
+        <summary class="min-h-8 cursor-pointer font-mono text-xs font-semibold uppercase tracking-label text-fg-muted">Filter cards</summary>
+      <div class="transcript-tools mt-2 grid grid-cols-[auto_minmax(10rem,1fr)_auto_auto_auto_minmax(5rem,auto)_auto_minmax(5rem,auto)_auto_minmax(5rem,auto)] items-center gap-1 rounded-plate-lg bg-surface-2/60 p-1" id="board-filter">
         <label for="board-filter-input">Filter</label>
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
         <label for="board-mine" class="checkbox-row"><input type="checkbox" id="board-mine"> Only mine</label>
@@ -676,28 +676,28 @@ lamps carry further). The seven named palettes ride the same tokens.
       <!-- Keep the DOM id distinct from the #kanban route. If both are
            "kanban", native fragment scrolling opens this view halfway down. -->
       <div class="board" id="board-grid"></div>
-      <div class="toolbar-actions board-list-controls" id="board-list-controls">
+      <div class="toolbar-actions mt-3 [hidden]:hidden" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>
-      <div id="board-list-view" class="board-list-view"></div>
+      <div id="board-list-view" class="mt-3 overflow-x-auto"></div>
       <!-- A sibling, not a child: inside .board it became a flex item after the
            last column and needed sideways scrolling to find, which is the
            opposite of what a first-run message is for. -->
-      <div class="board-empty" id="board-empty" hidden>
-        <strong>No goal cards yet</strong>
-        <span>Define the outcome and its completion criterion. The new goal will enter Ready and remain available to every clanker in this room.</span>
+      <div class="my-5 flex max-w-measure flex-col items-start gap-2 px-0 py-4 text-left text-fg-muted [hidden]:hidden" id="board-empty" hidden>
+        <strong class="font-mono text-xs font-semibold uppercase tracking-label text-fg-muted">No goal cards yet</strong>
+        <span class="max-w-[62ch]">Define the outcome and its completion criterion. The new goal will enter Ready and remain available to every clanker in this room.</span>
         <button type="button" class="primary" id="board-empty-create">New goal</button>
       </div>
-      <div class="board-empty" id="board-filter-empty" hidden>
-        <strong>No cards match</strong>
-        <span>The current filters hide every card.</span>
+      <div class="my-4 flex max-w-measure flex-col items-start gap-2 px-0 py-0 text-left text-fg-muted [hidden]:hidden" id="board-filter-empty" hidden>
+        <strong class="font-mono text-xs font-semibold uppercase tracking-label text-fg-muted">No cards match</strong>
+        <span class="max-w-[62ch]">The current filters hide every card.</span>
         <button type="button" class="secondary" id="board-filter-clear">Clear filters</button>
       </div>
       <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
       <p class="sr-only" id="goals-status" role="status" aria-live="polite"></p>
-      <details class="board-activity">
-        <summary>Goal activity</summary>
-        <div class="board-activity-head"><span>Run output, steering, and goal specifications</span><button type="button" class="secondary" id="goals-refresh">Refresh</button></div>
+      <details class="mt-4 border-t border-rule pt-3">
+        <summary class="cursor-pointer font-bold text-fg">Goal activity</summary>
+        <div class="my-3 flex items-center justify-between gap-3 text-xs text-fg-muted"><span>Run output, steering, and goal specifications</span><button type="button" class="secondary" id="goals-refresh">Refresh</button></div>
         <div id="goals"></div>
       </details>
     </section>
