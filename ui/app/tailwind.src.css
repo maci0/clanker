@@ -108,6 +108,18 @@
   }
   @keyframes lamp-pulse { 50% { opacity: 0.35; } }
 
+  /* The JSON tree's disclosure triangle: a chevron masked onto the summary's
+     ::before, rotating when the branch is open. A pseudo-element carrying a
+     masked image in both spellings (-webkit-mask beside mask) is what no
+     utility composes; the rest of the tree is utilities. */
+  .json-caret > summary::before {
+  content: ""; display: inline-block; width: 0.85em; height: 0.85em;
+  background: currentColor; color: var(--fg-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 120ms ease-out;
+  }
+  .json-caret[open] > summary::before { transform: rotate(90deg); }
+
   /* The Fleet card's state tab: a lamp on the card's leading edge, accent for a
      card with children and plain grey otherwise. It is a pseudo-element, and a
      lit one carries ring + glow — two shadows one shadow utility cannot

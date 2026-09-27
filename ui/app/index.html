@@ -798,9 +798,9 @@ lamps carry further). The seven named palettes ride the same tokens.
         <!-- The OpenShift-console pattern: the same resource, editable as its
              raw table. Saved through /api/config/table/set, which validates
              the whole candidate config before writing anything. -->
-        <div class="config-editor models-edit-toml-editor" id="models-edit-toml-editor" hidden>
-          <pre class="config-editor-highlight" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
-          <textarea id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
+        <div class="relative mt-2 min-h-48" id="models-edit-toml-editor" hidden>
+          <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
+          <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
         </div>
         <p class="mt-2 text-sm text-fg-muted" id="models-edit-note" hidden></p>
       </div>
@@ -1017,9 +1017,9 @@ lamps carry further). The seven named palettes ride the same tokens.
       <!-- Overlay editor: the textarea holds the truth and stays focusable;
            the pre behind it carries the syntax colors. Same trick as every
            lightweight in-browser code editor. -->
-      <div class="config-editor" id="config-editor">
-        <pre class="config-editor-highlight" aria-hidden="true"><code id="config-editor-code" class="language-toml"></code></pre>
-        <textarea id="config-editor-text" spellcheck="false" autocomplete="off" aria-label="Config file contents"></textarea>
+      <div class="relative min-h-72" id="config-editor">
+        <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="config-editor-code" class="language-toml"></code></pre>
+        <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" id="config-editor-text" spellcheck="false" autocomplete="off" aria-label="Config file contents"></textarea>
       </div>
       <p class="meta" id="config-editor-note" role="status" aria-live="polite"></p>
     </section>

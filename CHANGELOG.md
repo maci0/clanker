@@ -194,6 +194,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   learned to keep a colon inside brackets, so `[stroke-dasharray:5_9]` is one
   utility rather than a variant beside a stray word.
 
+- The config editor is styled with Tailwind utilities: the System and Models
+  editors' frame, highlight layer and textarea in `ui/app/index.html`. The two
+  layers share their metrics by spelling the same utilities, which is what the
+  `.config-editor .config-editor-highlight, .config-editor textarea` pair said;
+  the caret, selection wash and focus ring ride `caret-fg`,
+  `selection:bg-[…]` and `focus-visible:` on the textarea. The tab size and
+  outline offset are arbitrary properties and values, the only spellings
+  Tailwind has for them. `.models-edit-toml-editor[hidden]` went with the class:
+  the element's own `relative` does not outrank the UA default.
+- The run detail's two viewers (`ui/app/features/runs.js`) are utilities: the
+  JSON tree and the unified diff, with each `data-kind` line carrying its own
+  wash, and the edit-diff card's margin with the card. The tree's disclosure
+  triangle stays a component class (`json-caret`): a masked chevron on a
+  `::before`, in both mask spellings, which no utility composes. Two classes
+  that no sheet ever styled (`run-graph-search`, `run-detail-close`) are gone —
+  the search row's hook is `[data-graph-search]` now, as the fleet toggle's is.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

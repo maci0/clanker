@@ -595,7 +595,7 @@ function drawRun(g) {
   el.runGraph.appendChild(summary);
 
   var graphSearch = document.createElement("div");
-  graphSearch.className = "run-graph-search";
+  graphSearch.dataset.graphSearch = "";
   graphSearch.style.display = "flex"; graphSearch.style.gap = "var(--space-3)"; graphSearch.style.marginBottom = "var(--space-2)"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
   var graphSearchInput = document.createElement("input");
   graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
@@ -1003,6 +1003,25 @@ function diffRows(oldText, newText) {
    listing, a nested API response) a wall of text with no way to collapse
    the part you don't care about. <details>/<summary> gives keyboard
    toggle and correct semantics for free, no custom ARIA needed. */
+/* The run detail's two viewers, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css). The JSON tree's disclosure triangle is the one
+   component class (`json-caret`): a masked chevron on a pseudo-element. */
+var JSON_TREE_CLASS = "font-mono text-sm";
+var JSON_ROW_CLASS = "py-px wrap-anywhere before:inline-block before:w-[1em] before:content-['']";
+var JSON_KEY_CLASS = "text-accent-text";
+var JSON_BRACE_CLASS = "text-fg-muted";
+var JSON_SUMMARY_CLASS = "cursor-pointer list-none py-px select-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 [&::-webkit-details-marker]:hidden";
+var JSON_CHILDREN_CLASS = "ml-4 border-l border-dashed border-rule pl-3 max-[40rem]:ml-3 max-[40rem]:border-solid max-[40rem]:pl-2";
+var JSON_EMPTY_CLASS = "text-fg-muted";
+var DIFF_VIEW_CLASS = "overflow-hidden rounded-plate border border-rule font-mono text-sm leading-normal";
+var DIFF_HEAD_CLASS = "border-b border-rule bg-surface-2 px-3 py-2 text-xs font-semibold text-fg-muted";
+/* One line per row, with the four kinds as data-kind on the line itself — a
+   utility cannot reach a child from its parent's attribute, and these rules
+   already read the row's own. */
+var DIFF_LINE_CLASS = "flex px-2 whitespace-pre-wrap wrap-anywhere data-[kind=add]:bg-[color-mix(in_srgb,var(--ok)_12%,transparent)] data-[kind=del]:bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] data-[kind=hunk]:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] data-[kind=hunk]:font-semibold data-[kind=hunk]:text-accent-text data-[kind=ctx]:text-fg-muted";
+var DIFF_SIGN_CLASS = "w-4 flex-none select-none text-center";
+var DIFF_COUNTS_CLASS = "ml-auto tabular-nums";
+
 function buildJsonTree(value, keyLabel, depth) {  if (value === null) return jsonLeaf(keyLabel, "null", "hljs-literal");
   if (typeof value === "boolean") return jsonLeaf(keyLabel, String(value), "hljs-literal");
   if (typeof value === "number") return jsonLeaf(keyLabel, String(value), "hljs-number");
@@ -1021,10 +1040,10 @@ function jsonLeaf(keyLabel, text, valueClass) {
   // triangle, so a leaf key and a branch key at one level start at the same
   // x. Without it the left edge jitters by 1em with no relation to nesting,
   // which is the one thing a tree's left edge is supposed to encode.
-  row.className = "json-row";
+  row.className = JSON_ROW_CLASS;
   if (keyLabel !== null) {
     var k = document.createElement("span");
-    k.className = "json-key";
+    k.className = JSON_KEY_CLASS;
     k.textContent = keyLabel + ": ";
     row.appendChild(k);
   }
@@ -1036,28 +1055,29 @@ function jsonLeaf(keyLabel, text, valueClass) {
 }
 
 function jsonBranch(keyLabel, entries, open, close, countLabel, depth) {
-  if (!entries.length) return jsonLeaf(keyLabel, open + close, "json-empty");
+  if (!entries.length) return jsonLeaf(keyLabel, open + close, JSON_EMPTY_CLASS);
   var details = document.createElement("details");
-  details.className = "json-node";
+  details.className = "json-caret";
   // Root and its immediate children open, everything below collapsed: a tree
   // that arrives fully expanded is the wall of text it was built to replace.
   // A closed branch still says what it holds ("{ 3 keys }"), so nothing is
   // hidden that the reader can't see they are choosing not to open.
   details.open = depth < 1;
   var summary = document.createElement("summary");
+  summary.className = JSON_SUMMARY_CLASS;
   if (keyLabel !== null) {
     var k = document.createElement("span");
-    k.className = "json-key";
+    k.className = JSON_KEY_CLASS;
     k.textContent = keyLabel + ": ";
     summary.appendChild(k);
   }
   var brace = document.createElement("span");
-  brace.className = "json-brace";
+  brace.className = JSON_BRACE_CLASS;
   brace.textContent = open + " " + countLabel + " " + close;
   summary.appendChild(brace);
   details.appendChild(summary);
   var body = document.createElement("div");
-  body.className = "json-children";
+  body.className = JSON_CHILDREN_CLASS;
   entries.forEach(function (pair) { body.appendChild(buildJsonTree(pair[1], pair[0], depth + 1)); });
   details.appendChild(body);
   return details;
@@ -1107,7 +1127,7 @@ function showNodeDetail(kind, node) {
   head.appendChild(copyBtn);
   var closeBtn = document.createElement("button");
   closeBtn.type = "button";
-  closeBtn.className = "secondary run-detail-close";
+  closeBtn.className = "secondary";
   closeBtn.textContent = "Close";
   upgradePfButton(closeBtn);
   closeBtn.addEventListener("click", closeNodeDetail);
@@ -1153,7 +1173,7 @@ function showNodeDetail(kind, node) {
       b.addEventListener("click", function(){
         // cross-link to graph search and file search where available
         var s = document.querySelector("#run-filter"); if (s) { s.value = r.split(":")[0]; s.dispatchEvent(new Event("input",{bubbles:true})); }
-        var gf = document.querySelector(".run-graph-search input");
+        var gf = document.querySelector("[data-graph-search] input");
         if (gf) { gf.value = r.split(":")[0].split("/").pop().split(".")[0]; gf.dispatchEvent(new Event("input",{bubbles:true})); }
       });
       traceBar.appendChild(b);
@@ -1186,7 +1206,7 @@ function showNodeDetail(kind, node) {
     if (!argsParsed) {
       if (argsStr.length >= 8000) {
         var truncNote = document.createElement("p");
-        truncNote.className = "meta run-diff-truncated";
+        truncNote.className = "meta px-3 py-2";
         truncNote.textContent = "arguments preview truncated — open the run's source to see the full change";
         out.appendChild(truncNote);
       }
@@ -1207,23 +1227,23 @@ function showNodeDetail(kind, node) {
     var adds = rows.filter(function (r) { return r.kind === "add"; }).length;
     var dels = rows.filter(function (r) { return r.kind === "del"; }).length;
     var diffWrap = document.createElement("div");
-    diffWrap.className = "diff-view edit-diff";
+    diffWrap.className = DIFF_VIEW_CLASS + " mb-3";
     var diffHead = document.createElement("div");
-    diffHead.className = "diff-header";
+    diffHead.className = DIFF_HEAD_CLASS;
     var fileTag = document.createElement("span");
     fileTag.textContent = "\u270e " + file;
     diffHead.appendChild(fileTag);
     var counts = document.createElement("span");
-    counts.className = "diff-counts";
+    counts.className = DIFF_COUNTS_CLASS;
     counts.textContent = "+" + adds + " \u2212" + dels;
     diffHead.appendChild(counts);
     diffWrap.appendChild(diffHead);
     rows.forEach(function (r) {
       var row = document.createElement("div");
-      row.className = "diff-line";
+      row.className = DIFF_LINE_CLASS;
       row.setAttribute("data-kind", r.kind);
       var sign = document.createElement("span");
-      sign.className = "diff-sign";
+      sign.className = DIFF_SIGN_CLASS;
       sign.textContent = r.kind === "add" ? "+" : (r.kind === "del" ? "\u2212" : " ");
       row.appendChild(sign);
       var txt = document.createElement("span");
@@ -1241,11 +1261,11 @@ function showNodeDetail(kind, node) {
     // Unified diff heuristic: has hunk headers + +/- lines — render as Codex-style diff instead of plain text
     var looksDiff = !truncated && typeof node.output === "string" && /^@@ /m.test(node.output) && /(^\+[^+]|\n\+[^+]|^-[^-]|\n-[^-])/m.test(node.output);
     if (looksDiff) {
-      var diffWrap = document.createElement("div"); diffWrap.className = "diff-view";
-      var diffHead = document.createElement("div"); diffHead.className = "diff-header"; diffHead.textContent = "Patch"; diffWrap.appendChild(diffHead);
+      var diffWrap = document.createElement("div"); diffWrap.className = DIFF_VIEW_CLASS;
+      var diffHead = document.createElement("div"); diffHead.className = DIFF_HEAD_CLASS; diffHead.textContent = "Patch"; diffWrap.appendChild(diffHead);
       node.output.split("\n").forEach(function(line){
-        var row = document.createElement("div"); row.className = "diff-line";
-        var sign = document.createElement("span"); sign.className = "diff-sign";
+        var row = document.createElement("div"); row.className = DIFF_LINE_CLASS;
+        var sign = document.createElement("span"); sign.className = DIFF_SIGN_CLASS;
         if (line.indexOf("@@")===0) { row.setAttribute("data-kind","hunk"); sign.textContent = "●"; }
         else if (line.charAt(0)==="+") { row.setAttribute("data-kind","add"); sign.textContent = "+"; }
         else if (line.charAt(0)==="-") { row.setAttribute("data-kind","del"); sign.textContent = "−"; }
@@ -1257,7 +1277,7 @@ function showNodeDetail(kind, node) {
       out.appendChild(diffWrap);
     } else if (parsed !== undefined && typeof parsed === "object" && parsed !== null) {
       var tree = document.createElement("div");
-      tree.className = "json-tree";
+      tree.className = JSON_TREE_CLASS;
       tree.appendChild(buildJsonTree(parsed, null, 0));
       var treeBar = document.createElement("div");
       treeBar.style.display = "flex"; treeBar.style.gap = "var(--space-2)"; treeBar.style.marginBottom = "var(--space-2)";

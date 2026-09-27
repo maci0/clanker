@@ -44,6 +44,7 @@ const migrated = [
   "core/usage.js",
   "features/arena.js",
   "features/fleet.js",
+  "features/runs.js",
   "core/kit.js",
 ];
 

@@ -1707,7 +1707,7 @@ window.clankerOpenCitation = function(ref){
     var runsTab = document.getElementById("tab-runs");
     if (runsTab) runsTab.click();
     setTimeout(function(){
-      var inp = document.querySelector(".run-graph-search input");
+      var inp = document.querySelector("[data-graph-search] input");
       if (inp) { inp.value = stem; inp.dispatchEvent(new Event("input", {bubbles:true})); inp.focus(); }
       var rf = document.getElementById("run-filter");
       if (rf) { rf.value = ref.split(":")[0]; rf.dispatchEvent(new Event("input", {bubbles:true})); }
