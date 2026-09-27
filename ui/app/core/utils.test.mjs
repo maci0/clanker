@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost } from "./utils.js";
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -140,4 +140,31 @@ test("a compact token count abbreviates in the reader's own units", function () 
 test("a sub-dollar cost keeps four digits, a larger one two", function () {
   assert.match(fmtCost(0.0001), /0[,.]0001/);
   assert.match(fmtCost(200), /200[,.]00/);
+});
+
+// Truncation is a grapheme-cluster operation, not a code-point one. A cut
+// between the halves of a surrogate pair yields a lone half, which renders as
+// U+FFFD in the page and is not valid input for a server that stores it.
+test("clip never cuts a surrogate pair in half", function () {
+  const out = clip("😀".repeat(10), 5);
+  assert.equal(out, "😀😀😀😀😀…");
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out));
+});
+
+test("clip never separates a combining mark from its base", function () {
+  // "é" written with a combining acute is two code points and one cluster.
+  const out = clip("é".repeat(10), 5);
+  assert.equal(out, "ééééé…");
+});
+
+test("clip keeps a ZWJ emoji sequence whole", function () {
+  const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+  const out = clip(family.repeat(4), 3);
+  assert.equal(out, family.repeat(3) + "…");
+});
+
+test("graphemes falls back to whole code points without Intl.Segmenter", function () {
+  // The fallback path is exercised directly so a platform without Segmenter
+  // still gets surrogate pairs intact (it is combining marks it cannot join).
+  assert.deepEqual(Array.from(graphemes("a😀b")), ["a", "😀", "b"]);
 });

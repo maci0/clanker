@@ -23,8 +23,27 @@ export function fmtBytes(n) {
   }).format(value);
 }
 
+/* Grapheme clusters, not code points. `Array.from` keeps a surrogate pair
+   together but still cuts a combining acute off its base letter, and cuts a
+   zero-width-joiner sequence into separate people, and each half then renders
+   as a replacement character in whatever the clipped text ends up in.
+   `Intl.Segmenter` is the platform's own UAX #29 implementation, so it is the
+   answer rather than a second set of ranges to keep in step with the terminal
+   width table. */
+var grapheme_segmenter = (typeof Intl !== "undefined" && Intl.Segmenter)
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : null;
+
+export function graphemes(s) {
+  var str = String(s);
+  if (!grapheme_segmenter) return Array.from(str);
+  var out = [];
+  for (var seg of grapheme_segmenter.segment(str)) out.push(seg.segment);
+  return out;
+}
+
 export function clip(text, max) {
-  var chars = Array.from(String(text));
+  var chars = graphemes(text);
   if (chars.length <= max) return String(text);
   var cut = chars.slice(0, max).join("");
   var space = cut.lastIndexOf(" ");

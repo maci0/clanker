@@ -8327,26 +8327,15 @@ const Cell = struct { bytes: []const u8, width: u16 };
 /// absorbed slice is contiguous in `text`, so this stays allocation-free and
 /// borrows the caller's buffer, which is what `writeWrapped` and friends need.
 ///
+/// `width_mod.nextCluster` is that walk, so this is the same cluster rule
+/// `displayWidth` measures with: a cell and the columns layout reserved for
+/// it cannot disagree about where a VS16 or a ZWJ joiner ends.
+///
 /// A stray leading mark with no base gets a cell of its own rather than being
 /// dropped: losing bytes is worse than one odd-looking column.
 fn nextCell(text: []const u8, i: *usize) ?Cell {
-    if (i.* >= text.len) return null;
-    const start = i.*;
-    const base = width_mod.nextCodepoint(text, i) orelse return null;
-    var w: u16 = @intCast(width_mod.displayWidth(base));
-    if (w == 0) w = 1;
-    while (i.* < text.len) {
-        var peek: usize = i.*;
-        const next = width_mod.nextCodepoint(text, &peek) orelse break;
-        if (width_mod.displayWidth(next) != 0) break;
-        // Control bytes are zero-width too, but absorbing one hides it inside
-        // the previous cell: a '\n' riding along as "4\n" slips past
-        // writeWrapped's newline check and reaches the terminal raw, walking
-        // the cursor off the row (the multi-line task echo staircase).
-        if (next.len == 1 and (next[0] < 0x20 or next[0] == 0x7F)) break;
-        i.* = peek;
-    }
-    return .{ .bytes = text[start..i.*], .width = w };
+    const cluster = width_mod.nextCluster(text, i) orelse return null;
+    return .{ .bytes = cluster.bytes, .width = @intCast(cluster.width) };
 }
 
 test "nextCell never absorbs a control byte into the preceding cell" {

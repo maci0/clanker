@@ -8,9 +8,11 @@
 //! ponytail: hardcoded ranges for what actually shows up (CJK, Hangul,
 //! Hiragana/Katakana, CJK punctuation/fullwidth forms, and the emoji blocks
 //! whose East Asian Width is Wide), width 1 for everything else. Not a full
-//! UAX #11 table: the long tail of BMP Wide singletons and VS16-driven
-//! presentation (text-style vs emoji-style ☀) still count 1 here. The next
-//! step up, if that tail is ever reported, is vaxis's gwidth/zg tables,
+//! UAX #11 table: the long tail of BMP Wide singletons still counts 1 here,
+//! except for the two sequences a terminal ligates and no per-codepoint
+//! table can express (see `nextCluster`): a VS16 asking for the
+//! emoji-presentation glyph, and a U+200D joiner gluing emoji together. The
+//! next step up, if that tail is ever reported, is vaxis's gwidth/zg tables,
 //! already in the dependency tree — not a second Unicode data source.
 
 const std = @import("std");
@@ -134,39 +136,87 @@ fn decodeOne(slice: []const u8) ?u21 {
     return unicode.utf8Decode(slice) catch null;
 }
 
-/// Display width of a UTF-8 string: sum of each codepoint's width. Invalid
-/// UTF-8 bytes count as width 1 each so a malformed string still lays out
-/// deterministically instead of erroring mid-render.
+/// One grapheme cluster: a base codepoint, the zero-width marks attached to
+/// it, and every base a U+200D joiner glues on after. `width` is the number
+/// of terminal columns the cluster occupies, which is not the sum of its
+/// codepoints: the terminal ligates the joined ones into the first one's
+/// glyph.
+pub const Cluster = struct {
+    bytes: []const u8,
+    width: usize,
+};
+
+const zwj: u21 = 0x200D;
+const vs16: u21 = 0xFE0F;
+
+/// Display width of one codepoint's bytes, with the two rules that decide
+/// how a cluster adds up: a codepoint a joiner glued on contributes nothing
+/// of its own, and VS16 asks for the emoji-presentation glyph, which is wide
+/// even when the bare codepoint is narrow (`❤` U+2764 is EAW=Neutral).
+fn oneWidth(slice: []const u8) usize {
+    const cp = decodeOne(slice) orelse return 1;
+    return codepointWidth(cp);
+}
+
+/// The next grapheme cluster of `s` at `i.*`, advancing `i.*` past it.
+///
+/// A control byte is its own cluster of one column, so a `'\n'` is never
+/// absorbed into the cell before it and never reaches the terminal hidden
+/// inside another cell's bytes.
+pub fn nextCluster(s: []const u8, i: *usize) ?Cluster {
+    if (i.* >= s.len) return null;
+    const start = i.*;
+    const base = nextCodepoint(s, i).?;
+    if (isControl(base)) return .{ .bytes = base, .width = 1 };
+    var w = oneWidth(base);
+    var joined = false;
+    var emoji_presentation = false;
+    while (i.* < s.len) {
+        var peek = i.*;
+        const next = nextCodepoint(s, &peek) orelse break;
+        if (isControl(next)) break;
+        if (oneWidth(next) != 0) {
+            // A base after a joiner is part of this cluster only when the
+            // cluster so far is an emoji: the joiner is what makes a
+            // terminal ligate 👨‍👩‍👧 into one glyph. A joiner between
+            // two ordinary letters is not ligated, so "a‍b" stays two
+            // columns and must not collapse into one.
+            if (!joined or w < 2) break;
+            w = @max(w, oneWidth(next));
+        }
+        i.* = peek;
+        joined = decodeOne(next) == zwj;
+        if (decodeOne(next) == vs16) emoji_presentation = true;
+    }
+    if (emoji_presentation and w == 1) w = 2;
+    return .{ .bytes = s[start..i.*], .width = if (w == 0) 1 else w };
+}
+
+fn isControl(slice: []const u8) bool {
+    return slice.len == 1 and (slice[0] < 0x20 or slice[0] == 0x7F);
+}
+
+/// Display width of a UTF-8 string: the sum of its grapheme clusters'
+/// widths. Invalid UTF-8 bytes count as width 1 each so a malformed string
+/// still lays out deterministically instead of erroring mid-render.
 pub fn displayWidth(s: []const u8) usize {
     var total: usize = 0;
     var i: usize = 0;
-    while (nextCodepoint(s, &i)) |slice| {
-        const cp = decodeOne(slice) orelse {
-            total += 1;
-            continue;
-        };
-        total += codepointWidth(cp);
-    }
+    while (nextCluster(s, &i)) |c| total += c.width;
     return total;
 }
 
 /// The longest prefix of `s` whose display width is `<= max_cols`, cut only
-/// on codepoint boundaries. Used to fit plain (no-ANSI) text into a fixed
+/// on cluster boundaries. Used to fit plain (no-ANSI) text into a fixed
 /// terminal width before it gets wrapped in styling.
 pub fn truncateToWidth(s: []const u8, max_cols: usize) []const u8 {
     var w: usize = 0;
     var i: usize = 0;
     while (i < s.len) {
         const start = i;
-        const slice = nextCodepoint(s, &i) orelse break;
-        const cp = decodeOne(slice) orelse {
-            w += 1;
-            if (w > max_cols) return s[0..start];
-            continue;
-        };
-        const cw = codepointWidth(cp);
-        if (w + cw > max_cols) return s[0..start];
-        w += cw;
+        const c = nextCluster(s, &i) orelse break;
+        if (w + c.width > max_cols) return s[0..start];
+        w += c.width;
     }
     return s;
 }
@@ -264,4 +314,59 @@ test "malformed bytes lay out as width 1 each, the way this module documents" {
     // And truncation walks the same bytes without panicking or over-cutting.
     try std.testing.expectEqualStrings("a\x80", truncateToWidth("a\x80b", 2));
     try std.testing.expectEqualStrings("\xe4\xb8", truncateToWidth("\xe4\xb8", 5));
+}
+
+test "a ZWJ emoji sequence is one cell of two columns, not one per emoji" {
+    // 👨‍👩‍👧: three wide codepoints and two joiners. A terminal ligates
+    // them into a single two-column glyph; summing the codepoints claimed
+    // six, so every row carrying one overran its border by four columns.
+    const family = "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7";
+    try std.testing.expectEqual(@as(usize, 2), displayWidth(family));
+    var i: usize = 0;
+    const cell = nextCluster(family, &i).?;
+    try std.testing.expectEqualStrings(family, cell.bytes);
+    try std.testing.expectEqual(family.len, i);
+    try std.testing.expectEqualStrings(family, truncateToWidth(family, 2));
+    try std.testing.expectEqualStrings("", truncateToWidth(family, 1));
+}
+
+test "a rainbow flag ligates through VS16 and ZWJ into two columns" {
+    // 🏳️‍🌈 = white flag + VS16 + ZWJ + rainbow. Without the VS16 the
+    // bare flag codepoint is Wide anyway; the pair is what proves the
+    // rule does not depend on where the width came from.
+    const flag = "\xf0\x9f\x8f\xb3\xef\xb8\x8f\xe2\x80\x8d\xf0\x9f\x8c\x88";
+    try std.testing.expectEqual(@as(usize, 2), displayWidth(flag));
+}
+
+test "VS16 promotes a narrow symbol to the emoji-presentation width" {
+    // ❤ alone is EAW=Neutral and one column; ❤ with VS16 is the heart
+    // emoji, which every terminal draws two columns wide.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\xe2\x9d\xa4"));
+    try std.testing.expectEqual(@as(usize, 2), displayWidth("\xe2\x9d\xa4\xef\xb8\x8f"));
+    try std.testing.expectEqualStrings("\xe2\x9d\xa4\xef\xb8\x8f", truncateToWidth("\xe2\x9d\xa4\xef\xb8\x8f", 2));
+}
+
+test "a joiner between ordinary letters does not collapse them into one cell" {
+    // "a‍b" is not a ligature: the two letters stay two columns.
+    const joined_letters = "a\xe2\x80\x8db";
+    try std.testing.expectEqual(@as(usize, 2), displayWidth(joined_letters));
+    try std.testing.expectEqualStrings("a\xe2\x80\x8d", truncateToWidth(joined_letters, 1));
+}
+
+test "nextCluster keeps a control byte in a cluster of its own" {
+    var i: usize = 0;
+    const c = nextCluster("a\nb", &i).?;
+    try std.testing.expectEqualStrings("a", c.bytes);
+    const nl = nextCluster("a\nb", &i).?;
+    try std.testing.expectEqualStrings("\n", nl.bytes);
+    try std.testing.expectEqual(@as(usize, 1), nl.width);
+    try std.testing.expectEqualStrings("b", (nextCluster("a\nb", &i).?).bytes);
+}
+
+test "a family emoji followed by text walks on to the next cluster" {
+    const s = "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7!";
+    try std.testing.expectEqual(@as(usize, 3), displayWidth(s));
+    var i: usize = 0;
+    _ = nextCluster(s, &i).?;
+    try std.testing.expectEqualStrings("!", (nextCluster(s, &i).?).bytes);
 }

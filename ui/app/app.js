@@ -1803,7 +1803,7 @@ function addAskOptionsGroup(turn, row, evt, ariaLabel) {
   try{
     if (document.hidden && "Notification" in window) {
       if (Notification.permission === "granted") {
-        var n = new Notification(ariaLabel, { body: (evt.question || ariaLabel).slice(0,120), tag: "clanker-ask-" + evt.id });
+        var n = new Notification(ariaLabel, { body: utilClip(evt.question || ariaLabel, 120), tag: "clanker-ask-" + evt.id });
         n.onclick = function(){ try{ window.focus(); first && first.focus(); }catch(_){} n.close(); };
         // tiny beep via Web Audio if available
         try{ var ac = new (window.AudioContext||window.webkitAudioContext)(); var o=ac.createOscillator(); o.frequency.value=880; o.connect(ac.destination); o.start(); setTimeout(function(){ try{o.stop(); ac.close();}catch(_){} }, 180); }catch(_){}
@@ -2056,7 +2056,7 @@ function renderStats(turn, stats, task) {
       // Heuristic: server titles forks as "fork of <original title>" — show any fork when on its parent
       var meta = currentSessionMeta();
       var parentTitle = meta ? (meta.title || "") : "";
-      var relevant = forks.filter(function(s){ return parentTitle && s.title.indexOf(parentTitle.slice(0, 24)) !== -1; });
+      var relevant = forks.filter(function(s){ return parentTitle && s.title.indexOf(utilClip(parentTitle, 24)) !== -1; });
       if (!relevant.length) relevant = forks.slice(0, 3);
       if (!relevant.length) return;
       var bar = document.createElement("div");
@@ -2066,7 +2066,7 @@ function renderStats(turn, stats, task) {
       relevant.forEach(function(s){
         var chip = document.createElement("button");
         chip.type = "button"; chip.className = "branch-chip";
-        chip.textContent = (s.title || s.id.slice(0,8)) + " · " + (s.messages || 0) + " msgs";
+        chip.textContent = utilClip(s.title || s.id, 60) + " · " + (s.messages || 0) + " msgs";
         chip.title = "Switch to " + (s.title || s.id);
         if (s.id === sessionId) chip.setAttribute("data-current", "true");
         chip.addEventListener("click", function(){ switchSession(s.id); });
@@ -3108,7 +3108,7 @@ function announceChatArrival(fresh) {
   var last = fresh[fresh.length - 1];
   var who = last.from || "someone";
   var text = String(last.text || "").replace(/\s+/g, " ").trim();
-  el.chatStatus.textContent = who + (text ? ": " + text.slice(0, 80) : " sent a message");
+  el.chatStatus.textContent = who + (text ? ": " + utilClip(text, 80) : " sent a message");
 }
 function ingestChatMessages(messages, room) {
   // Keyed on messageKey rather than m.id: an id-less message (a peer too
@@ -4756,7 +4756,11 @@ var savePrompts = function () {
       server.forEach(function(p){ have[p.content] = true; have[p.title] = true; });
       toSync.forEach(function(text){
         if (have[text]) return;
-        var title = text.slice(0, 60).trim() || "Untitled";
+        // clip(), not slice(): a slice cuts at UTF-16 index 60, which lands
+        // between the halves of a surrogate pair when the prompt opens with
+        // an astral character. The lone half went to the server as a \udXXX
+        // escape, and the prompt silently failed to save.
+        var title = utilClip(text, 60).replace(/…$/, "").trim() || "Untitled";
         fetch("/api/prompts", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ title: title, content: text }) }).catch(function(){});
       });
     }).catch(function(){});
@@ -5273,7 +5277,7 @@ wireRefresh(el.logsRefresh, loadLogList);
             var lines=buf.split("\n"); buf=lines.pop();
             lines.forEach(function(line){
               if(!line) return;
-              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"")+"\n"); else if(e.type==="tool_result") { var out=""; try{ out=JSON.parse(e.output||""); }catch(_){ out=e.output||""; } if(out && typeof out==="object") append(JSON.stringify(out, null, 2)+"\n"); else if(out) append(String(out).slice(0, 1200)+"\n"); else append("  done "+(e.ms||0)+"ms\n"); if(e.type==="done" && e.output) lastSummary=e.output; } else if(e.type==="done"){ lastSummary=e.output||""; if(lastSummary) append(lastSummary.slice(0, 2000)+"\n"); else append("done\n"); } else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line.slice(1)+"\n"); } }
+              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"")+"\n"); else if(e.type==="tool_result") { var out=""; try{ out=JSON.parse(e.output||""); }catch(_){ out=e.output||""; } if(out && typeof out==="object") append(JSON.stringify(out, null, 2)+"\n"); else if(out) append(utilClip(String(out), 1200)+"\n"); else append("  done "+(e.ms||0)+"ms\n"); if(e.type==="done" && e.output) lastSummary=e.output; } else if(e.type==="done"){ lastSummary=e.output||""; if(lastSummary) append(utilClip(lastSummary, 2000)+"\n"); else append("done\n"); } else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line.slice(1)+"\n"); } }
               else { lastSummary=line; append(line+"\n"); }
             });
             return pump();
