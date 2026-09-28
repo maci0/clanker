@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-28
+
 ### Fixed
 
 - On a narrow window the masthead actions wrap onto their own row, and the
