@@ -29,25 +29,6 @@ var URL_FORM_CLASS = "flex min-w-0 flex-1 basis-64 gap-2";
 /* The playing track is the row's own state, so the name asks about its parent. */
 var PICK_CLASS = "min-h-9 min-w-0 flex-1 cursor-pointer overflow-hidden border-0 bg-transparent text-left text-ellipsis whitespace-nowrap group-data-[current=true]:font-semibold group-data-[current=true]:text-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 
-clanker.registerView({
-  id: "music",
-  title: "Music",
-  group: "Work",
-
-  boot: function (api) {
-    Music.ensure(api);
-  },
-
-  mount: function (container, api) {
-    Music.ensure(api);
-    Music.mountView(container);
-  },
-
-  refresh: function () {
-    Music.draw();
-  }
-});
-
 var Music = window.clankerMusic || (window.clankerMusic = (function () {
   var audio = new Audio();
   audio.preload = "metadata";
@@ -547,3 +528,22 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     draw: draw
   };
 })());
+
+clanker.registerView({
+  id: "music",
+  title: "Music",
+  group: "Work",
+
+  boot: function (api) {
+    Music.ensure(api);
+  },
+
+  mount: function (container, api) {
+    Music.ensure(api);
+    Music.mountView(container);
+  },
+
+  refresh: function () {
+    Music.draw();
+  }
+});

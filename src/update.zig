@@ -52,12 +52,18 @@ pub fn sameRelease(running: []const u8, tag: []const u8) bool {
     return std.mem.eql(u8, running, bare);
 }
 
+/// The release matrix names macOS `aarch64-macos` and `x86_64-macos` (no abi)
+/// and Linux `arch-linux-musl`. Zig's abi tag for those macOS targets is
+/// `none`; appending it asks for an asset the release does not publish.
+pub fn targetTriple(buf: []u8, arch: []const u8, os_name: []const u8, abi: []const u8) []const u8 {
+    if (std.mem.eql(u8, abi, "none")) {
+        return std.fmt.bufPrint(buf, "{s}-{s}", .{ arch, os_name }) catch buf[0..0];
+    }
+    return std.fmt.bufPrint(buf, "{s}-{s}-{s}", .{ arch, os_name, abi }) catch buf[0..0];
+}
+
 pub fn thisTarget(buf: []u8) []const u8 {
-    return std.fmt.bufPrint(buf, "{s}-{s}-{s}", .{
-        @tagName(builtin.cpu.arch),
-        @tagName(builtin.os.tag),
-        @tagName(builtin.abi),
-    }) catch buf[0..0];
+    return targetTriple(buf, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.abi));
 }
 
 pub fn writeAssetName(buf: []u8, tag: []const u8, target: []const u8) error{NameTooLong}![]const u8 {
@@ -404,6 +410,29 @@ test "update: asset name is clanker-tag-target" {
     try std.testing.expectEqualStrings("clanker-v0.6.2-x86_64-linux-musl", name);
     var side: [96]u8 = undefined;
     try std.testing.expectEqualStrings("clanker-v0.6.2-x86_64-linux-musl.sha256", try writeSidecarName(&side, name));
+}
+
+test "update: this target is the name the release matrix publishes" {
+    const rows = .{
+        .{ "x86_64", "linux", "musl", "x86_64-linux-musl" },
+        .{ "aarch64", "linux", "musl", "aarch64-linux-musl" },
+        .{ "aarch64", "macos", "none", "aarch64-macos" },
+        .{ "x86_64", "macos", "none", "x86_64-macos" },
+    };
+    inline for (rows) |row| {
+        var triple_buf: [64]u8 = undefined;
+        const triple = targetTriple(&triple_buf, row[0], row[1], row[2]);
+        try std.testing.expectEqualStrings(row[3], triple);
+        var name_buf: [96]u8 = undefined;
+        const asset = try writeAssetName(&name_buf, "v0.6.2", triple);
+        try std.testing.expectEqualStrings("clanker-v0.6.2-" ++ row[3], asset);
+    }
+    var live_buf: [64]u8 = undefined;
+    var via_buf: [64]u8 = undefined;
+    const want = targetTriple(&via_buf, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.abi));
+    const got = thisTarget(&live_buf);
+    try std.testing.expectEqualStrings(want, got);
+    try std.testing.expect(!std.mem.endsWith(u8, got, "-none"));
 }
 
 test "update: a repo that is not owner/name is refused before a release url exists" {

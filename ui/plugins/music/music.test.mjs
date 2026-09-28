@@ -3,10 +3,57 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(dir, "app.js"), "utf8");
 const manifest = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8"));
+
+test("music boot calls ensure only after Music exists", () => {
+  function el() {
+    const node = {
+      style: {},
+      dataset: {},
+      className: "",
+      textContent: "",
+      children: [],
+      appendChild(child) { this.children.push(child); child.isConnected = true; return child; },
+      setAttribute() {},
+      addEventListener() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+    };
+    return node;
+  }
+  const body = el();
+  const sandbox = {
+    console,
+    document: {
+      body,
+      createElement: el,
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      documentElement: el(),
+    },
+    Audio: function Audio() {
+      return { preload: "", paused: true, currentTime: 0, addEventListener() {} };
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.clanker = {
+    registerView(spec) {
+      spec.boot({
+        storage: { get() { return null; }, set() {} },
+        icon() { return el(); },
+        showView() {},
+      });
+    },
+  };
+  vm.createContext(sandbox);
+  assert.doesNotThrow(() => vm.runInContext(js, sandbox, { filename: "ui/plugins/music/app.js" }));
+  assert.equal(body.children.length, 1);
+  assert.equal(body.children[0].id, "music-dock");
+});
 
 test("music plugin registers a view and a dock", () => {
   assert.equal(manifest.name, "music");

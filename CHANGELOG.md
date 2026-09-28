@@ -10,6 +10,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - On a narrow window the masthead actions wrap onto their own row, and the
   instance, peers, session, and help controls hide, so Jump and the theme
   label stay inside their buttons.
+- `clanker update` on macOS asks for the published asset
+  `clanker-<tag>-aarch64-macos` or `x86_64-macos`. The abi tag `none` is
+  not part of that name. Linux assets still include `musl`.
+- The Music plugin assigns its player before registering the view, so the
+  page-load boot can call `ensure` instead of toasting that it failed to
+  start.
 
 ## [0.7.0] - 2026-09-28
 
