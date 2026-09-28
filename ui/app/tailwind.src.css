@@ -325,6 +325,40 @@
   }
 
   @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
+  /* The shell is one viewport wide. The masthead, rail, and composer shrink
+     instead of widening the page, and a label clips inside its control. */
+  #app-page,
+  #app-masthead,
+  #rail,
+  #task-form {
+    min-width: 0;
+    max-width: 100%;
+  }
+  #app-page { overflow-x: hidden; }
+  #app-masthead {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    gap: var(--space-3);
+  }
+  #app-masthead > div:last-child { min-width: 0; overflow: hidden; }
+  #rail-toggle,
+  #palette-open,
+  #theme-toggle,
+  #header-model,
+  #composer-model {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-tab {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   @media (max-width: 40rem) {
     #app-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
     /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
@@ -463,6 +497,26 @@
     font-family: var(--sans);
     border-radius: var(--radius-pill);
   }
+  /* Icon actuators are not labeled pills. The glyph stays inside the control;
+     colour, edge, and radius are cabinet tokens, and there is no plate shadow. */
+  button.icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    box-sizing: border-box;
+    min-height: 2rem; min-width: 2rem; padding: var(--space-1);
+    overflow: hidden;
+    background: transparent; color: var(--fg-muted);
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: none;
+    font-family: var(--sans);
+  }
+  button.icon-btn:hover,
+  button.icon-btn:focus-visible {
+    border-color: var(--rule);
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  button.icon-btn svg { display: block; flex: none; }
   button.secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
   button.danger { background: var(--danger); color: var(--on-danger); }
   button.secondary.danger { background: var(--surface); color: var(--danger); border-color: var(--border); }

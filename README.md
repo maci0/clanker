@@ -133,13 +133,17 @@ Set the API key env var for your chosen provider (see [config.toml](config.toml)
 ```sh
 ./zig-out/bin/clanker setup              # guided first run: config, keys, tools
 ./zig-out/bin/clanker providers check
+./zig-out/bin/clanker update --check     # compare this build to the latest release
 ./zig-out/bin/clanker run "hello"
 ```
 
 `clanker setup` says which provider this environment can actually reach and
 scaffolds what is missing; `clanker doctor` is the same check after the fact,
 and names a tool `.wasm` nobody compiled, a missing key, or a worktree whose
-gitignored files never got linked.
+gitignored files never got linked. `clanker update` compares this build with
+the latest GitHub release (`--check` prints the release page and does not
+download or replace). Without `--check` it replaces this binary only after
+the asset matches the `.sha256` sidecar published with that release.
 
 Codex, Grok, and Claude can instead use OAuth owned entirely by clanker:
 

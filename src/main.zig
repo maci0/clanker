@@ -275,6 +275,7 @@ comptime {
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");
     _ = @import("doctor.zig");
+    _ = @import("update.zig");
     _ = @import("autoresearch/harness.zig");
     _ = @import("autoresearch/loop.zig");
     _ = @import("agent/workflows.zig");

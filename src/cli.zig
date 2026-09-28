@@ -67,6 +67,7 @@ const knowledge_logic = @import("knowledge_logic");
 const oauth_command = @import("llm/oauth_command.zig");
 const oauth_registry = @import("llm/oauth_plugins/registry.zig");
 const doctor_mod = @import("doctor.zig");
+const update_mod = @import("update.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -171,6 +172,10 @@ pub const Command = enum {
     gate,
     autolearn,
     doctor,
+    /// `update [--check] [--repo owner/name]`: compare this build with the
+    /// latest GitHub release. Without `--check`, replace this executable only
+    /// after the asset matches its `.sha256` sidecar. `src/update.zig`.
+    update,
     setup,
     prune,
     autoresearch,
@@ -532,6 +537,10 @@ pub const Options = struct {
     worktree_sub: ?[]const u8 = null,
     worktree_arg1: ?[]const u8 = null,
     worktree_arg2: ?[]const u8 = null,
+    /// `update --check`: report the latest release and do not download or
+    /// replace. `update --repo` is `owner/name`; absent means `maci0/clanker`.
+    update_check: bool = false,
+    update_repo: ?[]const u8 = null,
 };
 
 fn isMeshSub(name: []const u8) bool {
@@ -639,6 +648,7 @@ const bool_flags = [_]BoolFlag{
     .{ .spelling = "--reveal", .field = "compare_reveal", .value = true, .flag = .compare_reveal },
     .{ .spelling = "--dump-config", .field = "dump_config", .value = true, .flag = .dump_config },
     .{ .spelling = "--replace-all", .field = "records_replace_all", .value = true, .flag = .records_replace_all },
+    .{ .spelling = "--check", .field = "update_check", .value = true, .flag = .update_check },
 };
 
 /// The same, for flags taking a value.
@@ -668,6 +678,7 @@ const value_flags = [_]ValueFlag{
     .{ .spelling = "--alternative", .field = "arena_alternative", .flag = .arena_alternative },
     .{ .spelling = "--profile", .field = "profile", .flag = .profile },
     .{ .spelling = "--preset", .field = "preset", .flag = .preset },
+    .{ .spelling = "--repo", .field = "update_repo", .flag = .update_repo },
 };
 
 pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
@@ -931,6 +942,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .init;
             } else if (std.mem.eql(u8, a, "doctor")) {
                 opts.command = .doctor;
+            } else if (std.mem.eql(u8, a, "update")) {
+                opts.command = .update;
             } else if (std.mem.eql(u8, a, "janitor") or std.mem.eql(u8, a, "prune")) {
                 opts.command = .prune;
             } else if (std.mem.eql(u8, a, "setup")) {
@@ -2057,6 +2070,8 @@ const Flag = enum {
     profile,
     dump_config,
     preset,
+    update_check,
+    update_repo,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -2116,6 +2131,8 @@ const Flag = enum {
             .profile => "--profile",
             .dump_config => "--dump-config",
             .preset => "--preset",
+            .update_check => "--check",
+            .update_repo => "--repo <owner/name>",
         };
     }
 
@@ -2181,6 +2198,8 @@ const Flag = enum {
             .profile => "use a named config profile from profiles/<name>.toml",
             .dump_config => "print the merged config as JSON and exit",
             .preset => "run with a preset from presets/<name>.toml",
+            .update_check => "report the latest release and do not download or replace the binary",
+            .update_repo => "GitHub repository as owner/name (default maci0/clanker)",
         };
     }
 
@@ -2284,6 +2303,7 @@ const specs = [_]Spec{
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can\nactually reach, and finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, compare-and-swap lock files under state/locks/ that\nnothing has re-acquired in 12 hours, spilled tool results older than 12 hours,\nand the worktrees of goals that have been archived or abandoned whose branch\nis already merged. Sessions, goals, learnings and chat history are never\ntouched, and neither is a worktree whose branch still holds commits the base\ndoes not.\n\nAn aged lock file is not a stuck lock. ck_fs_write_if locks with flock, which\nthe kernel releases when the holding descriptor closes -- a crash included --\nso a lock is never stale. The 12 hours is a retention window for the file,\nwhich is named for a hash of its target: a target that recurs keeps the same\nlock fresh, and only one that will never be written again ages out." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
+    .{ .command = .update, .usage = "update [--check] [--repo <owner/name>]", .blurb = "replace this binary with the latest verified release", .group = .maintain, .flags = &.{ .update_check, .update_repo }, .detail = "Replace this binary with the latest verified GitHub release.\n\n--check              report the latest release and do not download or replace\n--repo <owner/name>  repository as owner/name (default maci0/clanker)\n\nA failed verification does not replace the binary. The download must match\nthe .sha256 sidecar published with that release. The same version is left\nin place. Comparison is exact, not a range.\n\nStdout of --check is only the release page URL. The comparison is printed\non stderr. An optional GITHUB_TOKEN authenticates the API request." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi,\ntools-ts-toolchain, the release contract (CHANGELOG/RELEASES.md),\nreports-inventory (record ## Status vs README row), skills-inventory (every\nskill file has a prompt-visible trigger) and dep-patches (patches/ applied to\nzig-pkg/) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
     .{ .command = .worktree_cmd, .usage = "worktree [prepare [<path>]|add <path> [<base>]]", .blurb = "give a hand-made git worktree the files it does not inherit", .group = .maintain, .detail = "`git worktree add` checks out TRACKED files only, and .env and\nconfig.local.toml are both gitignored. A worktree made by hand therefore\nresolves the committed config.toml default_provider with no key behind it,\nand every model-calling verb fails there -- clanker commit falls back to a\ndegraded one-commit plan that --yes refuses. The worktrees clanker makes for\nitself never had this problem: they link both files already.\n\n  prepare [<path>]     link .env and config.local.toml from the main checkout\n                       into an existing worktree (default: the current one)\n  add <path> [<base>]  fetch origin, create the worktree and a branch named\n                       after its directory, then prepare it. <base> defaults\n                       to the current branch\'s tip on origin\n\nThe links are leaves, the same shape src/improve/worktree.zig uses: both\nfiles are read by the host, and an atomic write resolves a leaf link before\nrenaming, so an edit made in the worktree lands in the main checkout\'s file\ninstead of detaching from it. Both names are gitignored, so a link can never\nenter a commit. An existing file of either name is never overwritten.\n\nSet [agent] worktree_link_local_config = false to refuse the link; prepare\nthen reports both names as skipped. The key is read from the MAIN CHECKOUT\'s\nconfig, since the worktree cannot see config.local.toml yet.\n\nGuest wasm is NOT linked: a build writes into zig-out, so a shared one would\nclobber the binaries the main tree is running. Run zig build tools in the\nworktree instead; prepare reports whether they are there and prints it.\n\nEXAMPLES\n  clanker worktree add .local/worktrees/fix-alarm   create it and prepare it\n  clanker worktree prepare                          prepare the one you are in\n  clanker worktree prepare /tmp/wt-probe            prepare another one" },
@@ -2428,6 +2448,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init, true),
         .doctor => try doctor_mod.cmdDoctor(init),
+        .update => try update_mod.cmdUpdate(init, opts.update_check, opts.update_repo),
         .prune => try cmdPrune(init, opts.apply),
         .setup => {
             // Scaffolding first: setup is the one command a new checkout runs,
@@ -11348,7 +11369,13 @@ fn handleWebuiAsset(
     const cache = webuiRenderCache(kind);
     const gz = webuiGzipCache(kind);
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
-    const content_type: []const u8 = if (kind == .css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
+    // `tailwind_css` is its own cache slot so it cannot alias the old `.css`
+    // kind, and it is still a stylesheet. Treating every other kind as
+    // JavaScript made the browser refuse the sheet.
+    const content_type: []const u8 = if (kind == .css or kind == .tailwind_css)
+        "text/css; charset=utf-8"
+    else
+        "text/javascript; charset=utf-8";
 
     // These are compiled into the binary and change with every rebuild, so
     // they cannot carry a far-future cache lifetime, but re-sending the same
@@ -18519,6 +18546,20 @@ test "mistyped commands get conservative suggestions" {
     try std.testing.expectEqualStrings("repl", suggestCommand("relp").?);
     try std.testing.expectEqualStrings("doctor", suggestCommand("docter").?);
     try std.testing.expect(suggestCommand("completely-different") == null);
+}
+
+test "update: --check and --repo parse, and a positional is a usage error" {
+    const opts = try parse(&.{ "clanker", "update", "--check", "--repo", "maci0/clanker" }, null);
+    try std.testing.expectEqual(Command.update, opts.command);
+    try std.testing.expect(opts.update_check);
+    try std.testing.expectEqualStrings("maci0/clanker", opts.update_repo.?);
+
+    const bare = try parse(&.{ "clanker", "update" }, null);
+    try std.testing.expect(!bare.update_check);
+    try std.testing.expect(bare.update_repo == null);
+
+    try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "update", "now" }, null));
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "update", "--repo" }, null));
 }
 
 test "unknown-command diagnostic wording is shared by both refusal paths" {

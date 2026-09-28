@@ -5499,6 +5499,7 @@ mountIcon(document.getElementById("chat-pin-toggle"), "pin", 16);
 mountIcon(document.getElementById("chat-refresh"), "refresh", 16);
 mountIcon(document.getElementById("chat-search-close"), "close", 16);
 mountIcon(document.getElementById("chat-pins-close"), "close", 16);
+mountIcon(document.getElementById("chat-emoji-btn"), "smile", 16);
 var pinsTitle = document.getElementById("chat-pins-title");
 if (pinsTitle && !pinsTitle.querySelector(".icon")) {
   pinsTitle.insertBefore(icon("pin", 14), pinsTitle.firstChild);

@@ -937,6 +937,7 @@ iter 2
 | `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`); see [Preparing a hand-made worktree](#preparing-a-hand-made-worktree) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
+| `update [--check] [--repo <owner/name>]` | Replace this binary with the latest verified GitHub release (default `maci0/clanker`). `--check` prints the release URL and does not download or replace. A failed checksum does not replace the binary |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs, plus `state/locks/` entries unused for 12h and spilled tool results past retention (also `clanker prune`) |
 
 ### `providers check`

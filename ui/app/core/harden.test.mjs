@@ -878,4 +878,70 @@ test("rooms own-message actions are labeled and report a failed write", function
   assert.doesNotMatch(app, /delBtn\.textContent = "🗑️"/);
 });
 
+function buttonElement(id) {
+  const re = new RegExp(`<button\\b[^>]*\\bid="${id}"[^>]*>[\\s\\S]*?</button>`);
+  const m = html.match(re);
+  assert.ok(m, "missing button #" + id);
+  return m[0];
+}
+
+test("icon actuators carry a glyph and not the labeled-button face", function () {
+  const app = readFileSync(join(here, "../app.js"), "utf8");
+  const icons = [
+    "rail-collapse", "help-open", "voice-btn", "workspace-new", "workspace-remove",
+    "chat-sidebar-toggle", "chat-search-toggle", "chat-pin-toggle", "chat-refresh",
+    "chat-search-close", "chat-pins-close", "chat-emoji-btn", "chat-create-room",
+  ];
+  const mounted = {
+    "rail-collapse": /mountIcon\(\s*document\.getElementById\("rail-collapse"\)/,
+    "help-open": /mountIcon\(\s*el\.helpOpen\b/,
+    "voice-btn": /mountIcon\(\s*document\.getElementById\("voice-btn"\)/,
+    "chat-sidebar-toggle": /mountIcon\(\s*document\.getElementById\("chat-sidebar-toggle"\)/,
+    "chat-search-toggle": /mountIcon\(\s*document\.getElementById\("chat-search-toggle"\)/,
+    "chat-pin-toggle": /mountIcon\(\s*document\.getElementById\("chat-pin-toggle"\)/,
+    "chat-refresh": /mountIcon\(\s*document\.getElementById\("chat-refresh"\)/,
+    "chat-search-close": /mountIcon\(\s*document\.getElementById\("chat-search-close"\)/,
+    "chat-pins-close": /mountIcon\(\s*document\.getElementById\("chat-pins-close"\)/,
+    "chat-emoji-btn": /mountIcon\(\s*document\.getElementById\("chat-emoji-btn"\)/,
+  };
+  for (const id of icons) {
+    const el = buttonElement(id);
+    assert.doesNotMatch(el, /\bsecondary\b/, "#" + id + " wears the labeled-button face");
+    assert.match(el, /\bicon-btn\b/, "#" + id + " has no icon face");
+    const inner = el.replace(/^[^>]*>/, "").replace(/<\/button>$/, "").trim();
+    if (inner.length === 0) {
+      assert.match(app, mounted[id], "#" + id + " has no glyph mount");
+    }
+  }
+});
+
+test("masthead, rail, and composer labels stay inside the control", function () {
+  assert.match(css, /#app-page,\s*#app-masthead,\s*#rail,\s*#task-form\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%/);
+  assert.match(css, /#app-page\s*\{[^}]*overflow-x:\s*hidden/);
+  assert.match(css, /#app-masthead\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /#rail-toggle,\s*#palette-open,\s*#theme-toggle,\s*#header-model,\s*#composer-model\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/);
+  assert.match(css, /\.rail-tab\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/);
+});
+
+test("shell fixes use cabinet tokens, not a one-off shadow or a second palette", function () {
+  const face = css.match(/button\.icon-btn\s*\{[^}]+\}/);
+  assert.ok(face, "missing icon-btn rule");
+  assert.match(face[0], /var\(--fg-muted\)/);
+  assert.match(face[0], /var\(--radius-pill\)/);
+  assert.match(face[0], /box-shadow:\s*none/);
+  assert.doesNotMatch(face[0], /#[0-9a-fA-F]{3,8}\b/);
+  const hover = css.match(/button\.icon-btn:hover,\s*button\.icon-btn:focus-visible\s*\{[^}]+\}/);
+  assert.ok(hover, "missing icon-btn hover rule");
+  assert.match(hover[0], /var\(--rule\)/);
+  assert.match(hover[0], /var\(--surface-2\)/);
+  assert.match(hover[0], /var\(--fg\)/);
+  assert.doesNotMatch(hover[0], /#[0-9a-fA-F]{3,8}\b/);
+  assert.doesNotMatch(html, /0_0_3rem/);
+  assert.match(html, /shadow-\[var\(--lift-high\)\]/);
+  const chat = buttonElement("new-chat");
+  assert.match(chat, /\bprimary\b/);
+  assert.doesNotMatch(chat, /\bsecondary\b/);
+  assert.doesNotMatch(chat, /black\)/);
+});
+
 

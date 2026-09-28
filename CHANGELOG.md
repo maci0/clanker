@@ -5,6 +5,25 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-28
+
+### Added
+
+- `clanker update` replaces this binary with the latest verified GitHub
+  release after the asset matches its `.sha256` sidecar. `--check` reports
+  the release and does not download or replace. `--repo owner/name` selects
+  the repository (default `maci0/clanker`). A failed verification leaves the
+  binary in place.
+
+### Fixed
+
+- Icon controls in the web shell show their glyph instead of an empty
+  labeled button. New chat uses the primary actuator. The rail drawer uses
+  the cabinet elevation token. Labels in the masthead, rail, and composer
+  stay inside their controls, and those regions do not widen the page.
+- The web UI stylesheet is served as CSS. It was sent as JavaScript, so
+  the browser refused to apply it.
+
 ## [0.6.2] - 2026-09-28
 
 ### Fixed

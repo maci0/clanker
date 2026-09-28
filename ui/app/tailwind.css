@@ -2375,9 +2375,6 @@
   .hover\:border-rule:hover {
     border-color: var(--rule);
   }
-  .hover\:border-transparent:hover {
-    border-color: transparent;
-  }
   .hover\:border-l-rule:hover {
     border-left-color: var(--rule);
   }
@@ -2395,14 +2392,6 @@
   @supports (color: color-mix(in lab, red, red)) {
     .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_14\%\,var\(--surface\)\)\]:hover {
       background-color: color-mix(in srgb,var(--accent) 14%,var(--surface));
-    }
-  }
-  .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_88\%\,black\)\]:hover {
-    background-color: var(--accent);
-  }
-  @supports (color: color-mix(in lab, red, red)) {
-    .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_88\%\,black\)\]:hover {
-      background-color: color-mix(in srgb,var(--accent) 88%,black);
     }
   }
   .hover\:bg-\[color-mix\(in_srgb\,var\(--fg\)_8\%\,transparent\)\]:hover {
@@ -3433,15 +3422,8 @@
   .max-\[640px\]\:\[font-size\:16px\] {
     font-size: 16px;
   }
-  .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
-    --tw-shadow: 0 0 3rem var(--tw-shadow-color, var(--bg));
-  }
-  @supports (color: color-mix(in lab, red, red)) {
-    .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
-      --tw-shadow: 0 0 3rem var(--tw-shadow-color, color-mix(in srgb,var(--bg) 70%,transparent));
-    }
-  }
-  .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
+  .max-\[640px\]\:shadow-\[var\(--lift-high\)\] {
+    --tw-shadow: var(--lift-high);
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .max-\[640px\]\:transition-transform {
@@ -4706,6 +4688,35 @@
       transition: none;
     }
   }
+  #app-page, #app-masthead, #rail, #task-form {
+    min-width: 0;
+    max-width: 100%;
+  }
+  #app-page {
+    overflow-x: hidden;
+  }
+  #app-masthead {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    gap: var(--space-3);
+  }
+  #app-masthead > div:last-child {
+    min-width: 0;
+    overflow: hidden;
+  }
+  #rail-toggle, #palette-open, #theme-toggle, #header-model, #composer-model {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-tab {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   @media (max-width: 40rem) {
     #app-masthead {
       padding-block: 0.35rem;
@@ -4829,6 +4840,31 @@
     border: 1px solid var(--border);
     font-family: var(--sans);
     border-radius: var(--radius-pill);
+  }
+  button.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 2rem;
+    min-width: 2rem;
+    padding: var(--space-1);
+    overflow: hidden;
+    background: transparent;
+    color: var(--fg-muted);
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: none;
+    font-family: var(--sans);
+  }
+  button.icon-btn:hover, button.icon-btn:focus-visible {
+    border-color: var(--rule);
+    background: var(--surface-2);
+    color: var(--fg);
+  }
+  button.icon-btn svg {
+    display: block;
+    flex: none;
   }
   button.secondary:hover {
     border-color: var(--fg-muted);
