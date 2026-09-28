@@ -337,6 +337,7 @@
   #app-page { overflow-x: hidden; }
   #app-masthead {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     overflow: hidden;
     gap: var(--space-3);

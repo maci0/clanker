@@ -5,6 +5,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- On a narrow window the masthead actions wrap onto their own row, and the
+  instance, peers, session, and help controls hide, so Jump and the theme
+  label stay inside their buttons.
+
 ## [0.7.0] - 2026-09-28
 
 ### Added

@@ -688,6 +688,9 @@
 .max-w-80 {
   max-width: calc(var(--spacing) * 80);
 }
+.max-w-\[12ch\] {
+  max-width: 12ch;
+}
 .max-w-\[22ch\] {
   max-width: 22ch;
 }
@@ -3398,6 +3401,9 @@
   .max-\[640px\]\:w-\[min\(20rem\,85vw\)\] {
     width: min(20rem, 85vw);
   }
+  .max-\[640px\]\:max-w-\[10ch\] {
+    max-width: 10ch;
+  }
   .max-\[640px\]\:max-w-none {
     max-width: none;
   }
@@ -4697,6 +4703,7 @@
   }
   #app-masthead {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     overflow: hidden;
     gap: var(--space-3);

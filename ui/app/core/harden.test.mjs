@@ -921,6 +921,19 @@ test("masthead, rail, and composer labels stay inside the control", function () 
   assert.match(css, /#app-masthead\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /#rail-toggle,\s*#palette-open,\s*#theme-toggle,\s*#header-model,\s*#composer-model\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/);
   assert.match(css, /\.rail-tab\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/);
+  // A base-layer display:none loses to the chips' inline-flex utility, so the
+  // phone hide has to be a utility too or the lamps paint across Jump.
+  for (const id of ["instance-chip", "peers-chip", "session-chip", "help-open"]) {
+    const tag = html.match(new RegExp(`<[^>]*\\bid="${id}"[^>]*>`));
+    assert.ok(tag, "missing #" + id);
+    assert.match(tag[0], /max-\[640px\]:hidden/, "#" + id + " stays on a phone and collides");
+  }
+  for (const id of ["palette-open", "theme-toggle", "header-model"]) {
+    const tag = html.match(new RegExp(`<[^>]*\\bid="${id}"[^>]*>`));
+    assert.ok(tag, "missing #" + id);
+    assert.match(tag[0], /min-w-0/, "#" + id + " cannot shrink");
+    assert.match(tag[0], /overflow-hidden/, "#" + id + " lets its label paint outside");
+  }
 });
 
 test("shell fixes use cabinet tokens, not a one-off shadow or a second palette", function () {
