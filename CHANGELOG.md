@@ -5,6 +5,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-28
+
+### Changed
+
+- Version bump only. No consumer-visible changes since 0.8.0.
+
 ## [0.8.0] - 2026-09-28
 
 ### Fixed
