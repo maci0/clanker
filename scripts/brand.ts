@@ -16,6 +16,8 @@ type Glyph = { d: (x: number) => string; width: number };
 
 type Run = { d: string; width: number };
 
+type Pair = { back: string; fore: string; minimum: number; use: string };
+
 const BRAND = "docs/brand",
   CAP = 3.5,
   FAVICON = /<link rel="icon" href="[^"]*">/u,
@@ -33,10 +35,33 @@ const BRAND = "docs/brand",
   ICON_CELL = { height: 84, width: 104 },
   ICON_COLUMNS = 8,
   MASTHEAD = /<h1><svg class="logo"[\s\S]*?<\/h1>/u,
+  /* The text and signal pairs the UI actually sets, with the WCAG 2.2 AA minimum each must meet. */
+  PAIRS: Array<Pair> = [
+    { back: "bg", fore: "fg", minimum: 4.5, use: "body text on the page" },
+    { back: "surface", fore: "fg", minimum: 4.5, use: "body text on a panel" },
+    { back: "surface-2", fore: "fg", minimum: 4.5, use: "body text in a well" },
+    { back: "bg", fore: "fg-muted", minimum: 4.5, use: "metadata on the page" },
+    { back: "surface", fore: "fg-muted", minimum: 4.5, use: "metadata on a panel" },
+    { back: "surface", fore: "accent-text", minimum: 4.5, use: "links on a panel" },
+    { back: "accent", fore: "on-accent", minimum: 4.5, use: "primary button label" },
+    { back: "surface", fore: "ok", minimum: 4.5, use: "healthy state text" },
+    { back: "surface", fore: "warn-text", minimum: 4.5, use: "warning text" },
+    { back: "surface", fore: "danger", minimum: 4.5, use: "fault text" },
+    { back: "surface", fore: "border", minimum: 3, use: "control boundary (non-text)" },
+  ],
+  README = `${BRAND}/README.md`,
+  README_TABLE = /<!-- contrast:start -->[\s\S]*?<!-- contrast:end -->/u,
   ROOT = new URL("../", import.meta.url),
   SWATCH = { height: 64, width: 132 },
   TOKENS = ["bg", "surface", "surface-2", "border", "rule", "fg", "fg-muted", "accent", "ok", "warn", "danger"],
   WORD = ["c", "l", "a", "n", "k", "e", "r"] satisfies Array<keyof typeof GLYPHS>,
+  /* WCAG relative luminance of a #rrggbb colour. */
+  brightness = (hex: string): number => {
+    const channels = [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16) / 255),
+      linear = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+
+    return 0.2126 * (linear[0] ?? 0) + 0.7152 * (linear[1] ?? 0) + 0.0722 * (linear[2] ?? 0);
+  },
   colourOf = (palette: Palette, name: string): string => {
     const value = palette.get(name);
 
@@ -45,6 +70,23 @@ const BRAND = "docs/brand",
     }
 
     return value;
+  },
+  /* WCAG contrast ratio of two #rrggbb colours. */
+  contrast = (a: string, b: string): number => {
+    const [high = 0, low = 0] = [brightness(a), brightness(b)].toSorted((x, y) => y - x);
+
+    return (high + 0.05) / (low + 0.05);
+  },
+  /* The contrast table the brand guide carries, one row per pair, both themes. */
+  contrastTable = (day: Palette, night: Palette): string => {
+    const cell = (palette: Palette, pair: Pair): string => {
+        const ratio = contrast(colourOf(palette, pair.fore), colourOf(palette, pair.back));
+
+        return `${ratio.toFixed(2)}:1 ${ratio >= pair.minimum ? "pass" : "FAIL"}`;
+      },
+      rows = PAIRS.map((pair) => `| \`--${pair.fore}\` on \`--${pair.back}\` | ${pair.use} | ${cell(day, pair)} | ${cell(night, pair)} | ${pair.minimum}:1 |`);
+
+    return ["<!-- contrast:start -->", "| Pair | Used for | Day | Night | AA minimum |", "|---|---|---|---|---|", ...rows, "<!-- contrast:end -->"].join("\n");
   },
   /* An SVG as a data URI, escaping only what a URI and an HTML attribute require. */
   dataUri = (text: string): string =>
@@ -69,6 +111,45 @@ const BRAND = "docs/brand",
   },
   iconFile = (paths: Array<string>): string =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter">\n${paths.map((d) => `  <path d="${d}"/>`).join("\n")}\n</svg>\n`,
+  /* A standalone page listing every icon at two sizes with its name and file, for browsing outside the repo viewer. */
+  iconIndex = (day: Palette): string => {
+    const cells = Object.entries(ICON_PATHS)
+      .toSorted(([a], [b]) => a.localeCompare(b))
+      .map(
+        ([name, paths]) =>
+          `<li><a href="icons/${name}.svg"><svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg><code>${name}</code></a></li>`,
+      );
+
+    return [
+      "<!doctype html>",
+      '<html lang="en">',
+      "<head>",
+      '<meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>clanker icons</title>",
+      "<style>",
+      `body{margin:0;padding:2rem 1rem;background:${colourOf(day, "bg")};color:${colourOf(day, "fg")};font:1rem/1.6 ui-sans-serif,system-ui,sans-serif}`,
+      "main{max-width:64rem;margin:0 auto}h1{font-size:1.375rem;font-weight:600;margin:0 0 .4rem}p{margin:0 0 1.4rem;max-width:70ch}",
+      "ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(8rem,1fr));gap:.6rem}",
+      `a{display:flex;flex-direction:column;align-items:center;gap:.4rem;padding:.9rem .4rem;border:1px solid ${colourOf(day, "rule")};border-radius:4px;background:${colourOf(day, "surface")};color:inherit;text-decoration:none}`,
+      `a:hover{border-color:${colourOf(day, "border")}}a:focus-visible{outline:2px solid ${colourOf(day, "accent")};outline-offset:2px}`,
+      "svg{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:square;stroke-linejoin:miter}",
+      `code{font:.75rem ui-monospace,monospace;color:${colourOf(day, "fg-muted")}}`,
+      "</style>",
+      "</head>",
+      "<body>",
+      "<main>",
+      "<h1>clanker icons</h1>",
+      `<p>${cells.length} icons on one 24-unit grid with a 1.75 stroke. Each links to its SVG, which draws in <code>currentColor</code>. The source is <code>ICON_PATHS</code> in <code>ui/app/core/icons.js</code>.</p>`,
+      `<ul>
+${cells.join("\n")}
+</ul>`,
+      "</main>",
+      "</body>",
+      "</html>",
+      "",
+    ].join("\n");
+  },
   /* Every icon drawn at 32px on a labelled grid. */
   iconSheet = (light: Palette): string => {
     const all = Object.entries(ICON_PATHS).toSorted(([a], [b]) => a.localeCompare(b)),
@@ -185,6 +266,7 @@ const BRAND = "docs/brand",
   renderAll = async (): Promise<Array<Output>> => {
     const css = await Bun.file(new URL("ui/app/tailwind.src.css", ROOT)).text(),
       day = readTokens(css, ":root {"),
+      guide = await Bun.file(new URL(README, ROOT)).text(),
       html = await Bun.file(new URL("ui/app/index.html", ROOT)).text(),
       night = new Map([...day, ...readTokens(css, ":root:not([data-theme]) {")]),
       plate = drawSvg(32, 32, lampMark(night, day), "clanker");
@@ -197,6 +279,8 @@ const BRAND = "docs/brand",
       { path: `${BRAND}/lockup-dark.svg`, text: lockup(night, day, colourOf(night, "fg")) },
       { path: `${BRAND}/palette.svg`, text: palette(day, night) },
       { path: `${BRAND}/icons.svg`, text: iconSheet(day) },
+      { path: `${BRAND}/icons.html`, text: iconIndex(day) },
+      { path: README, text: guide.replace(README_TABLE, contrastTable(day, night)) },
       ...Object.entries(ICON_PATHS).map(([name, paths]) => ({ path: `${BRAND}/icons/${name}.svg`, text: iconFile(paths) })),
       { path: "ui/app/index.html", text: html.replace(FAVICON, `<link rel="icon" href="${dataUri(plate)}">`).replace(MASTHEAD, masthead(night, day)) },
     ];

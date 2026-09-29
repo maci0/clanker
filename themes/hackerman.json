@@ -10,7 +10,7 @@
     "--surface-2": "#0a160a",
     "--surface-hover": "color-mix(in srgb, var(--fg) 8%, var(--surface))",
     "--surface-raised": "var(--surface-2)",
-    "--border": "#0a5a0a",
+    "--border": "#0f6e15",
     "--rule": "#0a3a0a",
     "--fg": "#33ff66",
     "--fg-muted": "#00aa55",

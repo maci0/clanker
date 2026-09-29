@@ -497,7 +497,7 @@ clanker.registerView({
 
     function drawOffice(o, ox, oy) {
       var L = o.layout;
-      var wall = cssVar("--border", "#b9b5aa");
+      var wall = cssVar("--border", "#7b7971");
       var floor = cssVar("--surface-2", "#e2dfd6");
       var ink = cssVar("--fg", "#1b1c18");
       var muted = cssVar("--fg-muted", "#4f534b");
@@ -697,7 +697,7 @@ clanker.registerView({
       var wy = oy + L.whiteboard.y * TILE;
       ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
       ctx2d.fillRect(wx, wy, L.whiteboard.w * TILE, L.whiteboard.h * TILE);
-      ctx2d.strokeStyle = cssVar("--border", "#b9b5aa");
+      ctx2d.strokeStyle = cssVar("--border", "#7b7971");
       ctx2d.lineWidth = 2;
       ctx2d.strokeRect(wx + 1, wy + 1, L.whiteboard.w * TILE - 2, L.whiteboard.h * TILE - 2);
       // Tray along the bottom, so it reads as a whiteboard and not a window.
@@ -833,7 +833,7 @@ clanker.registerView({
       if (bx + w > roomRight) bx = Math.max(ox + 4, px - w);
       ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
       ctx2d.fillRect(bx, py - 18, w, 16);
-      ctx2d.strokeStyle = cssVar("--border", "#b9b5aa");
+      ctx2d.strokeStyle = cssVar("--border", "#7b7971");
       ctx2d.lineWidth = 1;
       ctx2d.strokeRect(bx + 0.5, py - 17.5, w - 1, 15);
       ctx2d.fillStyle = cssVar("--fg", "#1b1c18");

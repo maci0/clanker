@@ -6,7 +6,7 @@ colors:
   cabinet-backplane: "#dcd9d1"
   cabinet-panel: "#eeebe4"
   cabinet-well: "#e2dfd6"
-  cabinet-edge: "#b9b5aa"
+  cabinet-edge: "#7b7971"
   cabinet-rule: "#cdc9bf"
   ink: "#1b1c18"
   muted-ink: "#4f534b"
@@ -98,7 +98,7 @@ Warm cabinet neutrals carry the interface; blue is reserved for operator action,
 - **Cabinet Backplane** (`#dcd9d1`): page background.
 - **Cabinet Panel** (`#eeebe4`): primary working surfaces.
 - **Cabinet Well** (`#e2dfd6`): inset and secondary surfaces.
-- **Cabinet Edge** (`#b9b5aa`): strong boundaries.
+- **Cabinet Edge** (`#7b7971`): control boundaries, at 3:1 or better against the panel and the backplane (WCAG 2.2 1.4.11).
 - **Cabinet Rule** (`#cdc9bf`): internal dividers.
 - **Ink** (`#1b1c18`): primary text.
 - **Muted Ink** (`#4f534b`): metadata and supporting labels.

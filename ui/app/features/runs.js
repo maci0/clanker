@@ -40,7 +40,7 @@ var EXPORT_FALLBACK = {
   "--bg": "#dcd9d1",
   "--fg": "#1b1c18",
   "--fg-muted": "#4f534b",
-  "--border": "#b9b5aa",
+  "--border": "#7b7971",
   "--surface": "#eeebe4",
   "--code-bg": "#d4d0c6"
 };
