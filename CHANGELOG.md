@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-29
+
 ### Added
 
 - A brand guide at `docs/brand/`: the mark, a drawn wordmark, light and dark
