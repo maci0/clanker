@@ -5,6 +5,48 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-29
+
+### Added
+
+- WCAG AA contrast for every palette the web UI ships: the day and night
+  cabinet in `tailwind.src.css` and every named theme in `themes/`. Includes
+  a contrast regression test suite (`ui/app/contrast.test.ts`) and a
+  standalone browser icon directory at `docs/brand/icons.html`.
+- Web UI rail iconography and Headlamp layout styling: every destination in the
+  rail wears an icon from the `icons.js` grid, paired with aligned typography and
+  brand icon assets in `docs/brand/icons/`.
+- Tool call latency tracking in the `/api/metrics` snapshot, with cumulative
+  latency buckets (`le_100`, `le_1000`, `le_10000`).
+
+### Fixed
+
+- A2A delegation deduplication: retried delegations deduplicate on their
+  JSON-RPC id, evicted response bodies are properly freed without memory leaks,
+  and entry counts are bounded at `max_entries`.
+- Child process lifecycle: bound process termination with SIGKILL escalation
+  to prevent hangs on wedged children.
+- Mesh replication: close mesh join leaks, propagate session erasure across
+  mesh session replicas, and prevent socket double-close descriptor races on leave.
+- Job execution: bound second-waiter spins and exec-child exit hangs.
+- Web UI: respect reduced motion preferences, trap Tab navigation inside
+  dialogs, and allow the navigation rail to scroll before the conversation list
+  collapses.
+- Preset safety: refuse unloadable presets rather than silently running turns
+  unfiltered.
+- Guest prompt safety: fence untrusted tool results and observation text in
+  guest prompts.
+- E2E testing: make the mock LLM test harness deterministically replayable with
+  kernel-assigned ephemeral ports and fixed seed.
+- Linting: deduplicate `required-version` in `ruff.toml`.
+
+### Changed
+
+- Web UI asset weight budget now accounts for absolute-specifier imports.
+- Pre-commit hook runs `bun install --frozen-lockfile` before JavaScript
+  linting to avoid skipping linter in fresh checkouts, and ratchets findings
+  deterministically across environments.
+
 ## [0.10.0] - 2026-09-29
 
 ### Added

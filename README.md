@@ -43,7 +43,7 @@ plugin's reach.
 
 ## Release status
 
-`0.10.0` is the newest published release, and `main` carries the next one. A
+`0.11.0` is the newest published release, and `main` carries the next one. A
 version in `build.zig.zon` is the version a build reports, not a published
 release: a release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries
 binaries and a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0`
@@ -62,7 +62,7 @@ To run a published release, download the binary for your platform from the
 `sbom.cdx.json`) and run it:
 
 ```sh
-./clanker-v0.10.0-x86_64-linux-musl --version   # clanker 0.10.0
+./clanker-v0.11.0-x86_64-linux-musl --version   # clanker 0.11.0
 ```
 
 To build from source, the requirements are **Zig 0.16.x**, **Git**, **Bash**,

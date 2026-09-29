@@ -88,7 +88,8 @@ Before creating a tag:
 
 | Version | Supported until |
 |---|---|
-| 0.10.x | Next `0.MINOR.0` release |
+| 0.11.x | Next `0.MINOR.0` release |
+| 0.10.x | Ended at 0.11.0 |
 | 0.9.x | Ended at 0.10.0 |
 | 0.8.x | Ended at 0.9.0 |
 | 0.7.x | Ended at 0.8.0 |
