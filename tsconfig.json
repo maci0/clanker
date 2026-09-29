@@ -12,6 +12,6 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["tools/oxlint/*.ts", "ui/**/*.js", "ui/**/*.mjs", "ui/**/*.ts"],
+  "include": ["scripts/*.ts", "tools/oxlint/*.ts", "ui/**/*.js", "ui/**/*.mjs", "ui/**/*.ts"],
   "exclude": ["node_modules", "ui/vendor", "tools/oxlint/anti-slop"]
 }

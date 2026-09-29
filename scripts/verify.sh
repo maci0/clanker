@@ -36,6 +36,7 @@ if command -v bun >/dev/null 2>&1; then
     bun install --frozen-lockfile || status=1
     bun test tools/oxlint || status=1
     bun run lint || status=1
+    bun scripts/brand.ts --check || status=1
 
     step "JavaScript toolchains (CI: Audit JavaScript toolchains)"
     bun audit --audit-level=high || status=1

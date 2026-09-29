@@ -63,6 +63,13 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
+# Brand outputs, when bun is installed: docs/brand/ and the favicon and
+# masthead in ui/app/index.html are generated from the tokens and the icon
+# grid, so a change to either must carry its regenerated files.
+if [ -n "$(staged 'docs/brand/*' 'ui/app/index.html' 'ui/app/tailwind.src.css' 'ui/app/core/icons.js' 'scripts/brand.ts' | tr -d '\0')" ] && command -v bun >/dev/null 2>&1; then
+    bun scripts/brand.ts --check || fail "brand outputs are stale (run: bun scripts/brand.ts)"
+fi
+
 # Python lint, when ruff is installed (CI runs it regardless). Same config
 # (ruff.toml) and same file set as CI: every tracked .py, globbed from the
 # index by the caller.

@@ -76,6 +76,8 @@ clanker is an operator surface for a fleet of small machine workers. It borrows 
 
 The signature is the lamp: a radial dome that glows only when state deserves attention. Everything around it stays flat, machined, and restrained. Day shift uses warm cabinet greys; night shift uses graphite surfaces with brighter readings. Named palettes may change the atmosphere but preserve the same semantic roles.
 
+The mark, wordmark, icon library, mascot rules and voice live in the [brand guide](docs/brand/README.md).
+
 **Key Characteristics:**
 
 - Industrial, tactile, and operator-focused.
@@ -117,7 +119,7 @@ Warm cabinet neutrals carry the interface; blue is reserved for operator action,
 **Body Font:** system sans-serif stack  
 **Label/Mono Font:** system monospace stack
 
-**Character:** prose stays quiet and native to the host OS. Monospace is reserved for measurements, code, IDs, and engraved control labels—not used as a generic technical costume.
+**Character:** prose stays quiet and native to the host OS. Monospace is reserved for measurements, code, IDs, and engraved control labels, never as a generic technical costume.
 
 ### Hierarchy
 

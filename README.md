@@ -1,7 +1,12 @@
-# clanker
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.svg">
+    <img src="docs/brand/lockup.svg" alt="clanker" height="48">
+  </picture>
+</h1>
 
 <p align="center">
-  <img src="docs/assets/mascot.jpg" alt="clanker mascot" width="280">
+  <img src="docs/assets/mascot.jpg" alt="The clanker mascot: a patched, dented robot waving, wrapped in tape" width="240">
   <br>
   <strong><em>embrace the jank.</em></strong>
 </p>
@@ -10,7 +15,7 @@ clanker is a self-improving AI agent harness written in Zig 0.16. It runs its to
 
 ## Everything is a plugin
 
-Not a tagline — a design pressure. Whatever can be a drop-in unit with
+Not a tagline: a design pressure. Whatever can be a drop-in unit with
 a declared surface, is one; whatever isn't yet is expected to justify
 itself. And most plugins here ship as sandboxed WASM modules, so the
 plugin boundary is also the security boundary: a plugin runs under a
@@ -20,25 +25,25 @@ touch, not with the process's authority.
 - **Tools?** Plugin. A WASM guest plus a `*.tool.json` manifest is the
   whole contract (`clanker plugins new <name>` scaffolds one).
 - **Models and providers?** Plugin. One vtable file, one registry row,
-  one `ProviderKind` tag — never a new `switch (provider.kind)`.
+  one `ProviderKind` tag, never a new `switch (provider.kind)`.
 - **Web UI views?** Plugin. A directory under `ui/plugins/` with
   `plugin.json` + `app.js` is a live page surface, no rebuild; the
   `webui_addon` tool lets a chat write one.
 - **Skills and prompts?** Plugin. Markdown in `skills/`, records in the
-  prompts store — data the harness loads, not code it hardcodes.
+  prompts store: data the harness loads, not code it hardcodes.
 - **Config?** Hot-loaded. A clean edit restarts the server into it; a
   broken one is refused and the last known good config keeps serving.
 - **The improve loop itself?** Gated, not trusted: every self-change is
   a proposal that must survive build, tests, tools, fmt, and lint
   before it exists.
 
-The core that remains core — the sandbox policy, the gates, the
-credential handling — is small on purpose, and stays out of any
+The core that remains core (the sandbox policy, the gates, the
+credential handling) is small on purpose, and stays out of any
 plugin's reach.
 
 ## Release status
 
-The line in development is `0.6.x`; `0.5.0` is the newest published release. A
+`0.9.0` is the newest published release, and `main` carries the next one. A
 version in `build.zig.zon` is the version a build reports, not a published
 release: a release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries
 binaries and a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0`
@@ -63,9 +68,9 @@ To run a published release, download the binary for your platform from the
 To build from source, the requirements are **Zig 0.16.x**, **Git**, **Bash**,
 and **patch**; the test suite also requires **Bun** and **Python 3**. The Zig
 release is pinned in
-`build.zig.zon`'s `minimum_zig_version` (CI installs exactly that release from it). `zig build` and `zig build tools` need no bun
-— `tools/ts/dist/` is committed so a checkout without a JS toolchain still
-builds and runs every tool — but the test step drives its JS suites with
+`build.zig.zon`'s `minimum_zig_version` (CI installs exactly that release from it). `zig build` and `zig build tools` need no bun:
+`tools/ts/dist/` is committed, so a checkout without a JS toolchain still
+builds and runs every tool. The test step drives its JS suites with
 `bun test`.
 
 From a fresh clone, one command checks the toolchain, extracts the pinned
@@ -108,7 +113,7 @@ The edit loop has three speeds, slowest last:
 - `zig build test -Dtest-filter="<substring>"`: compiles the Zig binary with
   only the matching tests registered (a filter that matches nothing passes with
   0 tests; the JS suites still run).
-- `zig build test` — the full suite (Zig + JS), which takes minutes.
+- `zig build test`: the full suite (Zig + JS), which takes minutes.
 
 `zig build fmt-fix` rewrites the formatting `quick-check` reports. For a
 JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs`,
@@ -173,7 +178,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | `serve` | What `clanker serve` binds, including proxy ports, credentials, aliases, and timeouts |
 | `peers` | Other instances (`name` + `url`) for notify / phonebook |
 | `notify` | Peer notification topic / enable |
-| `chatrooms` | Default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag |
+| `chatrooms` | Default room subscriptions (`rooms`, `max_history`), separate from the `modules.chatrooms` on/off flag |
 | `memory` | Retrieval backend, chunking, embeddings, and vector search |
 | `web` | Additional hosts the research tools may reach |
 | `tui` | REPL appearance, including the mascot mode, size, and direction |
@@ -186,30 +191,30 @@ Provider `kind` is `openai_compat`, `anthropic`, `vertex_anthropic` (Anthropic-o
 
 ## Features
 
-- **WASM tools** – sandboxed tool execution via zwasm with an explicit ABI
-- **MCP server** – stdio JSON-RPC server exposing tools to MCP clients
-- **Peer notifications + phonebook** – send messages to other clanker instances and list agent cards
-- **Mesh** – `clanker mesh` joins, leaves, and inspects a TCP cluster of `clanker serve` processes (same host or LAN). Loopback HTTP to local serve; serve owns the sockets
-- **A2A agent cards** – `.well-known/agent.json` discovery (`modules.a2a`)
-- **Goal lifecycle** – `/write-goal` drafts without side effects, `/add-goal` saves without running, and `/goal` starts a goal loop that keeps working until its completion condition is met
-- **REPL with streaming** – interactive session with live token output, plus slash commands (`/help`, `/model`, `/workflows`, `/workflow`, `/sessions`, `/graph`, `/status`, `/plugins`, `/theme`, `/preset`, `/effort`, `/research`, `/rfc`, `/websearch`, `/goal`, `/autoresearch`, `/arena`, `/compare`) with Tab-complete; some run in-process, the rest dispatch to an internal WASM tool. `/research` is the same note store as `clanker research` and `/rfc` the same RFC store as `clanker rfc`; the web-preference toggle is `/websearch`
-- **Visible cost and context** – every turn closes with `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]` in the REPL and on `clanker run`'s stderr, the status bar carries a running context meter and session cost, and compaction announces itself instead of quietly dropping the exchange you were about to ask about
-- **Inline shell escape** – `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
-- **Execution graphs** – every run is recorded to `state/runs/`; list them with `/graph` or replay one with `/graph <run-id>` or `clanker graph <run-id>`
-- **Arena** – `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
-- **Blind model comparison** – `clanker compare "<prompt>" --with a --with b@model` asks 2-8 configured models the same thing concurrently (`ck_llm_many`) and shows the answers as A, B, C with nothing saying which model wrote which; a judge model or `--pick <letter>` decides, `--synthesize` merges them; the web UI's Compare tab shows the same answers side by side with a pick button per column, and stays blind until you choose
-- **Plugin toggles** – `clanker plugins`, `/plugins` in the REPL, and the web UI list every WASM tool and switch optional ones on or off; core tools stay on
-- **Plugin manifest SDK** – a plugin is one `*.tool.json` manifest plus a WASM module, and the manifest is the whole sandbox policy. `clanker plugins new <name>` scaffolds a working pair, `clanker plugins validate` checks a manifest or a directory of them and names the offending key, and a manifest whose `wasm` is a bare filename resolves beside itself, so `{name.tool.json, name.wasm}` in one directory is a portable plugin. Field reference: [docs/manifest.md](docs/manifest.md)
-- **Transform chains** – plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
-- **Plugins that call the model** – `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
-- **Operational reports and runbooks** – `clanker reports` lists every recorded bug, investigation and recovery procedure with its status and path, `clanker reports search "<text>"` searches them all before you start diagnosing, and `create`/`append`/`update` write one. Same sandboxed `reports` tool the agent calls, so both surfaces share one store, one inventory and one set of compare-and-swap writes
-- **Open decisions** – `clanker rfc` lists every request for comment under `docs/rfcs/` with the status read from the document and the next free number, `clanker rfc search "<text>"` covers the RFCs and the ADRs together so a decision already made surfaces before it is re-litigated, and `create`/`recommend`/`status`/`rename` write one. `rename` moves an RFC to a new slug and rewrites its inventory link, keeping the number — RFCs are cited by number across the tree, where a filename scan cannot follow. Same sandboxed `rfc` tool the agent calls
-- **Decisions already made** – `clanker adr` lists every architecture decision under `docs/adrs/` with the status read from the document and the next free number, `clanker adr search "<text>"` spans the ADRs, RFCs and PRDs and says which store each hit fell in, and `create`/`status`/`rename` write one. `rename` keeps the number for the same reason RFCs do. `create` requires the consequences and `status ... superseded` requires a note naming the replacement, so a decision is never reversed by editing its own history out. Same sandboxed `adr` tool the agent calls
-- **Feature specifications** – `clanker prd` lists every PRD under `docs/prds/` grouped by status with the unfinished work first, `clanker prd checklist` says what a Draft has to pin down before it counts as planned, and `create`/`status`/`rename` write one, `rename` again keeping the number. Same sandboxed `prd` tool the agent calls
-- **Record stores over HTTP** – `clanker serve` exposes each of those five stores at `/api/reports`, `/api/rfc`, `/api/adr`, `/api/prd` and `/api/research`. Each endpoint relays the same sandboxed tool the CLI and the agent call, so there is one implementation and one set of field names; `GET` serves the reads (`list`, `search`, `open`) and `POST` the writes (`create`, `append`, `update`, `status`)
-- **Scheduled runs** – `clanker schedule add "0 9 * * 1-5" "review yesterday's runs"` puts a recurring task in `state/schedule.json`; the system's own cron calls `clanker schedule run-due` to fire what is due (see below)
-- **Token budget** – `compact_threshold_bytes` and `max_total_tokens` controls
-- **Web UI** – internal WASM tool served at `GET /`
+- **WASM tools**: sandboxed tool execution via zwasm with an explicit ABI
+- **MCP server**: stdio JSON-RPC server exposing tools to MCP clients
+- **Peer notifications + phonebook**: send messages to other clanker instances and list agent cards
+- **Mesh**: `clanker mesh` joins, leaves, and inspects a TCP cluster of `clanker serve` processes (same host or LAN). Loopback HTTP to local serve; serve owns the sockets
+- **A2A agent cards**: `.well-known/agent.json` discovery (`modules.a2a`)
+- **Goal lifecycle**: `/write-goal` drafts without side effects, `/add-goal` saves without running, and `/goal` starts a goal loop that keeps working until its completion condition is met
+- **REPL with streaming**: interactive session with live token output, plus slash commands (`/help`, `/model`, `/workflows`, `/workflow`, `/sessions`, `/graph`, `/status`, `/plugins`, `/theme`, `/preset`, `/effort`, `/research`, `/rfc`, `/websearch`, `/goal`, `/autoresearch`, `/arena`, `/compare`) with Tab-complete; some run in-process, the rest dispatch to an internal WASM tool. `/research` is the same note store as `clanker research` and `/rfc` the same RFC store as `clanker rfc`; the web-preference toggle is `/websearch`
+- **Visible cost and context**: every turn closes with `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]` in the REPL and on `clanker run`'s stderr, the status bar carries a running context meter and session cost, and compaction announces itself instead of quietly dropping the exchange you were about to ask about
+- **Inline shell escape**: `!git log --oneline -5` in the REPL runs there and then, printing into the transcript instead of going to the model. Not a shell: one fixed argv through the same `ck_exec` gate the tools go through, so no pipes, globs or `$VAR`, and the child never sees your API keys. Bare `!` lists what it may run
+- **Execution graphs**: every run is recorded to `state/runs/`; list them with `/graph` or replay one with `/graph <run-id>` or `clanker graph <run-id>`
+- **Arena**: `clanker arena "<question>" --for X --against Y` runs a judged debate between two positions, or a 3-8 way battle royale with repeated `--position`; ends in a verdict traceable to the transcript, viewable as a pixel battle in the web UI
+- **Blind model comparison**: `clanker compare "<prompt>" --with a --with b@model` asks 2-8 configured models the same thing concurrently (`ck_llm_many`) and shows the answers as A, B, C with nothing saying which model wrote which; a judge model or `--pick <letter>` decides, `--synthesize` merges them; the web UI's Compare tab shows the same answers side by side with a pick button per column, and stays blind until you choose
+- **Plugin toggles**: `clanker plugins`, `/plugins` in the REPL, and the web UI list every WASM tool and switch optional ones on or off; core tools stay on
+- **Plugin manifest SDK**: a plugin is one `*.tool.json` manifest plus a WASM module, and the manifest is the whole sandbox policy. `clanker plugins new <name>` scaffolds a working pair, `clanker plugins validate` checks a manifest or a directory of them and names the offending key, and a manifest whose `wasm` is a bare filename resolves beside itself, so `{name.tool.json, name.wasm}` in one directory is a portable plugin. Field reference: [docs/manifest.md](docs/manifest.md)
+- **Transform chains**: plugins that rewrite another tool's input or output, in order, each knowing which tool it wraps
+- **Plugins that call the model**: `ck_llm` plus a per-plugin `config` for provider, model, and its own settings (see the `translate` plugin)
+- **Operational reports and runbooks**: `clanker reports` lists every recorded bug, investigation and recovery procedure with its status and path, `clanker reports search "<text>"` searches them all before you start diagnosing, and `create`/`append`/`update` write one. Same sandboxed `reports` tool the agent calls, so both surfaces share one store, one inventory and one set of compare-and-swap writes
+- **Open decisions**: `clanker rfc` lists every request for comment under `docs/rfcs/` with the status read from the document and the next free number, `clanker rfc search "<text>"` covers the RFCs and the ADRs together so a decision already made surfaces before it is re-litigated, and `create`/`recommend`/`status`/`rename` write one. `rename` moves an RFC to a new slug and rewrites its inventory link, keeping the number, because RFCs are cited by number across the tree, where a filename scan cannot follow. Same sandboxed `rfc` tool the agent calls
+- **Decisions already made**: `clanker adr` lists every architecture decision under `docs/adrs/` with the status read from the document and the next free number, `clanker adr search "<text>"` spans the ADRs, RFCs and PRDs and says which store each hit fell in, and `create`/`status`/`rename` write one. `rename` keeps the number for the same reason RFCs do. `create` requires the consequences and `status ... superseded` requires a note naming the replacement, so a decision is never reversed by editing its own history out. Same sandboxed `adr` tool the agent calls
+- **Feature specifications**: `clanker prd` lists every PRD under `docs/prds/` grouped by status with the unfinished work first, `clanker prd checklist` says what a Draft has to pin down before it counts as planned, and `create`/`status`/`rename` write one, `rename` again keeping the number. Same sandboxed `prd` tool the agent calls
+- **Record stores over HTTP**: `clanker serve` exposes each of those five stores at `/api/reports`, `/api/rfc`, `/api/adr`, `/api/prd` and `/api/research`. Each endpoint relays the same sandboxed tool the CLI and the agent call, so there is one implementation and one set of field names; `GET` serves the reads (`list`, `search`, `open`) and `POST` the writes (`create`, `append`, `update`, `status`)
+- **Scheduled runs**: `clanker schedule add "0 9 * * 1-5" "review yesterday's runs"` puts a recurring task in `state/schedule.json`; the system's own cron calls `clanker schedule run-due` to fire what is due (see below)
+- **Token budget**: `compact_threshold_bytes` and `max_total_tokens` controls
+- **Web UI**: internal WASM tool served at `GET /`
 
 For full documentation, see [docs/README.md](docs/README.md).
 
@@ -261,7 +266,7 @@ Weakest first, each layer overrides the one above it:
 | Layer | Host | Web UI port | Names | Proxy |
 | --- | --- | --- | --- | --- |
 | `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (array) | `proxy`, `proxy_port` |
-| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | n/a | `CLANKER_PROXY_PORT` |
 | flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
 The proxy also ships standalone: `zig build proxy` builds `clanker-proxy`, a
@@ -305,7 +310,7 @@ Nothing fires on its own. The system's own cron is the clock:
 sweep, so a run that takes longer than a minute is not stacked on top of
 itself. Fire one entry ahead of its schedule with `clanker schedule run <id>`.
 
-The spec is five fields — `minute hour day-of-month month day-of-week` — each
+The spec is five fields (`minute hour day-of-month month day-of-week`), each
 `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list. Sunday is `0`
 or `7`; names (`MON`) and `@nicknames` are not accepted. When both day fields
 are restricted, the entry fires when *either* matches, as in Vixie cron. Fields
@@ -313,7 +318,7 @@ are read in UTC unless the entry carries a fixed `--tz-offset` (`+02:00`,
 `-05:00`); there is no DST handling, on purpose.
 
 **A missed window fires once.** A machine that slept through a day of a `*/5`
-entry runs it once on waking and resumes on the normal grid — the windows it
+entry runs it once on waking and resumes on the normal grid: the windows it
 slept through are counted into the ledger and dropped, not replayed. See
 [docs/prds/0009-schedule.md](docs/prds/0009-schedule.md).
 

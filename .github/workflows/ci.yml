@@ -101,11 +101,14 @@ jobs:
       # tools/oxlint/ratchet.ts fails the job when any file's count for a rule
       # rises above tools/oxlint/baseline.json, or falls without the baseline
       # being tightened, and on a disable directive that silences nothing.
+      # scripts/brand.ts --check fails when docs/brand/ or the favicon and
+      # masthead in ui/app/index.html differ from a fresh build.
       - name: Lint JavaScript
         run: |
           bun install --frozen-lockfile
           bun test tools/oxlint
           bun run lint
+          bun scripts/brand.ts --check
 
       # The root lockfile (oxlint and its napi bindings) gets the same audit
       # the AssemblyScript toolchain gets below; nothing else scanned it.
