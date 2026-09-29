@@ -5,7 +5,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-29
+
+### Security
+
+- Web UI: the vendored Preact is upgraded from 10.27.2 to 10.27.3, which
+  fixes a JSON VNode injection (GHSA-36hm-qxxp-pg3m, high). `ui/vendor/README.md`
+  now records exact upstream versions for Preact, htm and signals-core, which
+  is how the affected release was identified.
+
 ### Fixed
+
+- The SBOM describes each vendored web module that is also an npm dependency
+  as one component, carrying its vendored path and digest, instead of two
+  entries with the same `bom-ref`.
 
 - Web UI: the page no longer scrolls behind the app shell when a view jumps
   to a section (screen-reader status lines stretched the document); the theme
