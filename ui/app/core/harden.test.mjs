@@ -567,7 +567,7 @@ test("Prompts Use confirms before replacing an unsent task", function () {
 test("Compare pick asks before recording an irreversible choice", function () {
   const src = readFileSync(join(here, "../../plugins/compare/app.js"), "utf8");
   assert.match(src, /api\.confirm\("Pick answer " \+ a\.label \+ "\? You cannot change this later\."/);
-  assert.match(src, /if \(yes\) recordPick\(doc\.id, a\.label\)/);
+  assert.match(src, /if \(yes\) (?:\{ )?recordPick\(doc\.id, a\.label\)/);
 });
 
 test("channel create turns spaces into hyphens as you type", function () {
@@ -592,17 +592,17 @@ test("showView waits for plugins before treating an unknown view as Chat", funct
 
 test("pluginApi offers POST, live bus, dialogs, workspace, icons, storage, session", function () {
   const src = readFileSync(join(here, "plugins.js"), "utf8");
-  assert.match(src, /openSession:\s*function/);
+  assert.match(src, /openSession(?::\s*function|\s*\()/);
   assert.match(src, /foldFind:\s*searchFoldFind/);
-  assert.match(src, /postJSON:\s*function/);
-  assert.match(src, /onLive:\s*onLive/);
-  assert.match(src, /emit:\s*function/);
+  assert.match(src, /postJSON(?::\s*function|\s*\()/);
+  assert.match(src, /\bonLive(?::\s*onLive)?\s*[,}\n]/);
+  assert.match(src, /emit(?::\s*function|\s*\()/);
   assert.match(src, /\/api\/live/);
   assert.match(src, /confirm:\s*uiConfirm/);
   assert.match(src, /prompt:\s*uiPrompt/);
-  assert.match(src, /toast:\s*toast/);
-  assert.match(src, /workspace:\s*function/);
-  assert.match(src, /icon:\s*icon/);
+  assert.match(src, /\btoast(?::\s*toast)?\s*[,}\n]/);
+  assert.match(src, /workspace(?::\s*function|\s*\()/);
+  assert.match(src, /\bicon(?::\s*icon)?\s*[,}\n]/);
   assert.match(src, /storage:\s*pluginStorage/);
   assert.match(src, /clanker\.plugin\./);
 });

@@ -57,7 +57,7 @@ function isAttrs(a) {
 }
 
 export var T = new Proxy({}, {
-  get: function (_, name) {
+  get (_, name) {
     return function () {
       var node = document.createElement(name);
       var i = 0;
@@ -238,7 +238,7 @@ function dialogActions(form, okLabel, danger, onCancel, onOk) {
   ok.addEventListener("click", onOk);
   actions.appendChild(ok);
   form.appendChild(actions);
-  return { cancel: cancel, ok: ok };
+  return { cancel, ok };
 }
 
 export function uiConfirm(message, opts) {
@@ -386,7 +386,7 @@ export var toolRow = {
 };
 
 export var UI = {
-  button: function (label, onclick, opts) {
+  button (label, onclick, opts) {
     opts = opts || {};
     var cls = opts.kind === "plain" ? "chip-btn"
       : opts.kind === "primary" ? "primary"
@@ -397,23 +397,23 @@ export var UI = {
     var attrs = {
       type: "button",
       class: cls,
-      onclick: onclick
+      onclick
     };
     if (opts.label) attrs["aria-label"] = opts.label;
     if (opts.title) attrs.title = opts.title;
     if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label || null);
     return T.button(attrs, label || null);
   },
-  empty: function (text) {
+  empty (text) {
     return T.p({ class: "run-empty" }, text);
   },
-  meta: function (text) {
+  meta (text) {
     return T.span({ class: "meta" }, text);
   },
-  bar: function (children) {
+  bar (children) {
     return T.div({ class: "toolbar-actions" }, children);
   },
-  head: function (title, controls) {
+  head (title, controls) {
     return T.div({ class: "section-head" }, T.h2(title), controls || null);
   }
 };

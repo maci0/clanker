@@ -5,7 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dir = dirname(fileURLToPath(import.meta.url));
+
 const js = readFileSync(join(dir, "app.js"), "utf8");
+
 const spec = readFileSync(join(dir, "plugin.json"), "utf8");
 
 test("Compare is a Watch plugin that confirms before recording a pick", function () {
@@ -13,7 +15,7 @@ test("Compare is a Watch plugin that confirms before recording a pick", function
   assert.match(spec, /"group": "Watch"/);
   assert.match(js, /clanker\.registerView/);
   assert.match(js, /api\.confirm\("Pick answer " \+ a\.label \+ "\? You cannot change this later\."/);
-  assert.match(js, /if \(yes\) recordPick/);
+  assert.match(js, /if \(yes\) (?:\{ )?recordPick/);
   assert.match(js, /No comparisons yet\. Run one with /);
   assert.match(js, /Try again/);
 });

@@ -123,7 +123,7 @@ clanker.registerView({
   title: "Files",
   group: "Work",
 
-  mount: function (container, api) {
+  mount (container, api) {
 
     // ── state ──
     var cur = { path:"", root:"workspace", parent:"", atRoot:true };
@@ -584,7 +584,7 @@ clanker.registerView({
     return load();
   },
 
-  refresh: function() {
+  refresh() {
     if (this.reload) return this.reload();
   }
 });

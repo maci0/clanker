@@ -14,20 +14,23 @@ function stubNode(specs, opts) {
       id: s.id || "n" + i,
       tag: s.tag || "button",
       hidden: false,
-      getClientRects: function () { return [{}]; },
-      focus: function () { this.focused = true; },
+      getClientRects () { return [{}]; },
+      focus () { this.focused = true; },
       focused: false,
     }, {});
   });
+
   const node = {
-    querySelectorAll: function () { return nodes.slice(); },
-    contains: function (n) { return nodes.indexOf(n) >= 0; },
+    querySelectorAll () { return nodes.slice(); },
+    contains (n) { return nodes.indexOf(n) >= 0; },
   };
+
   // The shipped trap reads `document.activeElement`, so the page has to exist
   // to run it: `focus()` here only marks the node, and the document stub says
   // where focus already was.
   globalThis.document = { activeElement: opts && opts.activeIndex != null ? nodes[opts.activeIndex] : (opts ? opts.active : null) };
-  return { node, nodes, active: function () { return globalThis.document.activeElement; } };
+
+  return { node, nodes, active () { return globalThis.document.activeElement; } };
 }
 
 test("a disclosure summary inside a dialog is a tab stop the trap knows about", function () {
@@ -39,6 +42,7 @@ test("a disclosure summary inside a dialog is a tab stop the trap knows about", 
     { id: "fold", tag: "summary" },
     { id: "field", tag: "input" },
   ], { active: null });
+
   const items = focusableIn(node);
   assert.deepEqual(items.map(function (n) { return n.id; }), ["close", "fold", "field"]);
   assert.equal(items.length, 3);
@@ -51,8 +55,9 @@ test("Tab at the last tab stop wraps to the first, not out of the dialog", funct
     { id: "fold", tag: "summary" },
     { id: "field", tag: "input" },
   ], { active: undefined });
+
   let prevented = false;
-  trapOverlayTab({ shiftKey: false, preventDefault: function () { prevented = true; } }, node);
+  trapOverlayTab({ shiftKey: false, preventDefault () { prevented = true; } }, node);
   assert.equal(prevented, true);
   assert.equal(nodes[0].focused, true, "focus wrapped to the first tab stop");
   assert.equal(nodes[2].focused, false);
@@ -63,13 +68,14 @@ test("Shift+Tab at the first tab stop wraps to the last", function () {
     { id: "close", tag: "button" },
     { id: "fold", tag: "summary" },
   ], { activeIndex: 0 });
-  trapOverlayTab({ shiftKey: true, preventDefault: function () {} }, node);
+
+  trapOverlayTab({ shiftKey: true, preventDefault () {} }, node);
   assert.equal(nodes[1].focused, true, "focus wrapped to the summary at the end");
   assert.equal(nodes[0].focused, false);
 });
 
 test("a dialog whose only tab stop is a summary still traps Tab", function () {
   const { node, nodes } = stubNode([{ id: "fold", tag: "summary" }], { active: null });
-  trapOverlayTab({ shiftKey: false, preventDefault: function () {} }, node);
+  trapOverlayTab({ shiftKey: false, preventDefault () {} }, node);
   assert.equal(nodes[0].focused, true);
 });

@@ -6,11 +6,15 @@ import test from "node:test";
 import { dayBucket, fmtWhen, groupRunsByDay, matchesRunQuery, runRows, runStartedAt } from "./runs-list.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const app = readFileSync(join(here, "..", "app.js"), "utf8");
+
 // The Runs view moved out of app.js into a lazily-imported feature module;
 // the wiring these tests pin moved with it.
 const runsView = readFileSync(join(here, "..", "features", "runs.js"), "utf8");
+
 const markup = readFileSync(join(here, "..", "index.html"), "utf8");
+
 const guest = readFileSync(join(here, "..", "..", "webui.zig"), "utf8");
 
 // 2026-08-16T22:42:57Z, the newest run in the store when the list was built.
@@ -27,8 +31,11 @@ const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 // Yesterday 00:00 local is on yesterday's calendar day, which is the
 // "yesterday" contract both labels use — not a 24-hour elapsed cutoff.
 const yesterdayMidnight = new Date(NOW);
+
 yesterdayMidnight.setDate(yesterdayMidnight.getDate() - 1);
+
 yesterdayMidnight.setHours(0, 0, 0, 0);
+
 const YESTERDAY = yesterdayMidnight.getTime();
 
 test("a run id carries the only timestamp a listing has", function () {
@@ -102,6 +109,7 @@ test("rows carry what the dropdown could not show", function () {
     ],
     { now: NOW },
   );
+
   assert.equal(rows.length, 2);
   assert.equal(rows[0].id, "run-1786920177");
   assert.equal(rows[0].when, RELATIVE.format(0, "second"));
@@ -125,6 +133,7 @@ test("rows keep the listing's newest-first order", function () {
     ],
     { now: NOW },
   );
+
   assert.deepEqual(rows.map(function (r) { return r.id; }), ["run-1786920177", "sub-1786563209053324602", "run-1786561572"]);
 });
 
@@ -151,6 +160,7 @@ test("grouping puts each row under the day it ran", function () {
   const localMidnight = new Date(NOW);
   localMidnight.setHours(0, 0, 0, 0);
   const justBeforeMidnight = localMidnight.getTime() - 1;
+
   const groups = groupRunsByDay(
     runRows(
       [
@@ -162,6 +172,7 @@ test("grouping puts each row under the day it ran", function () {
     ),
     NOW,
   );
+
   assert.equal(groups[0].day, RELATIVE.format(0, "day"));
   assert.equal(groups[0].rows.length, 1);
   assert.equal(groups[1].day, RELATIVE.format(-1, "day"));

@@ -8,11 +8,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const src = readFileSync(join(here, "tools.js"), "utf8");
 
 function loadConfigFieldKind() {
   const m = /export function configFieldKind\(t, key, current\) \{([\s\S]*?)\n\}/.exec(src);
   assert.ok(m, "configFieldKind missing from tools.js");
+
   return new Function("t", "key", "current", m[1]);
 }
 

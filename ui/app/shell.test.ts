@@ -83,7 +83,7 @@ const DISPLAY = new Set(["hidden", "block", "inline-block", "inline", "flex", "i
     new Map(
       Array.from(text.matchAll(/^export var (?<name>\w+) = \{\n(?<body>[\s\S]*?)^\};/gmu), (m) => [
         captured(m, "name"),
-        new Set(Array.from((captured(m, "body")).matchAll(/^ {2}(?<key>\w+)\s*:/gmu), (k) => captured(k, "key"))),
+        new Set(Array.from((captured(m, "body")).matchAll(/^ {2}(?<key>\w+)\s*(?:[:,(]|$)/gmu), (k) => captured(k, "key"))),
       ]),
     );
 

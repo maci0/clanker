@@ -51,7 +51,9 @@ test("clearing a field unpins only that field; clearing both drops the entry", f
 
 test("the store is bounded like the draft store, oldest touched dropped first", function () {
   const prefs = {};
-  for (let i = 0; i < max_prefs + 5; i++) setPref(prefs, "sess-" + i, { model: "m" + i }, i + 1);
+
+  for (let i = 0; i < max_prefs + 5; i++) { setPref(prefs, "sess-" + i, { model: "m" + i }, i + 1); }
+
   assert.equal(Object.keys(prefs).length, max_prefs);
   assert.equal(prefsFor(prefs, "sess-0"), null, "the oldest pin is the one evicted");
   assert.ok(prefsFor(prefs, "sess-" + (max_prefs + 4)), "the newest pin survives");
@@ -112,7 +114,9 @@ test("a half-pinned conversation takes the default for the other field only", fu
    the two browser-global keys, or an app that never put a conversation's pin
    back on switching, would pass every test above and change nothing. */
 const here = dirname(fileURLToPath(import.meta.url));
+
 const picker = readFileSync(join(here, "modelpicker.js"), "utf8");
+
 const app = readFileSync(join(here, "..", "app.js"), "utf8");
 
 test("every model/effort write in the picker records the conversation's pin", function () {

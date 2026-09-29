@@ -322,7 +322,7 @@ export function highlightInto(codeEl, lang, rawText) {
     codeEl.className = "language-" + effectiveLang;
     loadHljs().then(function () { try { window.hljs.highlightElement(codeEl); } catch (e) {} }).catch(function () {});
   }
-  return { text: text, lang: effectiveLang };
+  return { text, lang: effectiveLang };
 }
 
 export function buildCodeBlock(lang, code) {

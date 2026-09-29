@@ -18,8 +18,8 @@ function fakeElement(tag) {
     style: {},
     title: "",
     attrs: {},
-    setAttribute: function (n, v) { this.attrs[n] = v; },
-    appendChild: function (child) { this.children.push(child); return child; },
+    setAttribute (n, v) { this.attrs[n] = v; },
+    appendChild (child) { this.children.push(child); return child; },
   };
 }
 
@@ -32,7 +32,7 @@ function build(node, opts) {
   const saved = globalThis.document;
   globalThis.document = { createElement: fakeElement };
   try {
-    return buildNodeBox({ kind: node.kind, node: node }, opts && opts.slowest, 152, opts || {});
+    return buildNodeBox({ kind: node.kind, node }, opts && opts.slowest, 152, opts || {});
   } finally {
     globalThis.document = saved;
   }

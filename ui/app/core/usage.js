@@ -4,11 +4,17 @@ import { fmtPct, plural } from "./utils.js";
 /* The grid's shapes as Tailwind utilities (ui/app/tailwind.src.css); the
    Models view spells them the same way for its own columns. */
 var WRAP_CLASS = "overflow-x-auto";
+
 var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
+
 var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted whitespace-nowrap";
+
 var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
+
 var NUM_CLASS = "text-right tabular-nums";
+
 var FOOT_CLASS = "border-t border-border border-b-0 font-bold";
+
 var MODEL_CLASS = "text-accent-text";
 
 function usageColumns() {
@@ -23,7 +29,9 @@ function usageColumns() {
 
 function usageName(r, modelLabel, T) {
   var shown = modelLabel(r.provider, r.model);
-  if (shown === r.provider) return T.td({ class: TD_CLASS }, r.provider);
+
+  if (shown === r.provider) { return T.td({ class: TD_CLASS }, r.provider); }
+
   return T.td({ class: TD_CLASS }, r.provider + " / ", T.span({ class: MODEL_CLASS }, shown));
 }
 
@@ -35,21 +43,26 @@ function usageRow(r, modelLabel, fmtInt, fmtCost, T) {
 }
 
 export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
-  if (!rows.length) return UI.empty("No completions recorded yet. Run a task and the totals appear here.");
+  if (!rows.length) { return UI.empty("No completions recorded yet. Run a task and the totals appear here."); }
+
   var totals = rows.reduce(function (a, r) {
     a.calls += r.calls || 0;
     a.failed += r.error_calls || 0;
     a.prompt += r.prompt_tokens || 0;
     a.completion += r.completion_tokens || 0;
     a.cost += r.cost || 0;
+
     return a;
   }, { calls: 0, failed: 0, prompt: 0, completion: 0, cost: 0 });
+
   var cols = usageColumns();
+
   return T.div({ class: WRAP_CLASS },
     T.table({ class: TABLE_CLASS },
       T.thead(T.tr(cols.map(function (col) {
         var th = T.th({ class: col[1] || null }, col[0]);
         th.setAttribute("scope", "col");
+
         return th;
       }))),
       T.tbody(rows.map(function (r) { return usageRow(r, modelLabel, fmtInt, fmtCost, T); })),

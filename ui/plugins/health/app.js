@@ -37,8 +37,11 @@ import { fmtPct as fmtPctFmt, fmtUnit } from "/webui/core/utils.js";
    pseudo-element and the two-shadow lit state are not utilities), and the rest
    is utilities over the cabinet tokens. */
 var TILE_CLASS = "lamp relative flex flex-col gap-1 rounded-plate-lg border border-border bg-surface py-3 pe-4 ps-[1.8rem]";
+
 var HEAD_CELL_CLASS = "border-b border-border px-3 py-2 text-left align-middle text-xs font-semibold text-fg-muted";
+
 var CELL_CLASS = "border-b border-rule px-3 py-2 text-left align-middle";
+
 /* One hue getting stronger as the band gets slower: an ordered magnitude, so
    the ramp rides the opacity scale rather than five hand-written values. */
 var BAR_CLASS = "h-full min-w-0 rounded-plate-lg bg-accent data-[band=0]:opacity-35 data-[band=1]:opacity-50 data-[band=2]:opacity-65 data-[band=3]:opacity-80 data-[band=4]:opacity-100";
@@ -47,7 +50,7 @@ clanker.registerView({
   id: "health",
   title: "Health",
   group: "Watch",
-  mount: function (container, api) {
+  mount (container, api) {
     // Fractions of the connection limit at which the wording changes. Named
     // rather than inline so the table below and the tile agree.
     var BUSY_AT = 0.6;
@@ -70,11 +73,11 @@ clanker.registerView({
        a bucket slightly ahead of `requests_total`; every subtraction is
        therefore clamped at zero rather than trusted to be ordered. */
     var BANDS = [
-      { label: "up to 10ms", of: function (b) { return b.le_10; } },
-      { label: "10ms to 100ms", of: function (b) { return b.le_100 - b.le_10; } },
-      { label: "100ms to 1s", of: function (b) { return b.le_1000 - b.le_100; } },
-      { label: "1s to 10s", of: function (b) { return b.le_10000 - b.le_1000; } },
-      { label: "over 10s", of: function (b, total) { return total - b.le_10000; } }
+      { label: "up to 10ms", of (b) { return b.le_10; } },
+      { label: "10ms to 100ms", of (b) { return b.le_100 - b.le_10; } },
+      { label: "100ms to 1s", of (b) { return b.le_1000 - b.le_100; } },
+      { label: "1s to 10s", of (b) { return b.le_10000 - b.le_1000; } },
+      { label: "over 10s", of (b, total) { return total - b.le_10000; } }
     ];
 
     var prev = null;   // the previous sample: { at: ms, http: {...} }
@@ -82,6 +85,7 @@ clanker.registerView({
     /* ------------------------------------------------------------- helpers */
 
     function num(v) { return typeof v === "number" && isFinite(v) ? v : 0; }
+
     function clamp0(v) { return v > 0 ? v : 0; }
 
     /// Per-second rate between two samples, and — when there isn't one — which
@@ -90,59 +94,78 @@ clanker.registerView({
     /// that went backwards means the server restarted under us. Both show no
     /// rate; only one of them is news.
     function rateOf(before, after, beforeAt, afterAt) {
-      if (before === null || beforeAt === null) return { rate: null, why: "first" };
+      if (before === null || beforeAt === null) { return { rate: null, why: "first" }; }
+
       var seconds = (afterAt - beforeAt) / 1000;
-      if (!(seconds > 0)) return { rate: null, why: "first" };
-      if (after < before) return { rate: null, why: "reset" };
+
+      if (!(seconds > 0)) { return { rate: null, why: "first" }; }
+
+      if (after < before) { return { rate: null, why: "reset" }; }
+
       return { rate: (after - before) / seconds, why: null };
     }
 
     /// The line under a rate. Always carries the running total, because that is
     /// the one number still true when the rate is not available.
     function rateNote(r, total) {
-      if (r.why === "first") return "waiting for a second sample";
-      if (r.why === "reset") return "counters reset, now " + total + " since start";
+      if (r.why === "first") { return "waiting for a second sample"; }
+
+      if (r.why === "reset") { return "counters reset, now " + total + " since start"; }
+
       return total + " since start";
     }
 
     function fmtRate(r) {
-      if (r === null) return "n/a";
+      if (r === null) { return "n/a"; }
+
       return fmtUnit(r, "per-second", r >= 10 ? 0 : 1);
     }
 
     function fmtMs(ms) {
-      if (ms === null) return "n/a";
-      if (ms >= 1000) return fmtUnit(Math.round(ms / 100) / 10, "second", 1);
+      if (ms === null) { return "n/a"; }
+
+      if (ms >= 1000) { return fmtUnit(Math.round(ms / 100) / 10, "second", 1); }
+
       return fmtUnit(ms >= 10 ? Math.round(ms) : Math.round(ms * 10) / 10, "millisecond", ms >= 10 ? 0 : 1);
     }
 
     function pct(part, whole) {
-      if (!(whole > 0)) return null;
+      if (!(whole > 0)) { return null; }
+
       return (part / whole) * 100;
     }
 
     function fmtPct(p) {
-      if (p === null) return "n/a";
-      if (p === 0) return fmtPctFmt(0, 0);
-      if (p < 0.1) return "<" + fmtPctFmt(0.1, 1);
+      if (p === null) { return "n/a"; }
+
+      if (p === 0) { return fmtPctFmt(0, 0); }
+
+      if (p < 0.1) { return "<" + fmtPctFmt(0.1, 1); }
+
       return fmtPctFmt(p, p >= 10 ? 0 : 1);
     }
 
     /// How alarming the error total is. Three states, and the middle one is
     /// where a handful of errors on a young counter belongs.
     function errorState(errors, sharePct) {
-      if (errors === 0) return "good";
-      if (sharePct !== null && sharePct >= BAD_SHARE_PCT && errors >= BAD_ERRORS_MIN) return "bad";
+      if (errors === 0) { return "good"; }
+
+      if (sharePct !== null && sharePct >= BAD_SHARE_PCT && errors >= BAD_ERRORS_MIN) { return "bad"; }
+
       return "warn";
     }
 
     /// The saturation wording. A state, not a colour: the word is what carries
     /// it, and the stylesheet only follows along.
     function loadState(inFlight, limit) {
-      if (!(limit > 0)) return { key: "unknown", word: "unknown" };
+      if (!(limit > 0)) { return { key: "unknown", word: "unknown" }; }
+
       var share = inFlight / limit;
-      if (share >= SATURATED_AT) return { key: "saturated", word: "saturated" };
-      if (share >= BUSY_AT) return { key: "busy", word: "busy" };
+
+      if (share >= SATURATED_AT) { return { key: "saturated", word: "saturated" }; }
+
+      if (share >= BUSY_AT) { return { key: "busy", word: "busy" }; }
+
       return { key: "ready", word: "ready" };
     }
 
@@ -153,7 +176,9 @@ clanker.registerView({
         le_1000: num(http.latency_buckets && http.latency_buckets.le_1000),
         le_10000: num(http.latency_buckets && http.latency_buckets.le_10000)
       };
+
       var total = num(http.requests_total);
+
       return BANDS.map(function (band) {
         return { label: band.label, count: clamp0(band.of(b, total)) };
       });
@@ -196,10 +221,13 @@ clanker.registerView({
     /// state colour does not survive (forced colours, print, monochrome).
     function tile(label, value, note, stateKey) {
       var box = api.el("div", TILE_CLASS);
-      if (stateKey) box.setAttribute("data-state", stateKey);
+
+      if (stateKey) { box.setAttribute("data-state", stateKey); }
+
       box.appendChild(api.el("span", "text-xs text-fg-muted", label));
       box.appendChild(api.el("strong", "font-mono text-xl font-semibold text-fg tabular-nums", value));
       box.appendChild(api.el("span", "text-xs text-fg-muted", note));
+
       return box;
     }
 
@@ -318,8 +346,10 @@ clanker.registerView({
       var peak = counts.reduce(function (a, b) { return b.count > a ? b.count : a; }, 0);
 
       table.textContent = "";
+
       var caption = api.el("caption", "caption-bottom mt-2 text-left text-xs text-fg-muted",
         sum > 0 ? api.fmt.plural(sum, { one: "request", other: "requests" }) + " measured" : "No requests measured yet");
+
       table.appendChild(caption);
 
       var thead = api.el("thead");
@@ -327,7 +357,9 @@ clanker.registerView({
       ["Response time", "", "Requests", "Share"].forEach(function (label, i) {
         var th = api.el("th", HEAD_CELL_CLASS, label);
         th.setAttribute("scope", "col");
-        if (i === 1) th.setAttribute("aria-label", "Relative size");
+
+        if (i === 1) { th.setAttribute("aria-label", "Relative size"); }
+
         hrow.appendChild(th);
       });
       thead.appendChild(hrow);
@@ -380,6 +412,7 @@ clanker.registerView({
        poll wanted. Gate on visibility, the way the office view does. */
     function viewHidden() {
       var view = container.closest(".view");
+
       return !!(view && view.hidden);
     }
 
@@ -392,7 +425,9 @@ clanker.registerView({
        (mount, Refresh, coming back to the view). */
     function applySample(d, announce) {
       var http = (d && d.http) || null;
-      if (!http) throw new Error("no http metrics in the response");
+
+      if (!http) { throw new Error("no http metrics in the response"); }
+
       var llm = (d && d.llm) || {};
       var tools = (d && d.tools) || {};
       var schedule = (d && d.schedule) || {};
@@ -400,7 +435,8 @@ clanker.registerView({
       var at = Date.now();
       drawTiles(http, llm, tools, schedule, jobs, at);
       drawBands(http);
-      prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule, jobs: jobs };
+      prev = { at, http, llm, tools, schedule, jobs };
+
       if (announce) {
         api.status("Health: " + num(http.requests_total) + " requests served, " +
           num(http.errors_total) + " errors, " +
@@ -410,14 +446,18 @@ clanker.registerView({
           num(schedule.fires_total) + " scheduled runs, " +
           num(jobs.active) + " background jobs running.");
       }
+
       return http;
     }
 
     var inFlightLoad = false;
+
     function load() {
-      if (inFlightLoad) return Promise.resolve(null);
+      if (inFlightLoad) { return Promise.resolve(null); }
+
       inFlightLoad = true;
       refresh.disabled = true;
+
       return api.getJSON("/api/metrics")
         .then(function (d) { return applySample(d, true); })
         .catch(function (err) {
@@ -427,11 +467,13 @@ clanker.registerView({
           prev = null;
           drawFailure("Could not read /api/metrics: " + err.message);
           api.status("Health: " + err.message);
+
           return null;
         })
         .then(function (out) {
           inFlightLoad = false;
           refresh.disabled = false;
+
           return out;
         });
     }
@@ -442,8 +484,10 @@ clanker.registerView({
     // a timer would spend a connection on a server that answers one request
     // per connection. Refresh still does a GET for a quiet server.
     api.onLive(function (ev) {
-      if (!ev || ev.t !== "metrics" || !ev.http) return;
-      if (viewHidden()) return;
+      if (!ev || ev.t !== "metrics" || !ev.http) { return; }
+
+      if (viewHidden()) { return; }
+
       try { applySample(ev, false); } catch (e) {}
     });
 
@@ -454,6 +498,7 @@ clanker.registerView({
       prev = null;
       load();
     }
+
     // The host calls this on every switch back to an already-loaded view, so
     // watching the panel's hidden attribute for the same event is no longer
     // needed: it only bought a second /api/metrics read per re-entry.
@@ -461,7 +506,7 @@ clanker.registerView({
 
     return load();
   },
-  refresh: function () {
+  refresh () {
     // Replaced by mount's own resume(); this stands in until then.
     return null;
   }

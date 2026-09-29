@@ -32,32 +32,32 @@ export function paletteEntries() {
     // "(14)" — a shortcut nobody can type, on the one surface whose job is to
     // teach the shortcuts.
     var digit = i < view_digit_max ? "  (" + (i + 1) + ")" : "";
-    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + digit, run: function () { _showView(v, true); } });
+    out.push({ kind: "view", label: v.charAt(0).toUpperCase() + v.slice(1) + digit, run () { _showView(v, true); } });
   });
-  out.push({ kind: "action", label: "New chat", run: function () { _el.newChat.click(); } });
-  out.push({ kind: "action", label: "New workspace", run: function () {
+  out.push({ kind: "action", label: "New chat", run () { _el.newChat.click(); } });
+  out.push({ kind: "action", label: "New workspace", run () {
     if (_el.workspaceNew) _el.workspaceNew.click();
   } });
-  out.push({ kind: "action", label: "Fork this conversation", run: function () { _el.sessionFork.click(); } });
-  out.push({ kind: "action", label: "Compact this conversation", run: function () { _el.sessionCompact.click(); } });
-  out.push({ kind: "action", label: "Export this conversation as Markdown", run: function () { _el.sessionExport.click(); } });
-  out.push({ kind: "action", label: "Choose theme", run: function () { _el.themeToggle.click(); } });
-  out.push({ kind: "action", label: "Keyboard shortcuts", run: function () { overlayOpen(_el.help, _el.helpClose); } });
+  out.push({ kind: "action", label: "Fork this conversation", run () { _el.sessionFork.click(); } });
+  out.push({ kind: "action", label: "Compact this conversation", run () { _el.sessionCompact.click(); } });
+  out.push({ kind: "action", label: "Export this conversation as Markdown", run () { _el.sessionExport.click(); } });
+  out.push({ kind: "action", label: "Choose theme", run () { _el.themeToggle.click(); } });
+  out.push({ kind: "action", label: "Keyboard shortcuts", run () { overlayOpen(_el.help, _el.helpClose); } });
   _refs.knownSessionsHolder.list.forEach(function (s) {
-    out.push({ kind: "chat", label: _refs.sessionLabel(s), run: function () { _showView("chat", false); _switchSession(s.id); } });
+    out.push({ kind: "chat", label: _refs.sessionLabel(s), run () { _showView("chat", false); _switchSession(s.id); } });
   });
   _refs.allRunsHolder.list.forEach(function (r) {
     var taskPart = r.task ? " " + r.task.slice(0, 80) : "";
-    out.push({ kind: "run", label: _refs.runLabel(r) + taskPart, run: function () { _openRun(r.run_id); } });
+    out.push({ kind: "run", label: _refs.runLabel(r) + taskPart, run () { _openRun(r.run_id); } });
     // Also index node labels so palette search can hit inside a run
     if (r.nodes && r.nodes.length) {
       for (var ni=0; ni<Math.min(r.nodes.length, 6); ni++) {
-        (function(rr, nd){ var lbl = nd.label || nd.detail || ""; if(!lbl) return; out.push({ kind: "node", label: lbl.slice(0,64) + " · " + rr.run_id.slice(0,8), run: function(){ _openRun(rr.run_id); } }); })(r, r.nodes[ni]);
+        (function(rr, nd){ var lbl = nd.label || nd.detail || ""; if(!lbl) return; out.push({ kind: "node", label: lbl.slice(0,64) + " · " + rr.run_id.slice(0,8), run(){ _openRun(rr.run_id); } }); })(r, r.nodes[ni]);
       }
     }
   });
   _refs.board.cards.forEach(function (c) {
-    out.push({ kind: "card", label: c.title + "  ·  " + c.column, run: function () {
+    out.push({ kind: "card", label: c.title + "  ·  " + c.column, run () {
       if (_setOpenCardId) _setOpenCardId(c.id);
       _showView("kanban", true);
       _renderBoard(_refs.board);
@@ -66,11 +66,11 @@ export function paletteEntries() {
   (_refs.goalState.val || []).forEach(function (g) {
     var label = (g.objective || g.id || "goal").slice(0, 96);
     var st = g.status ? " · " + g.status : "";
-    out.push({ kind: "goal", label: label + st, run: function () { _showView("goals", true); } });
+    out.push({ kind: "goal", label: label + st, run () { _showView("goals", true); } });
   });
   _refs.allToolsHolder.list.forEach(function (t2) {
     var label = t2.name + (t2.description ? "  ·  " + t2.description.slice(0, 80) : "");
-    out.push({ kind: "tool", label: label, run: function () { _showView("tools", true); _showToolDetail(t2); } });
+    out.push({ kind: "tool", label, run () { _showView("tools", true); _showToolDetail(t2); } });
   });
   return out;
 }

@@ -10,6 +10,7 @@ export function goalFields(g) {
   var loopResult = g.goal_loop_reason
     ? (plural(g.goal_loop_turns || 0, { one: "turn", other: "turns" }) + ": " + g.goal_loop_reason)
     : "";
+
   return [["Done when", g.completion_criterion], ["Proof", g.proof],
     ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule],
     ["Goal loop", loopResult]]
@@ -23,10 +24,15 @@ export function goalFields(g) {
    it back. */
 export function goalStatusLabel(g, running) {
   var s = g.status || "unknown";
-  if (s === "review") return "waiting for review";
-  if (s === "blocked") return "blocked";
-  if (s === "active" && running) return "running";
-  if (s === "archived" || s === "abandoned") return "archived";
+
+  if (s === "review") { return "waiting for review"; }
+
+  if (s === "blocked") { return "blocked"; }
+
+  if (s === "active" && running) { return "running"; }
+
+  if (s === "archived" || s === "abandoned") { return "archived"; }
+
   return s;
 }
 
@@ -39,8 +45,11 @@ export function goalStatusLabel(g, running) {
    dropped. */
 export function goalWorktreeTitle(g) {
   var v = g && g.worktree;
-  if (typeof v !== "string" || !v) return null;
-  if (v === "true") return "Worked in its own git worktree and branch, not the shared checkout";
+
+  if (typeof v !== "string" || !v) { return null; }
+
+  if (v === "true") { return "Worked in its own git worktree and branch, not the shared checkout"; }
+
   return "Worked in its own git worktree and branch: " + v;
 }
 
@@ -48,10 +57,16 @@ export function goalWorktreeTitle(g) {
    goal is deliberately parked in one of the planning columns. */
 export function goalPinnedColumn(g, running) {
   var s = g.status || "active";
-  if (s === "done") return "done";
-  if (s === "review") return "review";
-  if (s === "blocked") return "review";
-  if (s === "archived" || s === "abandoned") return "archive";
-  if (s === "active" && running) return "doing";
+
+  if (s === "done") { return "done"; }
+
+  if (s === "review") { return "review"; }
+
+  if (s === "blocked") { return "review"; }
+
+  if (s === "archived" || s === "abandoned") { return "archive"; }
+
+  if (s === "active" && running) { return "doing"; }
+
   return null;
 }

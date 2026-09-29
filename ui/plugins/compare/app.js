@@ -16,7 +16,7 @@ clanker.registerView({
   id: "compare",
   title: "Compare",
   group: "Watch",
-  mount: function (container, api) {
+  mount (container, api) {
     var state = { id: null, list: [], doc: null, picking: false };
 
     var head = api.el("div", "section-head");
@@ -72,7 +72,8 @@ clanker.registerView({
     container.appendChild(runs);
 
     function showError(host, msg, retry) {
-      if (!host) return;
+      if (!host) { return; }
+
       host.textContent = "";
       var fail = api.el("p", "run-empty");
       fail.appendChild(document.createTextNode(msg + " "));
@@ -85,13 +86,16 @@ clanker.registerView({
 
     function renderPicker(rows) {
       list.textContent = "";
+
       if (!rows.length) {
         var empty = api.el("p", "run-empty");
         empty.appendChild(document.createTextNode("No comparisons yet. Run one with "));
         empty.appendChild(api.el("code", null, "clanker compare \"<prompt>\" --with a --with b"));
         list.appendChild(empty);
+
         return;
       }
+
       rows.forEach(function (c) {
         var row = api.el("button", "secondary flex items-center gap-2.5 " + api.kit.recordRow.row);
         row.type = "button";
@@ -109,8 +113,10 @@ clanker.registerView({
       var col = document.createElement("article");
       col.className = "group flex flex-col gap-1.5 rounded-plate border border-rule bg-surface-2 px-3 py-2.5 data-[picked=true]:border-accent";
       col.setAttribute("aria-labelledby", "compare-label-" + a.label);
-      if (picked && picked === a.label) col.dataset.picked = "true";
-      if (doc.revealed && winner && winner === a.label) col.dataset.winner = "true";
+
+      if (picked && picked === a.label) { col.dataset.picked = "true"; }
+
+      if (doc.revealed && winner && winner === a.label) { col.dataset.winner = "true"; }
 
       var h = api.el("h4", "m-0 text-sm group-data-[winner=true]:text-ok", "Answer " + a.label);
       h.id = "compare-label-" + a.label;
@@ -129,39 +135,50 @@ clanker.registerView({
       if (a.ok) {
         var pickBtn = api.el("button", "mt-auto self-start",
           picked === a.label ? ("Picked " + a.label) : ("Pick " + a.label));
+
         pickBtn.type = "button";
         pickBtn.disabled = !!picked;
         pickBtn.setAttribute("aria-label", picked === a.label
           ? ("Answer " + a.label + " is your pick")
           : ("Pick answer " + a.label));
         pickBtn.addEventListener("click", function () {
-          if (picked || state.picking) return;
+          if (picked || state.picking) { return; }
+
           api.confirm("Pick answer " + a.label + "? You cannot change this later.", {
             confirmLabel: "Pick " + a.label
-          }).then(function (yes) { if (yes) recordPick(doc.id, a.label); });
+          }).then(function (yes) { if (yes) { recordPick(doc.id, a.label); } });
         });
         col.appendChild(pickBtn);
       }
+
       return col;
     }
 
     function renderVerdict(host, doc, picked) {
       host.textContent = "";
+
       if (doc.verdict) {
         var line = "Judge picked " + doc.verdict.winner;
+
         if (doc.revealed && doc.verdict.provider) {
           line += " (" + doc.verdict.provider + (doc.verdict.model ? " / " + doc.verdict.model : "") + ")";
         }
-        if (doc.verdict.reason) line += ": " + doc.verdict.reason;
+
+        if (doc.verdict.reason) { line += ": " + doc.verdict.reason; }
+
         host.appendChild(api.el("p", "meta", line));
       }
+
       if (picked) {
         var mine = "Your pick: " + picked;
+
         if (doc.pick && doc.pick.provider) {
           mine += " · " + doc.pick.provider + (doc.pick.model ? " / " + doc.pick.model : "");
         }
+
         host.appendChild(api.el("p", "meta text-ok", mine));
       }
+
       if (doc.synthesis) {
         var card = api.el("div");
         card.appendChild(api.el("div", null, "Merged answer"));
@@ -188,7 +205,8 @@ clanker.registerView({
       key.textContent = "";
       key.hidden = true;
       prompt.textContent = doc ? (doc.prompt || "") : "";
-      if (!doc) return;
+
+      if (!doc) { return; }
 
       var cols = doc.answers || [];
       var picked = doc.pick ? doc.pick.label : "";
@@ -199,7 +217,8 @@ clanker.registerView({
       });
 
       renderVerdict(verdict, doc, picked);
-      if (doc.revealed) renderKey(key, cols);
+
+      if (doc.revealed) { renderKey(key, cols); }
 
       status.textContent = doc.revealed
         ? (cols.length + " answers, revealed" + (picked ? ", you picked " + picked : "") + ".")
@@ -208,19 +227,26 @@ clanker.registerView({
     }
 
     function fetchComparison(id) {
-      if (!id) return Promise.resolve(null);
+      if (!id) { return Promise.resolve(null); }
+
       status.textContent = "Loading comparison " + id + "…";
       api.status(status.textContent);
+
       return api.getJSON("/api/compare/" + encodeURIComponent(id)).then(function (data) {
-        if (!data || !data.ok) throw new Error((data && data.error) || "no such comparison");
+        if (!data || !data.ok) { throw new Error((data && data.error) || "no such comparison"); }
+
         state.id = id;
         state.doc = data;
+
         try {
           var want = "#compare/" + encodeURIComponent(id);
-          if (location.hash !== want) history.replaceState(null, "", want);
+
+          if (location.hash !== want) { history.replaceState(null, "", want); }
         } catch (_) {}
+
         renderComparison(data);
         renderPicker(state.list);
+
         return data;
       }).catch(function (err) {
         var msg = "Could not load comparison: " + err.message;
@@ -231,26 +257,33 @@ clanker.registerView({
         key.textContent = "";
         key.hidden = true;
         showError(answers, msg, function () { return fetchComparison(id); });
+
         return null;
       });
     }
 
     function recordPick(id, label) {
-      if (state.picking) return Promise.resolve(null);
+      if (state.picking) { return Promise.resolve(null); }
+
       state.picking = true;
       status.textContent = "Recording pick " + label + "…";
       api.status(status.textContent);
+
       return api.postJSON("/api/compare/" + encodeURIComponent(id), { pick: label }).then(function (data) {
-        if (!data || !data.ok) throw new Error((data && data.error) || "pick refused");
+        if (!data || !data.ok) { throw new Error((data && data.error) || "pick refused"); }
+
         state.doc = data;
         renderComparison(data);
+
         return data;
       }).catch(function (err) {
         status.textContent = "Could not record the pick: " + err.message;
         api.status(status.textContent);
+
         return null;
       }).then(function (out) {
         state.picking = false;
+
         return out;
       });
     }
@@ -258,20 +291,25 @@ clanker.registerView({
     function load() {
       status.textContent = "Loading comparisons…";
       api.status(status.textContent);
+
       if (window._pendingCompareId) {
         state.id = window._pendingCompareId;
         window._pendingCompareId = null;
       }
+
       return api.getJSON("/api/compare").then(function (data) {
         var rows = (data && data.comparisons) || [];
         state.list = rows;
         renderPicker(rows);
+
         if (!rows.length) {
           status.textContent = "No comparisons yet. Run one with: clanker compare \"<prompt>\" --with a --with b";
           api.status(status.textContent);
           renderComparison(null);
+
           return null;
         }
+
         return fetchComparison(state.id || rows[0].id);
       }).catch(function (err) {
         var msg = "Could not load comparisons: " + err.message;
@@ -283,9 +321,10 @@ clanker.registerView({
 
     refresh.addEventListener("click", function () { load(); });
     this.reload = load;
+
     return load();
   },
-  refresh: function () {
-    if (this.reload) return this.reload();
+  refresh () {
+    if (this.reload) { return this.reload(); }
   }
 });

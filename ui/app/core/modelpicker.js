@@ -6,16 +6,25 @@ import { callableProviders, fmtUsd, searchFold, selectHasValue } from "./utils.j
 import { effectiveModel as cpEffectiveModel, effectiveEffort as cpEffectiveEffort } from "./chatprefs.js";
 
 var _providerCache = [];
+
 var _modelIndex = [];
 
 var _el = null;
+
 var _readJson = null;
+
 var _fmtInt = null;
+
 var _allUsage = null;
+
 var _renderUsage = null;
+
 var _renderContextMeter = null;
+
 var _providerCacheHolder = null;
+
 var _onModelChange = null;
+
 /* The conversation's own model/effort pin, wired by app.js (which owns the
    session id): `{ get(): {model, effort}|null, set(patch) }`. Absent in any
    surface that mounts the picker without a conversation, in which case the
@@ -23,14 +32,21 @@ var _onModelChange = null;
 var _chatPrefs = null;
 
 var _picker = null;
+
 var _search = null;
+
 var _list = null;
+
 var _anchor = null;
+
 var _active = -1;
+
 var _flat = [];
+
 var _open = false;
 
 export function getProviderCache() { return _providerCache; }
+
 export function getModelIndex() { return _modelIndex; }
 
 /// One side of a "per 1M tokens" price. A missing side reads "?", not $0.
@@ -42,11 +58,15 @@ function per1m(v) {
 /// <select> so the two surfaces cannot describe one model differently.
 function modelMeta(m, fmt) {
   var meta = [];
-  if (m.category) meta.push(m.category);
-  if (m.context_window) meta.push(fmt(m.context_window) + " ctx");
+
+  if (m.category) { meta.push(m.category); }
+
+  if (m.context_window) { meta.push(fmt(m.context_window) + " ctx"); }
+
   if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
     meta.push(per1m(m.cost_per_1m_input) + " / " + per1m(m.cost_per_1m_output) + " per 1M");
   }
+
   return meta;
 }
 
@@ -56,6 +76,7 @@ function modelMeta(m, fmt) {
 export function pickerIndexFromPayload(d, fmtInt) {
   var index = [];
   var fmt = fmtInt || function (n) { return String(n); };
+
   (d.backends || []).forEach(function (b) {
     index.push({
       value: "backend:" + b.name,
@@ -78,24 +99,31 @@ export function pickerIndexFromPayload(d, fmtInt) {
       });
     });
   });
+
   return index;
 }
 
 export function runOptionsFromValue(raw) {
   var out = {};
   raw = (raw || "").trim();
+
   if (raw.indexOf("backend:") === 0) {
     out.backend = raw.slice("backend:".length);
+
     return out;
   }
+
   var sp = raw.indexOf(" ");
+
   if (sp !== -1) {
     out.provider = raw.slice(0, sp);
     out.model = raw.slice(sp + 1).trim();
-    if (!out.model) delete out.model;
+
+    if (!out.model) { delete out.model; }
   } else if (raw) {
     out.provider = raw;
   }
+
   return out;
 }
 
@@ -104,6 +132,7 @@ export function runOptionsFromValue(raw) {
    are written on a change: the pin so this chat keeps it, the default so the
    next new chat opens on the model you last chose. */
 var model_key = "clanker.model";
+
 var effort_key = "clanker.effort";
 
 function readDefault(key) {
@@ -115,12 +144,14 @@ function writeDefault(key, value) {
 }
 
 function chatPin() {
-  if (!_chatPrefs || !_chatPrefs.get) return null;
+  if (!_chatPrefs || !_chatPrefs.get) { return null; }
+
   try { return _chatPrefs.get(); } catch (e) { return null; }
 }
 
 function pinChat(patch) {
-  if (!_chatPrefs || !_chatPrefs.set) return;
+  if (!_chatPrefs || !_chatPrefs.set) { return; }
+
   try { _chatPrefs.set(patch); } catch (e) {}
 }
 
@@ -138,17 +169,22 @@ function effectiveEffort() {
    Called on every conversation switch: the selects are shared DOM, so without
    this the chat you just opened would keep showing the one you left. */
 export function applyChatPrefs() {
-  if (!_el) return;
+  if (!_el) { return; }
+
   if (_el.modelSelect) {
     var model = effectiveModel();
-    if (selectHasValue(_el.modelSelect, model)) _el.modelSelect.value = model;
+
+    if (selectHasValue(_el.modelSelect, model)) { _el.modelSelect.value = model; }
   }
+
   if (_el.paramEffort) {
     var effort = effectiveEffort();
     _el.paramEffort.value = selectHasValue(_el.paramEffort, effort) ? effort : "";
   }
-  if (_renderContextMeter) _renderContextMeter();
-  if (_onModelChange) _onModelChange();
+
+  if (_renderContextMeter) { _renderContextMeter(); }
+
+  if (_onModelChange) { _onModelChange(); }
 }
 
 /* The chevron inside a model chip, and its name span: class lists here rather
@@ -156,11 +192,14 @@ export function applyChatPrefs() {
    loader. The two are found again by role, since a class the sheet does not
    style is not a hook. */
 var MODEL_CHIP_NAME_CLASS = "min-w-0 truncate";
+
 var MODEL_CHIP_CHEVRON_CLASS = "inline-flex flex-none items-center opacity-70 [&_.icon]:block group-aria-expanded:text-accent group-aria-expanded:opacity-100";
 
 function ensurePill(btn) {
-  if (!btn) return;
+  if (!btn) { return; }
+
   var name = btn.querySelector("[data-role='name']");
+
   if (!name) {
     var text = (btn.textContent || "").trim() || "…";
     btn.textContent = "";
@@ -170,7 +209,9 @@ function ensurePill(btn) {
     name.textContent = text;
     btn.appendChild(name);
   }
+
   var chev = btn.querySelector("[data-role='chevron']");
+
   if (!chev) {
     chev = document.createElement("span");
     chev.className = MODEL_CHIP_CHEVRON_CLASS;
@@ -182,11 +223,14 @@ function ensurePill(btn) {
 }
 
 export function setModelChipLabel(btn, text, title) {
-  if (!btn) return;
+  if (!btn) { return; }
+
   ensurePill(btn);
   var name = btn.querySelector("[data-role='name']");
-  if (name) name.textContent = text;
-  if (title != null) btn.title = title;
+
+  if (name) { name.textContent = text; }
+
+  if (title != null) { btn.title = title; }
 }
 
 /* The picker (models and themes wear the same box): a fixed scrim-sized
@@ -195,19 +239,30 @@ export function setModelChipLabel(btn, text, title) {
    the row's direction from the shared base. theme.js imports these, because a
    second picker module re-typing them is how the two boxes drift apart. */
 export var PICKER_CLASS = "fixed inset-0 z-200 pointer-events-none";
+
 export var PICKER_PANEL_CLASS = "pointer-events-auto fixed box-border flex min-h-0 flex-col overflow-hidden rounded-plate-lg border border-border bg-surface shadow-[var(--lift-high)]";
+
 export var PICKER_SEARCH_CLASS = "m-0 w-full box-border flex-none rounded-none border-0 border-b border-rule bg-surface-2 px-4 py-2 text-base text-fg focus:shadow-[inset_0_0_0_2px_var(--accent)] focus:outline-none";
+
 export var PICKER_LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain p-2";
+
 export var PICKER_EMPTY_CLASS = "m-4 text-center font-mono text-sm text-fg-muted";
+
 export var PICKER_GROUP_CLASS = "mt-1 first:mt-0";
+
 export var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-sans text-2xs font-semibold text-fg-muted";
+
 export var PICKER_OPTION_BASE = "m-0 flex w-full cursor-pointer gap-0.5 rounded-plate border border-transparent bg-transparent px-3 py-1 text-start font-sans text-fg shadow-none hover:border-rule hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 data-[active=true]:border-rule data-[active=true]:bg-surface-2 data-[current=true]:border-[color-mix(in_srgb,var(--accent)_35%,var(--rule))] data-[current=true]:bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface-2))]";
+
 export var PICKER_OPTION_CLASS = PICKER_OPTION_BASE + " flex-col items-start";
+
 export var PICKER_OPTION_LABEL_CLASS = "text-sm font-semibold text-fg";
+
 export var PICKER_OPTION_META_CLASS = "font-mono text-xs text-fg-muted";
 
 function ensurePickerDom() {
-  if (_picker) return;
+  if (_picker) { return; }
+
   _picker = document.createElement("div");
   _picker.id = "model-picker";
   _picker.className = PICKER_CLASS;
@@ -228,26 +283,34 @@ function ensurePickerDom() {
   _search.addEventListener("keydown", onSearchKey);
   _list.addEventListener("click", function (e) {
     var row = e.target.closest("[data-value]");
-    if (!row) return;
+
+    if (!row) { return; }
+
     selectValue(row.getAttribute("data-value"));
   });
   _picker.addEventListener("mousedown", function (e) {
     // Keep focus in the panel when clicking rows (avoid blur-close races).
-    if (e.target !== _search) e.preventDefault();
+    if (e.target !== _search) { e.preventDefault(); }
   });
   document.addEventListener("mousedown", function (e) {
-    if (!_open) return;
-    if (_picker.contains(e.target)) return;
-    if (_anchor && _anchor.contains(e.target)) return;
+    if (!_open) { return; }
+
+    if (_picker.contains(e.target)) { return; }
+
+    if (_anchor && _anchor.contains(e.target)) { return; }
+
     dismissModelPicker();
   });
   document.addEventListener("keydown", function (e) {
-    if (!_open) return;
+    if (!_open) { return; }
+
     if (e.key === "Escape") {
       e.preventDefault();
       dismissModelPicker();
+
       return;
     }
+
     // Combobox: Tab dismisses. Options are tabindex=-1 (arrows only).
     if (e.key === "Tab") {
       e.preventDefault();
@@ -257,35 +320,47 @@ function ensurePickerDom() {
     }
   });
   window.addEventListener("resize", function () {
-    if (_open && _anchor) positionPicker(_anchor);
+    if (_open && _anchor) { positionPicker(_anchor); }
   });
 }
 
 function focusAdjacent(from, backwards) {
-  if (!from || !from.focus) return;
+  if (!from || !from.focus) { return; }
+
   var nodes = document.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
   );
+
   var list = [];
+
   for (var i = 0; i < nodes.length; i++) {
     var n = nodes[i];
-    if (n.closest && n.closest("[data-picker]")) continue;
-    if (n.offsetParent === null && n !== document.activeElement) continue;
+
+    if (n.closest && n.closest("[data-picker]")) { continue; }
+
+    if (n.offsetParent === null && n !== document.activeElement) { continue; }
+
     list.push(n);
   }
+
   var idx = list.indexOf(from);
+
   if (idx < 0) {
     from.focus();
+
     return;
   }
+
   var next = backwards ? list[idx - 1] : list[idx + 1];
-  if (next && next.focus) next.focus();
-  else from.focus();
+
+  if (next && next.focus) { next.focus(); }
+  else { from.focus(); }
 }
 
 function dismissModelPicker() {
   var back = closeModelPicker();
-  if (back && back.focus) back.focus();
+
+  if (back && back.focus) { back.focus(); }
 }
 
 function onSearchKey(e) {
@@ -297,7 +372,8 @@ function onSearchKey(e) {
     moveActive(-1);
   } else if (e.key === "Enter") {
     e.preventDefault();
-    if (_active >= 0 && _flat[_active]) selectValue(_flat[_active].value);
+
+    if (_active >= 0 && _flat[_active]) { selectValue(_flat[_active].value); }
   } else if (e.key === "Escape") {
     e.preventDefault();
     dismissModelPicker();
@@ -305,25 +381,30 @@ function onSearchKey(e) {
 }
 
 function moveActive(delta) {
-  if (!_flat.length) return;
+  if (!_flat.length) { return; }
+
   _active = (_active + delta + _flat.length) % _flat.length;
   paintActive();
   var row = _list.querySelector('[data-index="' + _active + '"]');
-  if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+
+  if (row && row.scrollIntoView) { row.scrollIntoView({ block: "nearest" }); }
 }
 
 function paintActive() {
   var rows = _list.querySelectorAll("[data-index]");
   var activeId = null;
+
   for (var i = 0; i < rows.length; i++) {
     var on = Number(rows[i].getAttribute("data-index")) === _active;
     rows[i].setAttribute("data-active", on ? "true" : "false");
     rows[i].setAttribute("aria-selected", on ? "true" : "false");
-    if (on) activeId = rows[i].id;
+
+    if (on) { activeId = rows[i].id; }
   }
+
   if (_search) {
-    if (activeId) _search.setAttribute("aria-activedescendant", activeId);
-    else _search.removeAttribute("aria-activedescendant");
+    if (activeId) { _search.setAttribute("aria-activedescendant", activeId); }
+    else { _search.removeAttribute("aria-activedescendant"); }
   }
 }
 
@@ -338,11 +419,14 @@ function renderList(query) {
   var order = [];
   _modelIndex.forEach(function (m) {
     var hay = searchFold(m.label + " " + m.provider + " " + m.model + " " + (m.meta || ""));
-    if (q && hay.indexOf(q) === -1) return;
+
+    if (q && hay.indexOf(q) === -1) { return; }
+
     if (!byProv[m.provider]) {
       byProv[m.provider] = [];
       order.push(m.provider);
     }
+
     byProv[m.provider].push(m);
   });
 
@@ -353,6 +437,7 @@ function renderList(query) {
       ? "No models match \"" + q + "\". Clear the search to see every model."
       : "No models configured yet. Set a provider API key, or add one in the Models view.";
     _list.appendChild(empty);
+
     return;
   }
 
@@ -375,25 +460,32 @@ function renderList(query) {
       row.setAttribute("data-value", m.value);
       row.setAttribute("data-index", String(idx));
       row.setAttribute("aria-selected", m.value === current ? "true" : "false");
+
       if (m.value === current) {
         row.setAttribute("data-current", "true");
-        if (_active < 0) _active = idx;
+
+        if (_active < 0) { _active = idx; }
       }
+
       var label = document.createElement("span");
       label.className = PICKER_OPTION_LABEL_CLASS;
       label.textContent = m.label;
       row.appendChild(label);
+
       if (m.meta) {
         var meta = document.createElement("span");
         meta.className = PICKER_OPTION_META_CLASS;
         meta.textContent = m.meta;
         row.appendChild(meta);
       }
+
       group.appendChild(row);
     });
     _list.appendChild(group);
   });
-  if (_active < 0 && _flat.length) _active = 0;
+
+  if (_active < 0 && _flat.length) { _active = 0; }
+
   paintActive();
 }
 
@@ -408,6 +500,7 @@ function positionPicker(anchor) {
   var spaceBelow = window.innerHeight - rect.bottom - gap;
   var spaceAbove = rect.top - gap;
   var preferBelow = spaceBelow >= 240 || spaceBelow >= spaceAbove;
+
   if (preferBelow) {
     panel.style.top = (rect.bottom + gap) + "px";
     panel.style.bottom = "auto";
@@ -421,7 +514,7 @@ function positionPicker(anchor) {
 
 function setExpanded(on) {
   [_el && _el.headerModel, _el && _el.composerModel].forEach(function (btn) {
-    if (btn) btn.setAttribute("aria-expanded", on ? "true" : "false");
+    if (btn) { btn.setAttribute("aria-expanded", on ? "true" : "false"); }
   });
 }
 
@@ -430,29 +523,39 @@ function setExpanded(on) {
    failure in place, so the index is the only thing out of date. */
 function indexFromSelectOptions(select) {
   var out = [];
+
   for (var i = 0; i < select.options.length; i++) {
     var opt = select.options[i];
     var value = opt.value || "";
+
     if (value.indexOf("backend:") === 0) {
       var backend = value.slice("backend:".length);
-      out.push({ value: value, provider: "Local coding-agent backend", model: backend, label: backend, meta: "local CLI", backend: backend });
+      out.push({ value, provider: "Local coding-agent backend", model: backend, label: backend, meta: "local CLI", backend });
       continue;
     }
+
     var sp = value.indexOf(" ");
-    if (sp <= 0) continue;
-    out.push({ value: value, provider: value.slice(0, sp), model: value.slice(sp + 1), label: value.slice(sp + 1), meta: "" });
+
+    if (sp <= 0) { continue; }
+
+    out.push({ value, provider: value.slice(0, sp), model: value.slice(sp + 1), label: value.slice(sp + 1), meta: "" });
   }
+
   return out;
 }
 
 export function openModelPicker(anchor) {
   ensurePickerDom();
+
   if (!_modelIndex.length && _el && _el.modelSelect && _el.modelSelect.options.length) {
     // Index may be empty if load failed partially; rebuild from select.
     _modelIndex = indexFromSelectOptions(_el.modelSelect);
   }
+
   _anchor = anchor || _el.composerModel || _el.headerModel;
-  if (!_anchor) return;
+
+  if (!_anchor) { return; }
+
   _open = true;
   _picker.hidden = false;
   setExpanded(true);
@@ -464,28 +567,36 @@ export function openModelPicker(anchor) {
 }
 
 export function closeModelPicker() {
-  if (!_open) return;
+  if (!_open) { return; }
+
   _open = false;
-  if (_picker) _picker.hidden = true;
+
+  if (_picker) { _picker.hidden = true; }
+
   setExpanded(false);
   var back = _anchor;
   _anchor = null;
+
   return back;
 }
 
 export function toggleModelPicker(anchor) {
-  if (_open && _anchor === anchor) dismissModelPicker();
-  else openModelPicker(anchor);
+  if (_open && _anchor === anchor) { dismissModelPicker(); }
+  else { openModelPicker(anchor); }
 }
 
 function selectValue(value) {
-  if (!_el || !_el.modelSelect) return;
+  if (!_el || !_el.modelSelect) { return; }
+
   _el.modelSelect.value = value;
   writeDefault(model_key, value);
   pinChat({ model: value });
   _el.modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
-  if (_renderContextMeter) _renderContextMeter();
-  if (_onModelChange) _onModelChange();
+
+  if (_renderContextMeter) { _renderContextMeter(); }
+
+  if (_onModelChange) { _onModelChange(); }
+
   dismissModelPicker();
 }
 
@@ -494,8 +605,11 @@ export function loadProviders() {
     .then(_readJson)
     .then(function (d) {
       _providerCache = d.providers || [];
+
       if (_providerCacheHolder) { _providerCacheHolder.list.length = 0; Array.prototype.push.apply(_providerCacheHolder.list, _providerCache); }
-      if (_allUsage && _allUsage.length) _renderUsage(null);
+
+      if (_allUsage && _allUsage.length) { _renderUsage(null); }
+
       _el.modelSelect.textContent = "";
       _modelIndex = [];
       // The cache above keeps every configured provider (usage rows and the
@@ -511,18 +625,24 @@ export function loadProviders() {
           opt.value = row.value;
           opt.textContent = row.label + (row.meta ? "  ·  " + row.meta : "");
           _el.modelSelect.appendChild(opt);
+
           return;
         }
       });
       callable.forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
+
         var models = (prov.models || []).filter(function (m) { return m.enabled !== false; }).slice().sort(function (a, b) {
           var ac = a.category || "", bc = b.category || "";
-          if (!ac !== !bc) return ac ? -1 : 1;
-          if (ac !== bc) return ac.localeCompare(bc);
+
+          if (!ac !== !bc) { return ac ? -1 : 1; }
+
+          if (ac !== bc) { return ac.localeCompare(bc); }
+
           return String(a.name || "").localeCompare(String(b.name || ""));
         });
+
         models.forEach(function (m) {
           var value = prov.name + " " + m.name;
           var label = m.display || m.name;
@@ -530,14 +650,19 @@ export function loadProviders() {
           var opt = document.createElement("option");
           opt.value = value;
           opt.textContent = label + (meta.length ? "  ·  " + meta.join("  ·  ") : "");
-          if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
+
+          if (prov.name === d.default && m.name === prov.default_model) { opt.selected = true; }
+
           group.appendChild(opt);
         });
         _el.modelSelect.appendChild(group);
       });
+
       if (_el.fallbackProvider) {
         var fbSaved = null;
+
         try { fbSaved = window.localStorage.getItem("clanker.fallback"); } catch (e) {}
+
         _el.fallbackProvider.textContent = "";
         var none = document.createElement("option");
         none.value = "";
@@ -549,14 +674,19 @@ export function loadProviders() {
           opt.textContent = prov.name;
           _el.fallbackProvider.appendChild(opt);
         });
-        if (selectHasValue(_el.fallbackProvider, fbSaved)) _el.fallbackProvider.value = fbSaved;
+
+        if (selectHasValue(_el.fallbackProvider, fbSaved)) { _el.fallbackProvider.value = fbSaved; }
       }
+
       // The conversation's pin first, the browser default only when it has
       // none: reloading a chat must not adopt whatever another tab last chose.
       var saved = effectiveModel();
-      if (selectHasValue(_el.modelSelect, saved)) _el.modelSelect.value = saved;
-      if (_onModelChange) _onModelChange();
-      if (_open) renderList(_search ? _search.value : "");
+
+      if (selectHasValue(_el.modelSelect, saved)) { _el.modelSelect.value = saved; }
+
+      if (_onModelChange) { _onModelChange(); }
+
+      if (_open) { renderList(_search ? _search.value : ""); }
     })
     .catch(function (err) {
       // Replace, not append: every config write re-runs this, so each failure
@@ -568,8 +698,10 @@ export function loadProviders() {
       var why = (err && err.message) || "Could not reach the server.";
       opt.title = why;
       _el.modelSelect.appendChild(opt);
-      if (_onModelChange) _onModelChange();
-      if (_el.modelButton) _el.modelButton.title = "Could not load the model list: " + why;
+
+      if (_onModelChange) { _onModelChange(); }
+
+      if (_el.modelButton) { _el.modelButton.title = "Could not load the model list: " + why; }
     });
 }
 
@@ -577,11 +709,17 @@ export function runOptions() {
   var out = runOptionsFromValue((_el.modelSelect.value || "").trim());
   out.fallbackProvider = fallbackProviderValue();
   var t = parseFloat(_el.paramTemp.value);
-  if (!isNaN(t)) out.temperature = t;
+
+  if (!isNaN(t)) { out.temperature = t; }
+
   var tp = parseFloat(_el.paramTopP.value);
-  if (!isNaN(tp)) out.top_p = tp;
+
+  if (!isNaN(tp)) { out.top_p = tp; }
+
   var re = (_el.paramEffort && _el.paramEffort.value) || "";
-  if (re) out.reasoning_effort = re;
+
+  if (re) { out.reasoning_effort = re; }
+
   return out;
 }
 
@@ -591,9 +729,11 @@ export function fallbackProviderValue() {
 
 export function syncSubmitLabel() {
   var empty = !_el.task || !_el.task.value.trim();
+
   var hint = empty
     ? "Write a task first"
     : (_el.enterSends.checked ? "Run (Enter)" : "Run (Ctrl+Enter)");
+
   _el.submit.title = hint;
   _el.submit.setAttribute("aria-label", hint);
 }
@@ -624,12 +764,15 @@ export function bindModelPicker(ctx) {
     writeDefault(model_key, _el.modelSelect.value);
     pinChat({ model: _el.modelSelect.value });
     _renderContextMeter();
-    if (_onModelChange) _onModelChange();
+
+    if (_onModelChange) { _onModelChange(); }
   });
 
   try { _el.enterSends.checked = window.localStorage.getItem("clanker.entersends") === "1"; } catch (e) {}
+
   _el.enterSends.addEventListener("change", function () {
     try { window.localStorage.setItem("clanker.entersends", _el.enterSends.checked ? "1" : "0"); } catch (e) {}
+
     syncSubmitLabel();
   });
 
@@ -641,7 +784,9 @@ export function bindModelPicker(ctx) {
 
   if (_el.paramEffort) {
     var savedEffort = effectiveEffort();
-    if (selectHasValue(_el.paramEffort, savedEffort)) _el.paramEffort.value = savedEffort;
+
+    if (selectHasValue(_el.paramEffort, savedEffort)) { _el.paramEffort.value = savedEffort; }
+
     _el.paramEffort.addEventListener("change", function () {
       writeDefault(effort_key, _el.paramEffort.value);
       pinChat({ effort: _el.paramEffort.value });

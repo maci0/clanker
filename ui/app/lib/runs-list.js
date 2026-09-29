@@ -11,6 +11,7 @@ import { calendarDaysAgo, searchFold } from "../core/utils.js";
 
 /** Nanoseconds is the widest clock a run id carries; see runStartedAt. */
 const NS_DIGITS = 19;
+
 /** Milliseconds is 13 of those digits. */
 const MS_DIGITS = 13;
 
@@ -22,13 +23,21 @@ const MS_DIGITS = 13;
    on the Zig side; the two must agree or the list disagrees with its order. */
 export function runStartedAt(run) {
   const id = run && run.run_id;
-  if (typeof id !== "string") return 0;
+
+  if (typeof id !== "string") { return 0; }
+
   const dash = id.indexOf("-");
-  if (dash < 0) return 0;
+
+  if (dash < 0) { return 0; }
+
   const prefix = id.slice(0, dash);
-  if (prefix !== "run" && prefix !== "sub") return 0;
+
+  if (prefix !== "run" && prefix !== "sub") { return 0; }
+
   const digits = id.slice(dash + 1);
-  if (!digits.length || digits.length > NS_DIGITS || !/^\d+$/.test(digits)) return 0;
+
+  if (!digits.length || digits.length > NS_DIGITS || !/^\d+$/.test(digits)) { return 0; }
+
   return Number(digits.padEnd(NS_DIGITS, "0").slice(0, MS_DIGITS));
 }
 
@@ -42,6 +51,7 @@ function dayStamp(startedAt, withYear) {
   const opts = withYear
     ? { year: "numeric", month: "short", day: "numeric" }
     : { month: "short", day: "numeric" };
+
   return new Date(startedAt).toLocaleDateString(undefined, opts);
 }
 
@@ -49,25 +59,36 @@ function dayStamp(startedAt, withYear) {
     for a run whose id carries no timestamp — better no date than an invented
     one. */
 export function fmtWhen(startedAt, now) {
-  if (!startedAt) return "";
+  if (!startedAt) { return ""; }
+
   const ms = now - startedAt;
-  if (ms < 60000) return RELATIVE.format(0, "second");
-  if (ms < 3600000) return RELATIVE.format(-Math.floor(ms / 60000), "minute");
+
+  if (ms < 60000) { return RELATIVE.format(0, "second"); }
+
+  if (ms < 3600000) { return RELATIVE.format(-Math.floor(ms / 60000), "minute"); }
+
   // Calendar days, not 24-hour blocks: after a spring-forward the previous
   // local day is 23 hours, so a Sunday-midnight run viewed at Monday 00:30
   // is 23.5h old and still yesterday. Same-day hours stay hours.
   const days = calendarDaysAgo(startedAt, now);
-  if (days === 0) return RELATIVE.format(-Math.floor(ms / 3600000), "hour");
-  if (days === 1) return RELATIVE.format(-1, "day");
+
+  if (days === 0) { return RELATIVE.format(-Math.floor(ms / 3600000), "hour"); }
+
+  if (days === 1) { return RELATIVE.format(-1, "day"); }
+
   return dayStamp(startedAt, false);
 }
 
 /** The heading a row sits under. */
 export function dayBucket(startedAt, now) {
-  if (!startedAt) return "Undated";
+  if (!startedAt) { return "Undated"; }
+
   const days = calendarDaysAgo(startedAt, now);
-  if (days === 0) return RELATIVE.format(0, "day");
-  if (days === 1) return RELATIVE.format(-1, "day");
+
+  if (days === 0) { return RELATIVE.format(0, "day"); }
+
+  if (days === 1) { return RELATIVE.format(-1, "day"); }
+
   return dayStamp(startedAt, new Date(startedAt).getFullYear() !== new Date(now).getFullYear());
 }
 
@@ -75,8 +96,10 @@ export function dayBucket(startedAt, now) {
    array, and this is called with both. Reading `.some` off the count is what
    made the `failed` filter throw rather than filter. */
 export function runFailed(run) {
-  if (!run) return false;
-  if (run.failed === true || run.ok === false) return true;
+  if (!run) { return false; }
+
+  if (run.failed === true || run.ok === false) { return true; }
+
   return Array.isArray(run.nodes) && run.nodes.some(function (n) { return n && n.ok === false; });
 }
 
@@ -86,13 +109,18 @@ const FAILED_WORDS = ["failed", ":failed", "⚠ failed"];
     `failed` keyword, which selects on state instead. */
 export function matchesRunQuery(run, query) {
   const raw = (query || "").trim();
-  if (!raw) return true;
-  if (FAILED_WORDS.indexOf(raw.toLowerCase()) !== -1) return runFailed(run);
+
+  if (!raw) { return true; }
+
+  if (FAILED_WORDS.indexOf(raw.toLowerCase()) !== -1) { return runFailed(run); }
+
   const q = searchFold(raw);
   const hay = [run.run_id, run.task, run.provider];
+
   for (let i = 0; i < hay.length; i++) {
-    if (typeof hay[i] === "string" && searchFold(hay[i]).indexOf(q) !== -1) return true;
+    if (typeof hay[i] === "string" && searchFold(hay[i]).indexOf(q) !== -1) { return true; }
   }
+
   return false;
 }
 
@@ -104,8 +132,10 @@ export function runRows(runs, opts) {
   const query = o.query || "";
   const out = [];
   (runs || []).forEach(function (r) {
-    if (!r || typeof r.run_id !== "string") return;
-    if (!matchesRunQuery(r, query)) return;
+    if (!r || typeof r.run_id !== "string") { return; }
+
+    if (!matchesRunQuery(r, query)) { return; }
+
     const startedAt = runStartedAt(r);
     const task = (r.task || "").replace(/\s+/g, " ").trim();
     out.push({
@@ -118,11 +148,12 @@ export function runRows(runs, opts) {
       durationMs: r.duration_ms || 0,
       tokens: (r.prompt_tokens || 0) + (r.completion_tokens || 0),
       failed: runFailed(r),
-      startedAt: startedAt,
+      startedAt,
       when: fmtWhen(startedAt, now),
       day: dayBucket(startedAt, now),
     });
   });
+
   return out;
 }
 
@@ -134,12 +165,15 @@ export function groupRunsByDay(rows, now) {
   (rows || []).forEach(function (row) {
     const day = row.day || dayBucket(row.startedAt, at);
     let g = byDay[day];
+
     if (!g) {
-      g = { day: day, rows: [] };
+      g = { day, rows: [] };
       byDay[day] = g;
       groups.push(g);
     }
+
     g.rows.push(row);
   });
+
   return groups;
 }

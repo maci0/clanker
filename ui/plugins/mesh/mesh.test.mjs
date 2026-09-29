@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const dir = dirname(fileURLToPath(import.meta.url));
+
 const js = readFileSync(join(dir, "app.js"), "utf8");
+
 const spec = readFileSync(join(dir, "plugin.json"), "utf8");
 
 test("Mesh is a Watch plugin over the mesh HTTP control plane", function () {
@@ -76,9 +78,9 @@ test("the visibility guard reads the panel the host hides, not the section", fun
   assert.match(js, /function viewHidden\(\) \{/);
   assert.match(js, /container\.closest\(".view"\)/);
   // Every one of the three consumers uses it.
-  assert.match(js, /if \(!ev \|\| viewHidden\(\)\) return;/);
-  assert.match(js, /if \(viewHidden\(\) \|\| state\.busy\) return;/);
-  assert.match(js, /if \(viewHidden\(\) \|\| !state\.pending\.length\) return;/);
+  assert.match(js, /if \(!ev \|\| viewHidden\(\)\) (?:\{ )?return;/);
+  assert.match(js, /if \(viewHidden\(\) \|\| state\.busy\) (?:\{ )?return;/);
+  assert.match(js, /if \(viewHidden\(\) \|\| !state\.pending\.length\) (?:\{ )?return;/);
 });
 
 // And the same thing behaviourally: the shipped `viewHidden` lifted out and run
@@ -91,14 +93,17 @@ test("viewHidden sees a hidden panel through a section that is not hidden", func
 
   function shape(panelHidden) {
     const panel = { hidden: panelHidden, className: "view" };
+
     return { hidden: false, closest: (sel) => (sel === ".view" ? panel : null) };
   }
+
   for (const [panelHidden, expected] of [[true, true], [false, false]]) {
     const ctx = { container: shape(panelHidden) };
     vm.createContext(ctx);
     vm.runInContext(js.slice(from, to) + "\nvar out = viewHidden();", ctx);
     assert.equal(ctx.out, expected);
   }
+
   // A container with no enclosing panel is not a reason to stop polling.
   const orphan = { container: { hidden: false, closest: () => null } };
   vm.createContext(orphan);

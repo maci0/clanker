@@ -240,7 +240,7 @@ function bindMcpServers() {
     uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" }).then(function (yes) {
       if (!yes) return;
       var header = "mcp_servers." + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name));
-      postJson("/api/config/table/remove", { header: header })
+      postJson("/api/config/table/remove", { header })
         .then(function (d) {
           if (!d.ok) throw new Error(d.error || "remove failed");
           note(d.removed === false ? "Nothing by that name in config.local.toml (a server declared in the shared config.toml cannot be removed here)." : "Removed.");

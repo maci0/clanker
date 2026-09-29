@@ -3,19 +3,26 @@
 export function dmSafeName(name) {
   return String(name).replace(/\|/g, "-");
 }
+
 export function dmRoom(a, b) {
   return "dm:" + [dmSafeName(a), dmSafeName(b)].sort().join("|");
 }
+
 export function dmPartner(room, instanceName) {
-  if (!room || room.indexOf("dm:") !== 0) return dmSafeName(room);
+  if (!room || room.indexOf("dm:") !== 0) { return dmSafeName(room); }
+
   var parts = room.slice(3).split("|");
   var mine = dmSafeName(instanceName);
-  for (var i = 0; i < parts.length; i++) if (parts[i] !== mine) return parts[i];
+
+  for (var i = 0; i < parts.length; i++) { if (parts[i] !== mine) { return parts[i]; } }
+
   return parts[parts.length - 1] || room;
 }
+
 export function isDm(room) {
   return typeof room === "string" && room.indexOf("dm:") === 0;
 }
+
 /* A message's identity, for the page's own bookkeeping — the seen-set that
    dedupes poll batches, and the key a local thread hangs off.
 
@@ -33,8 +40,10 @@ export function isDm(room) {
    the server (pin, edit, delete, react) still need a real `id`, and
    `hasServerId` is what asks. */
 export function messageKey(m) {
-  if (!m) return "";
-  if (m.id) return String(m.id);
+  if (!m) { return ""; }
+
+  if (m.id) { return String(m.id); }
+
   return "local:" + dmSafeName(m.from || "?") + ":" + (m.ts || 0) + ":" + strHash(String(m.text || ""));
 }
 
@@ -43,7 +52,9 @@ export function messageKey(m) {
    there is no way to tell apart anyway. */
 function strHash(s) {
   var h = 5381;
-  for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+
+  for (var i = 0; i < s.length; i++) { h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; }
+
   return h.toString(36);
 }
 
@@ -56,9 +67,12 @@ export var CLANKER_MARKS = [
   "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
   "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"
 ];
+
 export function clankerMark(name) {
   var h = 5381;
-  for (var i = 0; i < name.length; i++) h = ((h * 33) ^ name.charCodeAt(i)) >>> 0;
+
+  for (var i = 0; i < name.length; i++) { h = ((h * 33) ^ name.charCodeAt(i)) >>> 0; }
+
   return CLANKER_MARKS[h % CLANKER_MARKS.length];
 }
 

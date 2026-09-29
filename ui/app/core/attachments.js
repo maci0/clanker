@@ -2,7 +2,9 @@
 import { plural } from "./utils.js";
 
 export var pendingImages = [];
+
 export var max_image_bytes = 4 * 1024 * 1024;
+
 export var max_images = 4;
 
 // Video input (Kimi Code parity: "drop a screen recording into the chat").
@@ -11,13 +13,17 @@ export var max_images = 4;
 // per-image cap, and rides the same pendingImages list the server already
 // accepts. Nothing server-side changes.
 export var max_video_frames = 4;
+
 export var max_video_bytes = 256 * 1024 * 1024;
+
 export var video_frame_width = 640;
 
 /* An attached image and its remove control. Small enough to stay out of the
    way, large enough to tell two screenshots apart. */
 var ATTACH_WRAP_CLASS = "relative";
+
 var ATTACH_IMG_CLASS = "block h-18 w-18 rounded-plate border border-border bg-surface object-cover";
+
 var ATTACH_REMOVE_CLASS = "absolute -top-1.5 -right-1.5 min-h-6 w-6 cursor-pointer rounded-capsule border border-border bg-surface p-0 font-mono text-sm leading-none font-bold text-fg-muted hover:border-danger hover:text-danger";
 
 export function renderAttachments(els, iconFn, fmtBytesFn) {
@@ -43,29 +49,40 @@ export function renderAttachments(els, iconFn, fmtBytesFn) {
     wrap.appendChild(rm);
     els.attachments.appendChild(wrap);
   });
-  if (typeof els.onAttachmentsChange === "function") els.onAttachmentsChange();
+
+  if (typeof els.onAttachmentsChange === "function") { els.onAttachmentsChange(); }
 }
 
 export function addImageFile(file, els, iconFn, fmtBytesFn) {
-  if (!file) return;
+  if (!file) { return; }
+
   if (pendingImages.length >= max_images) {
     els.sessionStatus.textContent = "At most " + max_images + " images can be attached to one message.";
+
     return;
   }
+
   if (file.type.indexOf("image/") !== 0) {
     els.sessionStatus.textContent = "Only images can be attached; " + (file.type || "that file") + " was ignored.";
+
     return;
   }
+
   var reader = new FileReader();
   reader.onload = function () {
     var comma = String(reader.result).indexOf(",");
-    if (comma === -1) return;
+
+    if (comma === -1) { return; }
+
     var b64 = String(reader.result).slice(comma + 1);
     var bytes = Math.floor(b64.length * 3 / 4);
+
     if (bytes > max_image_bytes) {
       els.sessionStatus.textContent = "That image is " + fmtBytesFn(bytes) + "; the limit is " + fmtBytesFn(max_image_bytes) + ".";
+
       return;
     }
+
     // Checked again here, not only on the way in. A drop or a paste hands
     // over every file at once, so N synchronous calls all read a length of 0
     // before any FileReader has finished and all N pass the check above; six
@@ -74,24 +91,32 @@ export function addImageFile(file, els, iconFn, fmtBytesFn) {
     // push-time test the video sampler already makes for its frames.
     if (pendingImages.length >= max_images) {
       els.sessionStatus.textContent = "At most " + max_images + " images can be attached to one message.";
+
       return;
     }
-    pendingImages.push({ mime: file.type, b64: b64, bytes: bytes });
+
+    pendingImages.push({ mime: file.type, b64, bytes });
     renderAttachments(els, iconFn, fmtBytesFn);
   };
+
   reader.readAsDataURL(file);
 }
 
 /// Routes a dropped or pasted file to the right sampler: images ride through
 /// untouched, videos are sampled to JPEG frames, anything else is refused.
 export function addMediaFile(file, els, iconFn, fmtBytesFn) {
-  if (!file) return false;
+  if (!file) { return false; }
+
   if (file.type.indexOf("image/") === 0) {
     addImageFile(file, els, iconFn, fmtBytesFn);
+
     return true;
   }
-  if (file.type.indexOf("video/") === 0) return addVideoFile(file, els, iconFn, fmtBytesFn);
+
+  if (file.type.indexOf("video/") === 0) { return addVideoFile(file, els, iconFn, fmtBytesFn); }
+
   els.sessionStatus.textContent = "Only images and videos can be attached; " + (file.type || "that file") + " was ignored.";
+
   return false;
 }
 
@@ -101,12 +126,16 @@ export function addMediaFile(file, els, iconFn, fmtBytesFn) {
 /// at jpeg 0.72 — a screen recording's frames land at tens of KB, far under
 /// the 4 MB per-image cap, so four frames fit comfortably.
 export function addVideoFile(file, els, iconFn, fmtBytesFn) {
-  if (!file) return false;
-  if (file.type.indexOf("video/") !== 0) return false;
+  if (!file) { return false; }
+
+  if (file.type.indexOf("video/") !== 0) { return false; }
+
   if (file.size > max_video_bytes) {
     els.sessionStatus.textContent = "That video is " + fmtBytesFn(file.size) + "; the limit is " + fmtBytesFn(max_video_bytes) + ".";
+
     return true;
   }
+
   var url = URL.createObjectURL(file);
   var video = document.createElement("video");
   video.muted = true;
@@ -114,45 +143,61 @@ export function addVideoFile(file, els, iconFn, fmtBytesFn) {
   video.preload = "auto";
   video.src = url;
   var done = false;
+
   function cleanup() {
-    if (done) return;
+    if (done) { return; }
+
     done = true;
+
     try { URL.revokeObjectURL(url); } catch (_) {}
+
     video.removeAttribute("src");
   }
+
   video.onerror = function () {
     cleanup();
     els.sessionStatus.textContent = "Could not read that video file.";
   };
+
   video.onloadedmetadata = function () {
     var duration = video.duration;
+
     if (!isFinite(duration) || duration <= 0) {
       cleanup();
       els.sessionStatus.textContent = "Could not read that video's duration.";
+
       return;
     }
+
     var want = Math.min(max_video_frames, Math.max(1, Math.ceil(duration)));
     var times = [];
-    for (var i = 0; i < want; i++) times.push((i + 0.5) * duration / want);
+
+    for (var i = 0; i < want; i++) { times.push((i + 0.5) * duration / want); }
+
     var canvas = document.createElement("canvas");
     var ctx = canvas.getContext("2d");
     var idx = 0;
     var pushed = 0;
+
     function grab() {
       if (idx >= times.length) {
         cleanup();
         renderAttachments(els, iconFn, fmtBytesFn);
+
         if (els.sessionStatus) {
           els.sessionStatus.textContent = pushed > 0
             ? "video sampled to " + plural(pushed, { one: "frame.", other: "frames." })
             : "No frames could be read from that video.";
         }
+
         return;
       }
+
       video.onseeked = function () {
         try {
           var w = video.videoWidth || 0;
           var h = video.videoHeight || 0;
+
           if (w > 0 && h > 0) {
             var scale = Math.min(1, video_frame_width / w);
             canvas.width = Math.max(1, Math.round(w * scale));
@@ -160,22 +205,28 @@ export function addVideoFile(file, els, iconFn, fmtBytesFn) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             var dataUrl = canvas.toDataURL("image/jpeg", 0.72);
             var comma = dataUrl.indexOf(",");
+
             if (comma !== -1) {
               var b64 = dataUrl.slice(comma + 1);
               var bytes = Math.floor(b64.length * 3 / 4);
+
               if (bytes <= max_image_bytes && pendingImages.length < max_images) {
-                pendingImages.push({ mime: "image/jpeg", b64: b64, bytes: bytes });
+                pendingImages.push({ mime: "image/jpeg", b64, bytes });
                 pushed += 1;
               }
             }
           }
         } catch (_) {}
+
         idx += 1;
         grab();
       };
+
       video.currentTime = times[idx];
     }
+
     grab();
   };
+
   return true;
 }

@@ -909,7 +909,7 @@ function drawRun(g) {
   }
   function doLayout(q){
     loadD3().then(function () {
-      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap: minimap, onSelect: function(k,n){ showNodeDetail(k,n); syncGraphUrl(); } });
+      if (canvas.isConnected) layoutGraph(canvas, built, slowest, { searchQuery: q || "", kindFilter: _kindFilter, statusEl: el.runStatus, minimap, onSelect(k,n){ showNodeDetail(k,n); syncGraphUrl(); } });
       try{ updateMinimap(); paintMinimap(); }catch(_){}
       syncGraphUrl();
     }).catch(function (err) {

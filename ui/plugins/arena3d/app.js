@@ -99,7 +99,7 @@ export function mountArena3D(host) {
     var camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
 
     S = {
-      host: host, renderer: renderer, scene: scene, camera: camera,
+      host, renderer, scene, camera,
       avatars: [], effects: [], raf: null, clock: 0, last: 0,
       orbit: { az: 0.9, el: 0.42, r: 9, drag: null, auto: true },
       match: null, lastMoveKey: "", shattered: {}, disposables: []
@@ -187,7 +187,7 @@ function buildAvatars(m) {
     var body = new THREE.Mesh(
       track(avatarGeometry(i)),
       track(new THREE.MeshStandardMaterial({
-        color: color, roughness: 0.35, metalness: 0.25,
+        color, roughness: 0.35, metalness: 0.25,
         emissive: color.clone().multiplyScalar(0.25)
       }))
     );
@@ -208,7 +208,7 @@ function buildAvatars(m) {
 
     group.position.copy(placeFor(i, cs.length));
     S.scene.add(group);
-    S.avatars.push({ group: group, body: body, hp: hpArc, base: group.position.clone(), hue: hue, hpFrac: 1, out: false });
+    S.avatars.push({ group, body, hp: hpArc, base: group.position.clone(), hue, hpFrac: 1, out: false });
   });
 }
 
@@ -226,7 +226,7 @@ function hpColorOf(frac, p) {
 function addBolt(fromI, toI, color) {
   var a = S.avatars[fromI], b = S.avatars[toI];
   if (!a || !b) return;
-  var mat = track(new THREE.MeshBasicMaterial({ color: color }));
+  var mat = track(new THREE.MeshBasicMaterial({ color }));
   var bolt = new THREE.Mesh(track(new THREE.SphereGeometry(0.12, 12, 12)), mat);
   var trail = new THREE.PointLight(color, 12, 6);
   bolt.add(trail);
@@ -264,7 +264,7 @@ function addShield(i, color) {
   if (!a) return;
   var shell = new THREE.Mesh(
     track(new THREE.SphereGeometry(0.9, 24, 16)),
-    track(new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.35, side: THREE.DoubleSide }))
+    track(new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, side: THREE.DoubleSide }))
   );
   shell.position.copy(a.group.position);
   S.scene.add(shell);
@@ -283,7 +283,7 @@ function addPillar(i, color) {
   if (!a) return;
   var beam = new THREE.Mesh(
     track(new THREE.CylinderGeometry(0.5, 0.7, 9, 24, 1, true)),
-    track(new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.3, side: THREE.DoubleSide }))
+    track(new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide }))
   );
   beam.position.copy(a.group.position);
   beam.position.y = 4.4;
@@ -316,7 +316,7 @@ function addShatter(i) {
     seed.push({ p: v, ang: Math.atan2(v.z, v.x), r: Math.hypot(v.x, v.z), y: v.y, spin: 1.5 + Math.random() * 2 });
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  var pts = new THREE.Points(geo, track(new THREE.PointsMaterial({ color: color, size: 0.07, transparent: true })));
+  var pts = new THREE.Points(geo, track(new THREE.PointsMaterial({ color, size: 0.07, transparent: true })));
   S.scene.add(pts);
   var t0 = S.clock;
   S.effects.push(function () {

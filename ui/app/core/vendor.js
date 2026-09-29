@@ -1,38 +1,48 @@
 export var vendorLoads = {};
+
 export var tomlRegistered = false;
 
 import { readJson } from "./utils.js";
+
 export { readJson };
 
 const vendorLoadTimeoutMs = 30000;
 
 export function loadVendor(file, ready) {
-  if (vendorLoads[file]) return vendorLoads[file];
+  if (vendorLoads[file]) { return vendorLoads[file]; }
+
   vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
     var s = document.createElement("script");
+
     var timer = window.setTimeout(function () {
       done();
       reject(new Error("timed out loading " + file));
     }, vendorLoadTimeoutMs);
+
     function done() {
       window.clearTimeout(timer);
       s.remove();
       s.onload = null;
       s.onerror = null;
     }
+
     s.src = new URL("../vendor/" + file, import.meta.url).href;
     s.onload = function () {
       done();
-      if (ready()) resolve();
-      else reject(new Error(file + " loaded but exported nothing"));
+
+      if (ready()) { resolve(); }
+      else { reject(new Error(file + " loaded but exported nothing")); }
     };
+
     s.onerror = function () {
       done();
       reject(new Error("could not load " + file));
     };
+
     document.head.appendChild(s);
   });
   vendorLoads[file].catch(function () { delete vendorLoads[file]; });
+
   return vendorLoads[file];
 }
 
@@ -41,7 +51,8 @@ export function loadD3() {
 }
 
 export function registerToml() {
-  if (tomlRegistered) return;
+  if (tomlRegistered) { return; }
+
   tomlRegistered = true;
   window.hljs.registerLanguage("toml", function (hljs) {
     return {
@@ -84,15 +95,17 @@ export var reducedMotion = (typeof window !== "undefined" && window.matchMedia)
   : { matches: false };
 
 export function scrollTo(node, block) {
-  node.scrollIntoView({ block: block, behavior: reducedMotion.matches ? "auto" : "smooth" });
+  node.scrollIntoView({ block, behavior: reducedMotion.matches ? "auto" : "smooth" });
 }
 
 export function copyText(text, btn, restoreLabel, selectTarget) {
   function restore() {
     window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
   }
+
   function selectInstead() {
     var sel = window.getSelection && window.getSelection();
+
     if (selectTarget && sel && document.createRange) {
       var range = document.createRange();
       range.selectNodeContents(selectTarget);
@@ -102,9 +115,12 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
     } else {
       btn.textContent = "Copy unavailable";
     }
+
     restore();
   }
-  if (!navigator.clipboard || !window.isSecureContext) return selectInstead();
+
+  if (!navigator.clipboard || !window.isSecureContext) { return selectInstead(); }
+
   navigator.clipboard.writeText(text).then(function () {
     btn.textContent = "Copied";
     restore();

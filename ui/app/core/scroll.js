@@ -9,17 +9,22 @@ export function conversationScroller() {
 
 export function nearBottom(scroller) {
   var box = scroller || conversationScroller();
-  if (box) return box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_PX;
+
+  if (box) { return box.scrollHeight - box.scrollTop - box.clientHeight < NEAR_PX; }
+
   return window.innerHeight + window.scrollY >= document.body.scrollHeight - NEAR_PX;
 }
 
 export function scrollChatToLatest(behavior) {
   var box = conversationScroller();
   var how = behavior || "auto";
+
   if (box) {
     box.scrollTo({ top: box.scrollHeight, behavior: how });
+
     return;
   }
+
   window.scrollTo({ top: document.body.scrollHeight, behavior: how });
 }
 
@@ -29,5 +34,6 @@ export function prefersReducedMotion() {
 
 export function syncScrollButton(transcriptEl, scrollButtonEl, scroller) {
   var show = !nearBottom(scroller) && transcriptEl && transcriptEl.querySelector(".turn") !== null;
-  if (scrollButtonEl) scrollButtonEl.hidden = !show;
+
+  if (scrollButtonEl) { scrollButtonEl.hidden = !show; }
 }

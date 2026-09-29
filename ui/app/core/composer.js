@@ -16,8 +16,11 @@ export function savePrompts(prompts) {
    was never a safe assumption. */
 export function forgetPrompt(prompts, text) {
   var at = prompts.indexOf(text);
-  if (at === -1) return false;
+
+  if (at === -1) { return false; }
+
   prompts.splice(at, 1);
+
   return true;
 }
 
@@ -31,13 +34,19 @@ export function forgetPrompt(prompts, text) {
    one request per arrow key is a request per arrow key. */
 export function setActiveItem(listEl, index, taskEl) {
   var items = listEl.querySelectorAll(".palette-item");
-  if (!items.length) return -1;
+
+  if (!items.length) { return -1; }
+
   var at = index;
-  if (typeof at !== "number" || at < 0 || at >= items.length) at = 0;
+
+  if (typeof at !== "number" || at < 0 || at >= items.length) { at = 0; }
+
   Array.prototype.forEach.call(items, function (li, i) {
     li.setAttribute("aria-selected", String(i === at));
   });
-  if (taskEl) taskEl.setAttribute("aria-activedescendant", items[at].id || "");
+
+  if (taskEl) { taskEl.setAttribute("aria-activedescendant", items[at].id || ""); }
+
   return at;
 }
 
@@ -57,12 +66,15 @@ export function setActiveItem(listEl, index, taskEl) {
    touched and drops the rest. A draft is the composer's business only — it is
    never sent, and clearing it is what a finished run does. */
 export var drafts_key = "clanker.drafts";
+
 export var max_drafts = 20;
 
 export function loadDrafts() {
   try {
     var raw = JSON.parse(window.localStorage.getItem(drafts_key) || "{}");
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) { return {}; }
+
     return raw;
   } catch (e) { return {}; }
 }
@@ -72,8 +84,10 @@ export function saveDrafts(drafts) {
 }
 
 export function draftFor(drafts, sessionId) {
-  if (!drafts || !sessionId) return "";
+  if (!drafts || !sessionId) { return ""; }
+
   var d = drafts[sessionId];
+
   return d && typeof d.text === "string" ? d.text : "";
 }
 
@@ -82,22 +96,28 @@ export function draftFor(drafts, sessionId) {
    cleared composer with blanks. `now` is injectable for the same reason the
    eviction is testable at all. */
 export function setDraft(drafts, sessionId, text, now) {
-  if (!drafts || !sessionId) return drafts;
+  if (!drafts || !sessionId) { return drafts; }
+
   if (!text || !String(text).trim()) {
     delete drafts[sessionId];
+
     return drafts;
   }
+
   drafts[sessionId] = { text: String(text), at: typeof now === "number" ? now : Date.now() };
   var ids = Object.keys(drafts);
+
   if (ids.length > max_drafts) {
     ids.sort(function (a, b) { return (drafts[a].at || 0) - (drafts[b].at || 0); });
     ids.slice(0, ids.length - max_drafts).forEach(function (id) { delete drafts[id]; });
   }
+
   return drafts;
 }
 
 export function promptQuery(taskValue) {
-  if (!taskValue || taskValue.charAt(0) !== "/") return null;
+  if (!taskValue || taskValue.charAt(0) !== "/") { return null; }
+
   return taskValue.slice(1).toLowerCase();
 }
 
@@ -108,15 +128,20 @@ export function autoGrow(textarea) {
 }
 
 export function contextLabel(meta, providerCache, modelSelectValue, fmtBytes) {
-  if (!meta || typeof meta.bytes !== "number" || !meta.bytes) return "";
+  if (!meta || typeof meta.bytes !== "number" || !meta.bytes) { return ""; }
+
   var pair = (modelSelectValue || "").split(" ");
   var window_ = 0;
   (providerCache || []).forEach(function (prov) {
-    if (prov.name !== pair[0]) return;
-    (prov.models || []).forEach(function (m) { if (m.name === pair[1]) window_ = m.context_window || 0; });
+    if (prov.name !== pair[0]) { return; }
+
+    (prov.models || []).forEach(function (m) { if (m.name === pair[1]) { window_ = m.context_window || 0; } });
   });
-  if (!window_) return fmtBytes(meta.bytes) + " of history";
+
+  if (!window_) { return fmtBytes(meta.bytes) + " of history"; }
+
   var pct = Math.round((meta.bytes / 4) / window_ * 100);
+
   return fmtBytes(meta.bytes) + " · about " + pct + "% of context";
 }
 
@@ -126,17 +151,23 @@ export function transcriptMarkdown(transcriptEl, currentSessionMeta, sessionId) 
   transcriptEl.querySelectorAll(".turn").forEach(function (turn) {
     var task = turn.querySelector(".turn-you");
     var answer = turn.querySelector("[data-turn-answer]");
+
     if (task) {
       var said = task._taskSource;
+
       if (said == null) {
         var author = task.querySelector(".turn-author");
         said = author ? task.textContent.slice(author.textContent.length) : task.textContent;
       }
+
       lines.push("## " + String(said || "").trim(), "");
     }
+
     var body = turn.markdownSource || (answer ? answer.textContent : "");
-    if (body) lines.push("### Response", "", body.replace(/\s+$/, ""), "");
+
+    if (body) { lines.push("### Response", "", body.replace(/\s+$/, ""), ""); }
   });
+
   return lines.join("\n");
 }
 

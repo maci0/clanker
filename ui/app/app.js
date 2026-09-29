@@ -1,26 +1,26 @@
-import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
+import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
 import { decorateRailTab, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
-import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
+import { dmRoom as dmRoomMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steeredText as steeredMessageText, renderSteerList } from "./core/steer.js";
 import { renderMarkdownWithFences as mdRenderMarkdownWithFences, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
-import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
+import { openOverlay as overlayOpen, closeOverlay as overlayClose } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
 import { loadPrompts as compLoadPrompts, savePrompts as compSavePrompts, promptQuery as compPromptQuery, autoGrow as compAutoGrow, contextLabel as compContextLabel, transcriptMarkdown as compTranscriptMarkdown, downloadText as compDownloadText, forgetPrompt as compForgetPrompt, setActiveItem as compSetActiveItem, loadDrafts as compLoadDrafts, saveDrafts as compSaveDrafts, draftFor as compDraftFor, setDraft as compSetDraft } from "./core/composer.js";
 import { nearBottom as scrollNearBottom, prefersReducedMotion as scrollPrefersReducedMotion, syncScrollButton as scrollSyncButton, scrollChatToLatest as scrollChatLatest, conversationScroller as scrollChatBox } from "./core/scroll.js";
 import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPrompt, bindDialog as dialogBindDialog } from "./core/dialog.js";
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
-import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
-import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins, pluginViewShown as pluginsViewShown } from "./core/plugins.js";
+import { pendingImages as attachImages, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
+import { bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, pluginViewShown as pluginsViewShown } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle, PALETTE_ITEM_CLASS, PALETTE_KIND_CLASS, PALETTE_LABEL_CLASS } from "./core/palette.js";
-import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
+import { loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { loadPrefs as cpLoad, savePrefs as cpSave, prefsFor as cpFor, setPref as cpSet, dropPref as cpDrop, copyPref as cpCopy } from "./core/chatprefs.js";
@@ -46,7 +46,6 @@ var fmtAgo = utilFmtAgo;
 var plural = utilPlural;
 var fmtCost = utilFmtCost;
 var fmtUsd = utilFmtUsd;
-var escapeHtml = utilEscapeHtml;
 var providerCache = [];
 var runLabel = function (r) { return runLabelMod(r, clip); };
 var modelLabel = function (provider, model) { return modelLabelMod(provider, model, providerCache); };
@@ -531,7 +530,7 @@ function railRowFor(s, current) {
     type: "button",
     class: RAIL_ITEM_CLASS,
     title: rawTitle || title,
-    onclick: function () {
+    onclick () {
       if (currentView !== "chat") showView("chat", false);
       switchSession(s.id);
       closeRailOnNarrow();
@@ -546,7 +545,7 @@ function railRowFor(s, current) {
     "data-on": String(isPinned(s.id)),
     "aria-label": (isPinned(s.id) ? "Unpin " : "Pin ") + title,
     "aria-pressed": String(isPinned(s.id)),
-    onclick: function () { togglePin(s.id); }
+    onclick () { togglePin(s.id); }
   });
   uiAdd(pin, icon("pin", 15));
 
@@ -599,7 +598,7 @@ bind(el.railList, railState, function (s) {
       "aria-expanded": String(!collapsed),
       "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
       title: (collapsed ? "Show " : "Hide ") + plural(g.items.length, { one: "conversation", other: "conversations" }) + " in " + g.name,
-      onclick: function () { toggleCollapsedGroup(g.name); }
+      onclick () { toggleCollapsedGroup(g.name); }
     }, T.span({ class: RAIL_GROUP_CARET_CLASS }, collapsed ? "▸" : "▾"),
       T.span({ class: RAIL_GROUP_NAME_CLASS }, g.name),
       T.span({ class: RAIL_GROUP_COUNT_CLASS }, String(g.items.length)));
@@ -633,7 +632,7 @@ bind(el.railList, railState, function (s) {
         T.button({
           type: "button",
           class: RAIL_EMPTY_ACTION_CLASS,
-          onclick: function () { loadSessions(); }
+          onclick () { loadSessions(); }
         }, "Try again")));
     }
   } else if (!matched && s.filter) {
@@ -642,7 +641,7 @@ bind(el.railList, railState, function (s) {
       T.button({
         type: "button",
         class: RAIL_EMPTY_ACTION_CLASS,
-        onclick: function () {
+        onclick () {
           var q = s.filter;
           window._pendingSearchQuery = q;
           showView("search", true);
@@ -652,7 +651,7 @@ bind(el.railList, railState, function (s) {
       T.button({
         type: "button",
         class: RAIL_EMPTY_ACTION_CLASS,
-        onclick: function () {
+        onclick () {
           if (el.sessionFilter) {
             el.sessionFilter.value = "";
             el.sessionFilter.focus();
@@ -1196,7 +1195,7 @@ if (el.workspaceNewForm) {
     fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name, path: path })
+      body: JSON.stringify({ name, path })
     })
       .then(readJson)
       .then(function (data) {
@@ -1249,7 +1248,7 @@ el.sessionMove.addEventListener("click", function () {
     : "Leave empty for this folder, or type a name. Use + to attach a directory.";
   textPrompt({
     title: "Move to workspace", label: "Workspace", value: meta.workspace || "",
-    hint: hint, suggestions: existing, confirmLabel: "Move"
+    hint, suggestions: existing, confirmLabel: "Move"
   }).then(function (next) {
     if (next === null) return;
     el.sessionMove.disabled = true;
@@ -1656,7 +1655,7 @@ function createTurn(task) {
   turn.appendChild(body);
   el.transcript.appendChild(turn);
 
-  return { root: turn, events: events, answer: answer, foot: foot };
+  return { root: turn, events, answer, foot };
 }
 
 function errorRecoveryHint(msg) {
@@ -1942,7 +1941,7 @@ function answerAsk(row, id, opt) {
   fetch("/api/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: id, answer: opt })
+    body: JSON.stringify({ id, answer: opt })
   }).then(readJson).then(function () {
     settleAsk(row, opt, "chevron");
   }).catch(function (err) {
@@ -2048,7 +2047,7 @@ function renderStats(turn, stats, task) {
   downBtn.title = "Record a thumbs-down. Never sent to the model.";
   function sendFeedback(rating, btn) {
     var n = parseInt((turn.root.querySelector(".turn-depth") || {}).textContent, 10) || 0;
-    utilPostJson("/api/feedback", { rating: rating, session: sessionId, turn: n }).then(function (data) {
+    utilPostJson("/api/feedback", { rating, session: sessionId, turn: n }).then(function (data) {
       btn.textContent = data && data.ok ? "Saved" : "Failed";
     }).catch(function () { btn.textContent = "Failed"; });
   }
@@ -2208,7 +2207,6 @@ function loadStatus() {
    want to show an agent (a screenshot of the thing you are asking about)
    could not be sent. Encoded here and posted with the run. */
 var pendingImages = attachImages;
-var max_image_bytes = attachMaxBytes;
 function renderAttachments() { attachRender(el, icon, fmtBytes); }
 el.onAttachmentsChange = updateComposerModeHint;
 /* A dropped or pasted file may be an image or a video (Kimi Code parity:
@@ -2358,7 +2356,7 @@ function fileMentionQuery() {
   if (at > 0 && v.charAt(at - 1) !== " " && v.charAt(at - 1) !== "\n") return null;
   var q = v.slice(at + 1);
   if (q.indexOf(" ") !== -1 || q.indexOf("\n") !== -1) return null;
-  return { at: at, q: q };
+  return { at, q };
 }
 /* Every keystroke after an `@` starts a listing. The replies are not ordered,
    so a slow listing for `@sr` could land after the one for `@src/` and paint
@@ -2561,14 +2559,14 @@ el.form.addEventListener("submit", function (e) {
   var liveGraph = { nodes: [], _byIter: {} };
   function pushLiveNode(kind, detail, label, ms){
     var iter = liveGraph.nodes.filter(function(n){ return n.kind==="llm"; }).length + 1;
-    var node = { kind: kind, detail: detail||label||kind, label: label||detail||kind, duration_ms: ms||0, prompt_tokens:0, completion_tokens:0, result_bytes:0, ok: true, iteration: iter };
+    var node = { kind, detail: detail||label||kind, label: label||detail||kind, duration_ms: ms||0, prompt_tokens:0, completion_tokens:0, result_bytes:0, ok: true, iteration: iter };
     liveGraph.nodes.push(node);
     // fire a lightweight live-runs refresh so Runs shows progress even before done
     try{
       if (!liveGraph._timer) liveGraph._timer = setTimeout(function(){
         liveGraph._timer=null;
         // stash as a synthetic run for the picker — not persisted, just for live view
-        var synth = { run_id:"live", task: task, provider: (opts.provider||""), duration_ms: liveClock()-startedAt, total_prompt_tokens:0, total_completion_tokens:0, nodes: liveGraph.nodes.slice() };
+        var synth = { run_id:"live", task, provider: (opts.provider||""), duration_ms: liveClock()-startedAt, total_prompt_tokens:0, total_completion_tokens:0, nodes: liveGraph.nodes.slice() };
         // render into Runs if that view is open, otherwise just keep for final compare
         if (document.getElementById("view-runs") && !document.getElementById("view-runs").hidden) {
           try{ drawRun(synth); }catch(_){}
@@ -2667,7 +2665,7 @@ el.form.addEventListener("submit", function (e) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      task: task,
+      task,
       goal: "",
       stream: true,
       session: sessionId,
@@ -2791,7 +2789,7 @@ var runsModulePromise = null;
 function loadRunsModule() {
   if (!runsModulePromise) {
     runsModulePromise = import("./features/runs.js").then(function (m) {
-      m.initRuns({ el: el, showView: showView, viewLoaded: viewLoaded, parseRunsHash: parseRunsHash });
+      m.initRuns({ el, showView, viewLoaded, parseRunsHash });
       runsModule = m;
       paletteRefs.allRunsHolder = m.allRunsHolder;
       return m;
@@ -2816,10 +2814,8 @@ function drawRun(g) {
 }
 
 var dmRoom = dmRoomMod;
-var dmSafeName = dmSafeNameMod;
 var isDm = isDmMod;
 var clankerMark = clankerMarkMod;
-var CLANKER_MARKS = CLANKER_MARKSMod;
 // dmPartner in this file is called as dmPartner(room) closing over instanceName.
 var dmPartner = function(room){ return dmPartnerMod(room, instanceName); };
 
@@ -2941,7 +2937,7 @@ function renderChatRooms(rooms) {
     if (p.name === instanceName) return;
     var room = dmRoom(instanceName, p.name);
     // A peer with no history yet still needs somewhere to be spoken to.
-    if (!dms.some(function (d) { return d.room === room; })) dms.push({ room: room, messages: 0 });
+    if (!dms.some(function (d) { return d.room === room; })) dms.push({ room, messages: 0 });
   });
 
   el.chatRoom.textContent = "";
@@ -3118,7 +3114,7 @@ function openChatRoom(room) {
       uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
         if (newTopic === null) return;
         fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room: room, topic: newTopic })
+          body: JSON.stringify({ room, topic: newTopic })
         }).then(function (r) { return r.json(); }).then(function (d) {
           if (d.ok) {
             roomTopics[room] = newTopic;
@@ -3171,7 +3167,7 @@ function joinIfNeeded(room) {
   return fetch("/api/chat/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ room: room, on: true })
+    body: JSON.stringify({ room, on: true })
   }).then(function (r) {
     if (r.ok) subscribedRooms.push(room);
   }).catch(function () {
@@ -3503,7 +3499,7 @@ function buildChatMessage(m) {
     // Call the server-side react endpoint
     if (!canAct) return;
     fetch("/api/chat/react", { method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, emoji: emoji })
+      body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id, emoji })
     }).then(function(r){ return r.json(); }).then(function(d){
       if(d.ok){
         // Optimistic update
@@ -4102,7 +4098,7 @@ el.chatForm.addEventListener("submit", function (e) {
   fetch("/api/chat/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ room: room, text: text })
+    body: JSON.stringify({ room, text })
   }).then(readJson).then(function () {
     el.chatText.value = "";
     return pollChat(room);
@@ -4166,15 +4162,15 @@ function loadToolsModule() {
     toolsModulePromise = import("./core/tools.js").then(function (m) {
       bindOnce("tools-module", function () {
         m.bindTools({
-          el: el,
-          allToolsHolder: allToolsHolder,
-          toolState: toolState,
-          clip: clip,
-          readJson: readJson,
-          scrollTo: scrollTo,
-          bind: bind,
-          T: T,
-          UI: UI
+          el,
+          allToolsHolder,
+          toolState,
+          clip,
+          readJson,
+          scrollTo,
+          bind,
+          T,
+          UI
         });
       });
       return m;
@@ -4371,54 +4367,54 @@ function bindOnce(name, bind) {
 }
 
 var viewLoaders = {
-  runs: function () {
+  runs () {
     return loadRunsModule().then(function (m) { bindOnce("runs", m.bindRuns); return m.loadRuns(); });
   },
-  fleet: function () {
+  fleet () {
     return loadFleetModule().then(function (fleet) { return fleet.refreshFleet(); });
   },
-  arena: function () {
+  arena () {
     return loadArenaModule().then(function (arena) { bindOnce("arena", arena.bindArena); return arena.loadArenaView(); });
   },
-  rooms: function () { return loadStatus().then(loadChatRooms); },
+  rooms () { return loadStatus().then(loadChatRooms); },
   // Goals ride along with the board: the board->goal sync (moving a card
   // marks its goal) needs the goal list, and the goal->board mirror needs to
   // run even when the Goals view was never opened. Both modules load here on
   // the board's first open; the wiring binds once for the life of the page.
-  kanban: function () {
+  kanban () {
     return loadBoardModule().then(function (m) {
       bindOnce("kanban", function () {
-        m.bindBoard({ el: el, setTabCount: setTabCount, openRun: openRun, getKnownPeers: function () { return knownPeers; } });
+        m.bindBoard({ el, setTabCount, openRun, getKnownPeers () { return knownPeers; } });
       });
       return m.loadBoardRooms().then(function () {
         return loadGoalsModule().then(function (gm) {
           bindOnce("goals", function () {
-            gm.bindGoals({ el: el, showView: showView, getSessionId: function () { return sessionId; }, switchSession: switchSession });
+            gm.bindGoals({ el, showView, getSessionId () { return sessionId; }, switchSession });
           });
           return gm.loadGoals();
         });
       });
     });
   },
-  models: function () {
+  models () {
     bindOnce("models", function () { loadModelsModule().then(function (m) { m.bindModels(); }); });
     return loadModelsModule().then(function (m) { return m.loadModelsView(); });
   },
-  knowledge: function () {
+  knowledge () {
     return loadKnowledgeModule().then(function (m) {
       bindOnce("knowledge", function () { m.bindKnowledge(); });
       return m.loadKnowledge();
     });
   },
-  prompts: function () {
+  prompts () {
     bindOnce("prompts", function () { loadPromptsModule().then(function (m) { m.bindPrompts(); }); });
     return Promise.all([
       loadPromptsModule().then(function (m) { return m.loadPromptsView(); }),
       loadToolsModule().then(function (m) { return Promise.all([m.loadWorkflows(), m.loadSkills()]); })
     ]);
   },
-  tools: function () { return loadToolsModule().then(function (m) { return m.loadTools(); }); },
-  system: function () {
+  tools () { return loadToolsModule().then(function (m) { return m.loadTools(); }); },
+  system () {
     return Promise.all([
       loadUsage(),
       loadStatus(),
@@ -4480,7 +4476,7 @@ function parseRunsHash(hash){
   var params = {};
   qs.split("&").forEach(function(p){ if(!p) return; var kv=p.split("="); try{ params[decodeURIComponent(kv[0])]=kv[1]?decodeURIComponent(kv[1]):"";}catch(_){ params[kv[0]]=kv[1]||""; } });
   var id=""; try{ id=decodeURIComponent(idPart);}catch(_){ id=idPart; }
-  return { id: id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
+  return { id, search: params.search||"", kind: params.kind||"", node: params.node||"" };
 }
 function persistRailFolds() {
   var data = {};
@@ -4527,7 +4523,7 @@ function showView(name, focusPanel) {
   // script has registered. Falling through to Chat here used to overwrite
   // clanker.view and drop a refresh that was sitting on #schedule.
   if (VIEWS.indexOf(viewBase(name === "goals" || name === "board" ? "kanban" : name)) === -1 && !pluginsReady) {
-    pendingPluginView = { name: name, focusPanel: focusPanel };
+    pendingPluginView = { name, focusPanel };
     return;
   }
   // Goals and kanban are one workflow. Old #board / #goals bookmarks
@@ -4929,7 +4925,7 @@ var savePrompts = function () {
         // an astral character. The lone half went to the server as a \udXXX
         // escape, and the prompt silently failed to save.
         var title = utilClip(text, 60).replace(/…$/, "").trim() || "Untitled";
-        fetch("/api/prompts", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ title: title, content: text }) }).catch(function(){});
+        fetch("/api/prompts", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ title, content: text }) }).catch(function(){});
       });
     }).catch(function(){});
   } catch(e) {}
@@ -5042,7 +5038,7 @@ function runSlashModel(arg) {
   }
   mpOpen(document.getElementById("composer-model") || document.getElementById("header-model"));
 }
-var slashCtx = { showView: showView, runModel: runSlashModel };
+var slashCtx = { showView, runModel: runSlashModel };
 slashReady();
 function slashQuery(){
   var v = el.task.value;
@@ -5050,7 +5046,7 @@ function slashQuery(){
   var sp = v.indexOf(" ");
   var head = sp===-1 ? v : v.slice(0, sp);
   var rest = sp===-1 ? "" : v.slice(sp+1);
-  return { head: head.toLowerCase(), rest: rest, raw: v };
+  return { head: head.toLowerCase(), rest, raw: v };
 }
 function renderSlashList(){
   var q = slashQuery();
@@ -5324,7 +5320,7 @@ el.runCopy.addEventListener("click", function () {
         var norm = msgs.map(function(m){
           var role = (m.role === "assistant" || m.role === "user") ? m.role : "";
           var content = String(m.content ?? m.text ?? "");
-          return { role: role, content: content };
+          return { role, content };
         }).filter(function(m){ return m.role && m.content.trim(); });
         if (!norm.length){ uiToast("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
@@ -5353,11 +5349,8 @@ el.runCopy.addEventListener("click", function () {
    A view a plugin registers is an ordinary view: same rail button, same panel,
    same digit shortcut, same URL fragment. */
 
-var pluginViews = pluginsViews;
-var loadPluginAssets = pluginsLoadPluginAssets;
 var loadWebuiPlugins = pluginsLoadWebuiPlugins;
-var renderWebuiPlugins = pluginsRenderWebuiPlugins;
-pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime, openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); }, observeStatus: function (node) { observeStatusNode(node); } });
+pluginsBind({ VIEWS, viewLoaders, wireTab, showView, el, readJson, fmtBytes, fmtInt, fmtCost, formatChatTime, openSession (id, jump) { switchSession(id, jump); showView("chat", true); }, observeStatus (node) { observeStatusNode(node); } });
 
 // The log tail viewer only renders under System, so its module loads on the
 // first call rather than riding the eager import closure the weight budget
@@ -5499,8 +5492,6 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
 
 var openOverlay = overlayOpen;
 var closeOverlay = overlayClose;
-var focusableIn = overlayFocusableIn;
-var trapOverlayTab = overlayTrapTab;
 
 var textPrompt = dialogTextPrompt;
 var finishTextPrompt = dialogFinishTextPrompt;
@@ -5536,7 +5527,7 @@ document.querySelectorAll("[data-system-jump]").forEach(function (btn) {
 });
 
 var providerCacheHolder = { list: providerCache };
-mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip, chatPrefs: { get: chatPrefsGet, set: chatPrefsSet } });
+mpBind({ el, readJson, fmtInt, allUsage, renderUsage, renderContextMeter, providerCacheHolder, onModelChange: renderSessionChip, chatPrefs: { get: chatPrefsGet, set: chatPrefsSet } });
 // Header chip and composer pill mirror the hidden select.
 if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
 
@@ -5545,17 +5536,17 @@ paletteRefs.allToolsHolder = allToolsHolder;
 paletteRefs.sessionLabel = sessionLabel;
 paletteRefs.runLabel = runLabel;
 paletteBind({
-  VIEWS: VIEWS, showView: showView, el: el,
+  VIEWS, showView, el,
   refs: paletteRefs,
-  setRailOpen: setRailOpen, switchSession: switchSession, openRun: openRun, renderBoard: renderBoard, showToolDetail: showToolDetail,
-  setOpenCardId: setOpenCardId
+  setRailOpen, switchSession, openRun, renderBoard, showToolDetail,
+  setOpenCardId
 });
 document.addEventListener("keydown", function (e) {
   // Trello/Slack-style card modal owns focus while open — Esc closes, Tab
   // traps. Lives in features/board.js with the rest of the modal; the
   // handler is only wired once the board module has been loaded.
   if (cardModalKeyHandler && cardModalKeyHandler(e)) return;
-  if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
+  if (paletteKeyHandle(e, { el, finishTextPrompt, setRailOpen })) return;
 });
 
 // Settings surface wires the same header affordances (single source of truth)
@@ -5668,8 +5659,6 @@ function integratedTaskInputHandler(){
   var mq = kbMentionQuery();
   if (mq && mq.q.length >= 0) {
     // Only trigger knowledge suggest when the # is the trailing token and not mid-slash
-    var beforeHash = el.task.value.slice(0, mq.at);
-    var afterHash = el.task.value.slice(mq.at + 1);
     // If the input is exactly a slash command prefix, prefer slash; otherwise allow #
     var slashQ = (function(){ try{ return slashQuery(); }catch(_){ return null; } })();
     if (!slashQ) {

@@ -10,10 +10,13 @@ import { after, before, test } from "node:test";
 import { installDom } from "../lib/dom-stub.mjs";
 
 let restoreDom;
+
 before(function () { restoreDom = installDom(); });
+
 after(function () { restoreDom(); });
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const src = readFileSync(join(here, "tools.js"), "utf8");
 
 // The real function text, run against the stub document and a stubbed fetch:
@@ -29,10 +32,12 @@ function shippedLoadSkills(elements, fetchImpl) {
   assert.ok(fn, "loadSkills missing from tools.js");
   const doc = Object.create(globalThis.document);
   doc.getElementById = function (id) { return elements[id] || null; };
+
   const factory = new Function(
     "document", "fetch", "_readJson", "utilFmtBytes", "utilPlural", "showLoadError",
     m[1] + "\n" + fn[1] + "\nreturn loadSkills;"
   );
+
   return factory(
     doc,
     fetchImpl,
@@ -46,12 +51,14 @@ function shippedLoadSkills(elements, fetchImpl) {
 test("a non-empty skills list renders its cards into #skills", async function () {
   const d = globalThis.document;
   const els = { skills: d.createElement("div"), "skills-status": d.createElement("p") };
+
   const loadSkills = shippedLoadSkills(els, function () {
     return Promise.resolve({ skills: [
       { name: "review.md", bytes: 1024, enabled: true, description: "how to review" },
       { name: "ship.md", bytes: 2048, enabled: false }
     ] });
   });
+
   await loadSkills();
   assert.equal(els.loadErrorShown, undefined, "the happy path must not fall into the load-error branch");
   // The card carries the ported class list, which starts with the hook the
@@ -71,9 +78,11 @@ test("a non-empty skills list renders its cards into #skills", async function ()
 test("an empty skills list still renders its empty state", async function () {
   const d = globalThis.document;
   const els = { skills: d.createElement("div"), "skills-status": d.createElement("p") };
+
   const loadSkills = shippedLoadSkills(els, function () {
     return Promise.resolve({ skills: [] });
   });
+
   await loadSkills();
   assert.equal(els.loadErrorShown, undefined);
   assert.match(els.skills.textContent, /No skills on file/);

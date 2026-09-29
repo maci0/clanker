@@ -81,7 +81,7 @@ function applyPromptFilter(){
       : q ? shown+" of "+cards.length+(cards.length===1?" prompt shown.":" prompts shown.")
         : cards.length+(cards.length===1?" prompt.":" prompts.");
   }
-  return { shown: shown, total: cards.length, query: q };
+  return { shown, total: cards.length, query: q };
 }
 
 function renderPrompts(prompts){
@@ -187,7 +187,7 @@ export function bindPrompts(){
     if(title.length>200||content.length>20000){ toast("Title must be 1-200 characters and content 1-20000."); return; }
     if(createBtn) createBtn.disabled=true;
     var savedTitle=titleEl.value, savedContent=contentEl.value;
-    fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,content:content})})
+    fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,content})})
       .then(readJson)
       .then(function(){
         if(titleEl.value===savedTitle && contentEl.value===savedContent){

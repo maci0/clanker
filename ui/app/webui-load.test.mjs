@@ -12,7 +12,9 @@ import test from "node:test";
 import { loadVendor, vendorLoads } from "./core/vendor.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const app = readFileSync(join(here, "app.js"), "utf8");
+
 const markup = readFileSync(join(here, "index.html"), "utf8");
 
 test("lazy vendors share downloads and recover from errors, missing exports and timeouts", async function () {
@@ -25,6 +27,7 @@ test("lazy vendors share downloads and recover from errors, missing exports and 
     setTimeout(fn, ms) {
       assert.ok(ms > 0 && ms <= 30000);
       timers.set(++nextTimer, fn);
+
       return nextTimer;
     },
     clearTimeout(id) { timers.delete(id); },
@@ -32,6 +35,7 @@ test("lazy vendors share downloads and recover from errors, missing exports and 
   globalThis.document = Object.assign(Object.create(savedDocument || null), {
     createElement(tag) {
       assert.equal(tag, "script");
+
       return { remove() { this.removed = true; } };
     },
     head: { appendChild(script) { scripts.push(script); } },
@@ -39,18 +43,21 @@ test("lazy vendors share downloads and recover from errors, missing exports and 
   const file = "delivery-test.js";
   let ready = false;
   const isReady = () => ready;
+
   try {
     for (const failure of ["error", "exports", "timeout"]) {
       const pending = loadVendor(file, isReady);
       assert.equal(loadVendor(file, isReady), pending);
       const script = scripts.at(-1);
       const rejection = assert.rejects(pending, /could not load|exported nothing|timed out/);
-      if (failure === "error") script.onerror();
-      else if (failure === "exports") script.onload();
+
+      if (failure === "error") { script.onerror(); }
+      else if (failure === "exports") { script.onload(); }
       else {
         assert.equal(timers.size, 1, "a stalled request has a deadline");
         [...timers.values()][0]();
       }
+
       await rejection;
       assert.equal(vendorLoads[file], undefined, "failure must permit a fresh download");
       assert.equal(script.removed, true);
@@ -58,6 +65,7 @@ test("lazy vendors share downloads and recover from errors, missing exports and 
       assert.equal(script.onload, null);
       assert.equal(script.onerror, null);
     }
+
     const pending = loadVendor(file, isReady);
     ready = true;
     scripts.at(-1).onload();
@@ -82,6 +90,7 @@ test("critical-path modulepreloads name modules the page actually loads", functi
   // HTML transfer. The head must preload the app entry and its heavy deps,
   // and every preload must be for a module the page really fetches.
   const preloads = [...markup.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map((m) => m[1]);
+
   for (const critical of [
     "/webui/app.js",
     "/webui/core/ui.js",
@@ -92,14 +101,17 @@ test("critical-path modulepreloads name modules the page actually loads", functi
   ]) {
     assert.ok(preloads.includes(critical), `critical-path module ${critical} must be preloaded in the head`);
   }
+
   for (const href of preloads) {
-    if (href.startsWith("/webui/vendor/")) continue; // consumed via module imports, not script tags
+    if (href.startsWith("/webui/vendor/")) { continue; } // consumed via module imports, not script tags
+
     const script = `<script type="module" src="${href}">`;
     assert.ok(
       markup.includes(script),
       `modulepreload ${href} has no matching <script type="module"> tag in the page`
     );
   }
+
   // And the other direction, which is the one that costs time: every module
   // the page loads on every visit carries a script tag at the far end of a
   // 107 KB body, past what the preload scanner can see while the document is
@@ -110,6 +122,7 @@ test("critical-path modulepreloads name modules the page actually loads", functi
   // while the HTML is still downloading.
   const tags = [...markup.matchAll(/<script type="module" src="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
   assert.ok(tags.length >= 27, `the eager module graph is ${tags.length} modules, expected at least 27`);
+
   for (const src of tags) {
     assert.ok(preloads.includes(src), `${src} is loaded on every visit and must be preloaded in the head`);
   }
@@ -193,10 +206,12 @@ test("a plugin's mount or refresh throw is contained to its own panel", function
   assert.ok(hookBody, "runPluginHook exists");
   assert.match(hookBody[0], /try \{[\s\S]*?\} catch \(e\) \{/);
   assert.match(hookBody[0], /showLoadError\(section, "The " \+ label \+ " plugin failed: " \+ msg, retryFn\)/);
+
   // No bare hook invocation survives outside the guard.
   const bare = plugins
     .split("\n")
     .filter((l) => /spec\.(mount|refresh)\.call\(/.test(l) && !/runPluginHook/.test(l));
+
   for (const line of bare) {
     assert.match(
       plugins,
@@ -204,6 +219,7 @@ test("a plugin's mount or refresh throw is contained to its own panel", function
       "unguarded plugin hook call: " + line.trim()
     );
   }
+
   // Both loaders reach both hooks through the one guarded pair in `trackMount`
   // — two shared call sites rather than four copied ones. The scan above is
   // what pins "no unguarded path"; this pins that both hooks are still there to
@@ -228,47 +244,68 @@ test("every named static import resolves to an export of its module", function (
   // the class: a name a module binds from another module must be exported there.
   const dirs = ["core", "lib", "features"];
   const modules = [];
+
   for (const dir of dirs) {
     const base = join(here, dir);
+
     for (const entry of readdirSync(base)) {
-      if (!entry.endsWith(".js")) continue;
+      if (!entry.endsWith(".js")) { continue; }
+
       modules.push({ file: join(base, entry), rel: dir + "/" + entry });
     }
   }
+
   const exportNames = new Map();
+
   for (const m of modules) {
     const names = new Set();
     const src = readFileSync(m.file, "utf8");
-    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) names.add(mm[1]);
-    for (const mm of src.matchAll(/export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/g)) names.add(mm[1]);
+
+    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) { names.add(mm[1]); }
+
+    for (const mm of src.matchAll(/export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/g)) { names.add(mm[1]); }
+
     for (const mm of src.matchAll(/export\s*\{([^}]*)\}/g)) {
       for (const name of mm[1].split(",")) {
         const n = name.trim().split(/\s+as\s+/).pop().trim();
-        if (n) names.add(n);
+
+        if (n) { names.add(n); }
       }
     }
+
     exportNames.set(m.file, names);
   }
+
   const resolved = new Map();
+
   function targetFile(fromFile, spec) {
     const key = fromFile + "|" + spec;
-    if (resolved.has(key)) return resolved.get(key);
+
+    if (resolved.has(key)) { return resolved.get(key); }
+
     const base = dirname(fromFile);
     const target = join(base, spec);
     const hit = modules.find((m) => m.file === target);
     resolved.set(key, hit ? hit.file : null);
+
     return hit ? hit.file : null;
   }
+
   let checked = 0;
+
   for (const m of modules) {
     const src = readFileSync(m.file, "utf8");
+
     for (const mm of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["'](\.\.?\/[^"']+)["']/g)) {
       const target = targetFile(m.file, mm[2]);
       assert.ok(target, `${m.rel} imports "${mm[2]}" which is not a sibling module file`);
       const exports_ = exportNames.get(target);
+
       for (const name of mm[1].split(",")) {
         const exported = name.trim().split(/\s+as\s+/)[0].trim();
-        if (!exported) continue;
+
+        if (!exported) { continue; }
+
         checked++;
         assert.ok(
           exports_.has(exported),
@@ -277,6 +314,7 @@ test("every named static import resolves to an export of its module", function (
       }
     }
   }
+
   assert.ok(checked >= 20, `static import resolution covered ${checked} imported names`);
 });
 
@@ -290,11 +328,15 @@ test("every relative dynamic import() resolves to a shipped module file", functi
   // the view's error panel. Pin the paths, not just the exports.
   const dirs = ["core", "lib", "features"];
   let checked = 0;
+
   for (const dir of dirs) {
     const base = join(here, dir);
+
     for (const entry of readdirSync(base)) {
-      if (!entry.endsWith(".js")) continue;
+      if (!entry.endsWith(".js")) { continue; }
+
       const src = readFileSync(join(base, entry), "utf8");
+
       for (const mm of src.matchAll(/import\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g)) {
         const spec = mm[1];
         assert.ok(
@@ -305,6 +347,7 @@ test("every relative dynamic import() resolves to a shipped module file", functi
       }
     }
   }
+
   assert.ok(checked >= 1, `dynamic import resolution covered ${checked} specifiers`);
 });
 
@@ -320,38 +363,55 @@ test("shared UI helpers are called only where they are imported or defined", fun
   // fails here instead of in the browser.
   const helperSources = ["core/ui.js", "core/utils.js", "core/vendor.js", "core/icons.js"];
   const helpers = new Set();
+
   for (const rel of helperSources) {
     const src = readFileSync(join(here, rel), "utf8");
-    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) helpers.add(mm[1]);
-    for (const mm of src.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) helpers.add(mm[1]);
+
+    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) { helpers.add(mm[1]); }
+
+    for (const mm of src.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) { helpers.add(mm[1]); }
   }
+
   const dirs = ["core", "lib", "features"];
+
   for (const dir of dirs) {
     for (const entry of readdirSync(join(here, dir))) {
-      if (!entry.endsWith(".js")) continue;
+      if (!entry.endsWith(".js")) { continue; }
+
       const file = join(here, dir, entry);
       const raw = readFileSync(file, "utf8");
+
       const src = raw
         .replace(/\/\*[\s\S]*?\*\//g, " ")
         .replace(/\/\/[^\n]*/g, " ")
         .replace(/"(?:\\.|[^"\\])*"/g, '""')
         .replace(/`(?:\\.|[^`\\])*`/g, "``");
+
       const imported = new Set();
+
       for (const mm of raw.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']\.\.?\/[^"']+["']/g)) {
-        for (const name of mm[1].split(",")) imported.add(name.trim().split(/\s+as\s+/)[1] || name.trim().split(/\s+as\s+/)[0]);
+        for (const name of mm[1].split(",")) { imported.add(name.trim().split(/\s+as\s+/)[1] || name.trim().split(/\s+as\s+/)[0]); }
       }
+
       const defined = new Set();
-      for (const mm of src.matchAll(/(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) defined.add(mm[1]);
-      for (const mm of src.matchAll(/(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) defined.add(mm[1]);
+
+      for (const mm of src.matchAll(/(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) { defined.add(mm[1]); }
+
+      for (const mm of src.matchAll(/(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) { defined.add(mm[1]); }
+
       for (const mm of src.matchAll(/(?:function\s+[A-Za-z_$][\w$]*\s*\(|function\s*\(|\([^)]*\)\s*=>)\s*([^)]*)/g)) {
         for (const p of mm[1].split(",")) {
           const t = p.trim().split(/\s*=\s*/)[0].trim();
-          if (/^[A-Za-z_$][\w$]*$/.test(t)) defined.add(t);
+
+          if (/^[A-Za-z_$][\w$]*$/.test(t)) { defined.add(t); }
         }
       }
+
       for (const h of helpers) {
-        if (imported.has(h) || defined.has(h)) continue;
+        if (imported.has(h) || defined.has(h)) { continue; }
+
         const calls = [...src.matchAll(new RegExp(`(?<![\\w$.])${h}\\s*\\(`, "g"))];
+
         if (calls.length) {
           assert.fail(`${dir}/${entry} calls ${h}( without importing or defining it`);
         }
@@ -367,17 +427,22 @@ test("the page shell parses as written: tags nest and attributes are named", fun
   const voids = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr", "circle", "rect", "path", "line", "polyline", "polygon", "ellipse", "use", "stop"]);
   const body = markup.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "");
   const stack = [];
+
   for (const [tag, close, name, attrs, selfClose] of body.matchAll(/<(\/?)([a-zA-Z][\w-]*)((?:\s+[^\s=>/"']+(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g)) {
     const lower = name.toLowerCase();
+
     for (const [, attr] of attrs.matchAll(/\s+([^\s=>]+)(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?/g)) {
       assert.match(attr, /^[a-zA-Z_:][\w:.-]*$/, `malformed attribute ${attr} on ${tag.slice(0, 60)}`);
     }
-    if (lower === "html" || lower === "head" || lower === "body") continue;
+
+    if (lower === "html" || lower === "head" || lower === "body") { continue; }
+
     if (close) {
       assert.equal(stack.pop(), lower, `unbalanced ${tag}`);
     } else if (!voids.has(lower) && !selfClose) {
       stack.push(lower);
     }
   }
+
   assert.deepEqual(stack, []);
 });

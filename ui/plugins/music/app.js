@@ -516,17 +516,17 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   });
 
   return {
-    ensure: function (nextApi) {
+    ensure (nextApi) {
       if (nextApi) api = nextApi;
       loadSaved();
       ensureDock();
       drawDock();
     },
-    mountView: function (container) {
+    mountView (container) {
       viewRoot = container;
       drawView();
     },
-    draw: draw
+    draw
   };
 })());
 
@@ -535,16 +535,16 @@ clanker.registerView({
   title: "Music",
   group: "Work",
 
-  boot: function (api) {
+  boot (api) {
     Music.ensure(api);
   },
 
-  mount: function (container, api) {
+  mount (container, api) {
     Music.ensure(api);
     Music.mountView(container);
   },
 
-  refresh: function () {
+  refresh () {
     Music.draw();
   }
 });

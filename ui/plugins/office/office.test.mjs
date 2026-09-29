@@ -17,7 +17,9 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const dir = dirname(fileURLToPath(import.meta.url));
+
 const js = readFileSync(join(dir, "app.js"), "utf8");
+
 const manifest = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8"));
 
 test("no bare localStorage read can take the whole view down", () => {

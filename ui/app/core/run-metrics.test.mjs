@@ -6,6 +6,7 @@ import test from "node:test";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, estTokens, formatRunMetrics, formatRunMetricsParts, fmtTok, liveElapsedMs, noteFirstToken, noteLiveChars } from "./run-metrics.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const app = readFileSync(join(here, "..", "app.js"), "utf8");
 
 test("fmtTok uses compact M/K units", function () {

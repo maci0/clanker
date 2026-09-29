@@ -551,7 +551,7 @@ export function bindTools(ctx) {
             ctx.T.button({
               type: "button",
               class: "secondary",
-              onclick: function () {
+              onclick () {
                 _el.toolFilter.value = "";
                 renderTools("");
                 if (_el.toolFilter.focus) _el.toolFilter.focus();
@@ -584,7 +584,7 @@ export function bindTools(ctx) {
           "aria-expanded": String(!collapsed),
           "aria-label": (collapsed ? "Expand " : "Collapse ") + groupLabel(cat),
           title: (collapsed ? "Show " : "Hide ") + utilPlural(items.length, { one: "tool", other: "tools" }) + " in " + groupLabel(cat),
-          onclick: function () { toggleToolGroupCollapsed(cat); }
+          onclick () { toggleToolGroupCollapsed(cat); }
         }, ctx.T.span({ class: toolRow.groupCaret }, collapsed ? "▸" : "▾"),
           ctx.T.span({ class: toolRow.groupName }, groupLabel(cat)),
           ctx.T.span({ class: toolRow.groupCount }, String(items.length)));

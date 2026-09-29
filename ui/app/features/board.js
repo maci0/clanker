@@ -442,7 +442,7 @@ function boardColumn(col, s) {
     if (/[\s]/.test(tail)) return null;
     var peers = (_getKnownPeers() || []).map(function(p){ return p.name || p; });
     var hit = peers.find(function(n){ return searchFold(n).indexOf(searchFold(tail)) === 0; });
-    return hit ? { name: hit, at: at, end: at + 1 + tail.length } : null;
+    return hit ? { name: hit, at, end: at + 1 + tail.length } : null;
   }
   qaTextarea.addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.shiftKey && qaTextarea.value.trim()) { e.preventDefault(); doCreate(); }
@@ -490,7 +490,7 @@ function boardColumn(col, s) {
       if (card && col.id && card.column !== col.id) {
         postBoard({ op: "move", id: card.id, column: col.id, goal_sync: false }, null);
       }
-      if (card && assignee) postBoard({ op: "update", id: card.id, assignee: assignee }, null);
+      if (card && assignee) postBoard({ op: "update", id: card.id, assignee }, null);
       el.boardStatus.textContent = "Added to " + (col.title || "the board") +
         (assignee ? ", assigned to " + assignee + "." : ".");
     });
@@ -500,13 +500,13 @@ function boardColumn(col, s) {
     class: COL_CLASS,
     "data-column": col.id,
     "aria-labelledby": "board-col-" + col.id,
-    ondragover: function (e) { e.preventDefault(); colEl.setAttribute("data-drop", "true"); },
-    ondragleave: function () { colEl.removeAttribute("data-drop"); },
-    ondrop: function (e) {
+    ondragover (e) { e.preventDefault(); colEl.setAttribute("data-drop", "true"); },
+    ondragleave () { colEl.removeAttribute("data-drop"); },
+    ondrop (e) {
       e.preventDefault();
       colEl.removeAttribute("data-drop");
       var id = e.dataTransfer.getData("text/plain");
-      if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
+      if (id) postBoard({ op: "move", id, column: col.id }, "Moved to " + col.title + ".");
     }
   },
     T.div({ class: COL_HEAD_CLASS },
@@ -1220,7 +1220,7 @@ function captureFocus() {
   if (!a || !a.id || !el.cardDetail.contains(a)) return null;
   var at = null;
   try { at = { start: a.selectionStart, end: a.selectionEnd }; } catch (e) {}
-  return { id: a.id, at: at };
+  return { id: a.id, at };
 }
 
 function restoreFocus(snap) {
@@ -1512,7 +1512,7 @@ function showCardDetail(id) {
         addBtn.className = LABEL_NAME_CONFIRM_CLASS;
         addBtn.addEventListener("click", function(){
           var text = txtIn.value.trim() || color;
-          var newLabels = currentLabels.concat([{ color: color, text: text }]);
+          var newLabels = currentLabels.concat([{ color, text }]);
           postBoard({ op: "update", id: c.id, labels: newLabels }, "Labels updated.");
         });
         wrap.appendChild(addBtn);
@@ -1918,7 +1918,7 @@ function showCardDetail(id) {
     var text = inputNode.value.trim();
     if (!requireText(inputNode, parentId ? "Write the child item's text." : "Write the checklist item's text.")) return;
     buttonNode.disabled = true;
-    var payload = { op: "subtask_add", id: c.id, text: text };
+    var payload = { op: "subtask_add", id: c.id, text };
     if (parentId) payload.parent_subtask_id = parentId;
     postBoard(payload, parentId ? "Child checklist item added." : "Checklist item added.")
       .then(function (ok) { if (ok) inputNode.value = ""; })
@@ -2313,7 +2313,7 @@ export function bindBoard(deps) {
     var title = el.cardTitle.value.trim();
     if (!requireText(el.cardTitle, "Give the card a title.")) return;
     el.cardAdd.disabled = true;
-    postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
+    postBoard({ op: "create", title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
       el.cardAdd.disabled = false;
       if (ok) el.cardTitle.value = "";
     });

@@ -6,6 +6,7 @@ import test from "node:test";
 import { boardActionLine, boardTimeline } from "./board.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const plugin = readFileSync(join(here, "..", "..", "plugins", "activity", "app.js"), "utf8");
 
 /* One card and the room messages that produced it, in the shape the two
@@ -15,6 +16,7 @@ const CARDS = [
   { id: "c1", title: "Fix the picker", log: [{ ts: 300, who: "clankerydoo", what: "goal run finished" }] },
   { id: "c2", title: "Ads", log: [] },
 ];
+
 const MESSAGES = [
   { from: "clankerydoo", ts: 500, text: '@todo {"action":"move","todo":"c2","column":"archive"}' },
   { from: "clankerydoo", ts: 400, text: '@todo {"action":"update","todo":"c1","goal":""}' },

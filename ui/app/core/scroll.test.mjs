@@ -17,13 +17,14 @@ function makeBox(opts) {
   var height = opts && opts.height != null ? opts.height : 1000;
   var view = opts && opts.view != null ? opts.view : 200;
   var top = opts && opts.top != null ? opts.top : 0;
+
   return {
     scrollHeight: height,
     clientHeight: view,
     scrollTop: top,
-    scrollTo: function (arg) {
-      if (typeof arg === "number") this.scrollTop = arg;
-      else if (arg && typeof arg.top === "number") this.scrollTop = arg.top;
+    scrollTo (arg) {
+      if (typeof arg === "number") { this.scrollTop = arg; }
+      else if (arg && typeof arg.top === "number") { this.scrollTop = arg.top; }
     },
   };
 }
@@ -44,16 +45,17 @@ test("scrollChatToLatest moves the conversation box, not window.scrollY", functi
   var prevDoc = globalThis.document;
   var prevWin = globalThis.window;
   globalThis.document = Object.assign(Object.create(prevDoc || null), {
-    querySelector: function (sel) {
+    querySelector (sel) {
       return sel === "#view-chat .conversation-scroll" ? box : null;
     },
   });
   globalThis.window = {
     scrollY: 0,
-    scrollTo: function (arg) {
+    scrollTo (arg) {
       windowY = arg && arg.top != null ? arg.top : arg;
     },
   };
+
   try {
     assert.equal(conversationScroller(), box);
     scrollChatToLatest("auto");
@@ -67,11 +69,13 @@ test("scrollChatToLatest moves the conversation box, not window.scrollY", functi
 
 test("Jump-to-latest button stays hidden while the conversation is at the end", function () {
   var box = makeBox({ top: 900 });
+
   var transcript = {
-    querySelector: function (sel) {
+    querySelector (sel) {
       return sel === ".turn" ? {} : null;
     },
   };
+
   var btn = { hidden: false };
   syncScrollButton(transcript, btn, box);
   assert.equal(btn.hidden, true);

@@ -24,10 +24,15 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const appRoot = join(here, "..");
+
 const hostSrc = readFileSync(join(here, "plugins.js"), "utf8");
+
 const appSrc = readFileSync(join(appRoot, "app.js"), "utf8");
+
 const healthSrc = readFileSync(join(appRoot, "..", "plugins", "health", "app.js"), "utf8");
+
 const officeSrc = readFileSync(join(appRoot, "..", "plugins", "office", "app.js"), "utf8");
 
 /* ---------------------------------------------------------------- DOM stub */
@@ -38,27 +43,36 @@ function parseCompound(text) {
   const out = { tag: null, id: null, classes: [], attrs: [] };
   const re = /(^[a-zA-Z][\w-]*)|#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]*)))?\]/g;
   let m;
+
   while ((m = re.exec(text))) {
-    if (m[1]) out.tag = m[1].toUpperCase();
-    else if (m[2]) out.id = m[2];
-    else if (m[3]) out.classes.push(m[3]);
-    else if (m[4]) out.attrs.push([m[4], m[5] ?? m[6] ?? m[7] ?? null]);
+    if (m[1]) { out.tag = m[1].toUpperCase(); }
+    else if (m[2]) { out.id = m[2]; }
+    else if (m[3]) { out.classes.push(m[3]); }
+    else if (m[4]) { out.attrs.push([m[4], m[5] ?? m[6] ?? m[7] ?? null]); }
   }
+
   return out;
 }
 
 function matchesCompound(node, c) {
-  if (node.nodeType !== 1) return false;
-  if (c.tag && node.tagName !== c.tag) return false;
-  if (c.id && node.id !== c.id) return false;
+  if (node.nodeType !== 1) { return false; }
+
+  if (c.tag && node.tagName !== c.tag) { return false; }
+
+  if (c.id && node.id !== c.id) { return false; }
+
   for (const cls of c.classes) {
-    if (!String(node.className).split(/\s+/).includes(cls)) return false;
+    if (!String(node.className).split(/\s+/).includes(cls)) { return false; }
   }
+
   for (const [name, value] of c.attrs) {
     const have = node.getAttribute(name);
-    if (have == null) return false;
-    if (value != null && have !== value) return false;
+
+    if (have == null) { return false; }
+
+    if (value != null && have !== value) { return false; }
   }
+
   return true;
 }
 
@@ -66,13 +80,18 @@ function matchesCompound(node, c) {
 // earlier ones must match ancestors, in order.
 function matchesChain(node, chain) {
   let i = chain.length - 1;
-  if (!matchesCompound(node, chain[i])) return false;
+
+  if (!matchesCompound(node, chain[i])) { return false; }
+
   i--;
   let p = node.parentNode;
+
   while (i >= 0 && p) {
-    if (matchesCompound(p, chain[i])) i--;
+    if (matchesCompound(p, chain[i])) { i--; }
+
     p = p.parentNode;
   }
+
   return i < 0;
 }
 
@@ -87,6 +106,7 @@ function descendants(root) {
       if (c.nodeType === 1) { out.push(c); walk(c); }
     }
   })(root);
+
   return out;
 }
 
@@ -106,7 +126,8 @@ function makeElement(tag) {
     focused: 0,
     _text: "",
     get textContent() {
-      if (!this.childNodes.length) return this._text;
+      if (!this.childNodes.length) { return this._text; }
+
       return this.childNodes.map((c) => (c.nodeType === 3 ? c._text : c.textContent)).join("");
     },
     set textContent(v) {
@@ -116,8 +137,10 @@ function makeElement(tag) {
     },
     appendChild(child) {
       if (this._text) { this.childNodes.push(makeText(this._text)); this._text = ""; }
+
       child.parentNode = this;
       this.childNodes.push(child);
+
       return child;
     },
     /** @param {...ReturnType<typeof makeElement>} children The stub nodes to attach, in order. */
@@ -133,30 +156,39 @@ function makeElement(tag) {
     dispatch(type, event) { (this.listeners[type] || []).forEach((fn) => fn(event)); },
     focus() { this.focused++; },
     remove() {
-      if (!this.parentNode) return;
+      if (!this.parentNode) { return; }
+
       const at = this.parentNode.childNodes.indexOf(this);
-      if (at !== -1) this.parentNode.childNodes.splice(at, 1);
+
+      if (at !== -1) { this.parentNode.childNodes.splice(at, 1); }
+
       this.parentNode = null;
     },
     closest(selector) {
       const alts = chains(selector).map((c) => c[c.length - 1]);
       let n = this;
+
       while (n) {
-        if (alts.some((c) => matchesCompound(n, c))) return n;
+        if (alts.some((c) => matchesCompound(n, c))) { return n; }
+
         n = n.parentNode;
       }
+
       return null;
     },
     querySelectorAll(selector) {
       const pool = descendants(this);
       const out = [];
+
       for (const c of chains(selector)) {
-        for (const n of pool) if (matchesChain(n, c) && !out.includes(n)) out.push(n);
+        for (const n of pool) { if (matchesChain(n, c) && !out.includes(n)) { out.push(n); } }
       }
+
       return out;
     },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   };
+
   return node;
 }
 
@@ -183,13 +215,15 @@ function makePage() {
   // check depends on that.
   const head = makeElement("head");
   root.appendChild(head);
+
   const doc = {
     documentElement: root,
-    head: head,
+    head,
     createElement: makeElement,
     createTextNode: makeText,
     getElementById(id) {
-      if (root.id === id) return root;
+      if (root.id === id) { return root; }
+
       return descendants(root).find((n) => n.id === id) || null;
     },
     querySelectorAll(selector) { return root.querySelectorAll(selector); },
@@ -214,6 +248,7 @@ function makePage() {
     const list = makeElement("ul");
     list.className = "m-0 list-none p-0";
     list.attributes["data-rail-group"] = String(label);
+
     if (heading === "summary") {
       const details = makeElement("details");
       details.appendChild(h);
@@ -228,6 +263,7 @@ function makePage() {
       section.appendChild(list);
       host.appendChild(section);
     }
+
     return list;
   }
 
@@ -237,10 +273,12 @@ function makePage() {
     "Work": group(tablist, "Work", "h2"),
     "Watch": group(tablist, "Watch", "summary")
   };
+
   rail.appendChild(settings);
   lists["Set up"] = group(settings, "Set up", "summary");
 
   const tabs = {};
+
   for (const [view, name] of BUILT_INS) {
     const li = makeElement("li");
     li.className = "";
@@ -257,6 +295,7 @@ function makePage() {
     panel.id = "view-" + view;
     main.appendChild(panel);
   }
+
   tablist.setAttribute("aria-owns", BUILT_INS.map((b) => "tab-" + b[0]).join(" "));
 
   return { doc, root, main, rail, tablist, tabs, views: BUILT_INS.map((b) => b[0]) };
@@ -290,9 +329,7 @@ function loadHost(page, extras) {
     // The stripped imports.
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
-    showLoading: (el, msg) => { el.appendChild(makeText(msg)); return el; },
     decorateRailTab: () => {},
-    requireText: () => true,
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
     liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},
@@ -331,9 +368,11 @@ function loadHost(page, extras) {
     plural: () => "",
     ...extras
   };
+
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
+
   return { host: sandbox.__host, sandbox };
 }
 
@@ -358,6 +397,7 @@ function bootHost(options, extras) {
     observeStatus: (node) => observed.push(node),
     ...options
   });
+
   // What a plugin's app.js is written against: the global the host installs.
   return {
     page, host, el, views, viewLoaders, observed,
@@ -365,6 +405,7 @@ function bootHost(options, extras) {
     // The re-entry point the page calls on every switch to a loaded view.
     shown(id) {
       assert.equal(typeof host.pluginViewShown, "function", "the host exports no pluginViewShown");
+
       return host.pluginViewShown(id);
     }
   };
@@ -379,8 +420,8 @@ test("a plugin's refresh hook is reached on re-entry, and never in the same swit
     id: "demo",
     title: "Demo",
     group: "Watch",
-    mount: function (section) { calls.push(["mount", section.tagName]); },
-    refresh: function (section) { calls.push(["refresh", section.tagName]); }
+    mount (section) { calls.push(["mount", section.tagName]); },
+    refresh (section) { calls.push(["refresh", section.tagName]); }
   });
 
   // Before the first open there is nothing mounted, so a switch to the view
@@ -408,8 +449,8 @@ test("a refresh assigned from inside mount is the one that gets called", () => {
     id: "swap",
     title: "Swap",
     group: "Work",
-    mount: function () { this.refresh = function () { calls.push("resume"); }; },
-    refresh: function () { calls.push("placeholder"); }
+    mount () { this.refresh = function () { calls.push("resume"); }; },
+    refresh () { calls.push("placeholder"); }
   });
   boot.viewLoaders.swap();
   boot.shown("swap");
@@ -419,7 +460,7 @@ test("a refresh assigned from inside mount is the one that gets called", () => {
 test("a plugin with no refresh hook, and an unknown view, are both a no-op", () => {
   const boot = bootHost();
   let mounts = 0;
-  boot.clanker.registerView({ id: "bare", title: "Bare", group: "Work", mount: function () { mounts++; } });
+  boot.clanker.registerView({ id: "bare", title: "Bare", group: "Work", mount () { mounts++; } });
   boot.viewLoaders.bare();
   assert.equal(boot.shown("bare"), null);
   assert.equal(boot.shown("chat"), null);
@@ -433,8 +474,8 @@ test("a throwing refresh is contained in the plugin's own panel", () => {
     id: "boom",
     title: "Boom",
     group: "Work",
-    mount: function () {},
-    refresh: function () { throw new Error("kaboom"); }
+    mount () {},
+    refresh () { throw new Error("kaboom"); }
   });
   boot.viewLoaders.boom();
   boot.shown("boom");
@@ -449,7 +490,7 @@ test("showView reaches the hook, and only for a view it had already loaded", () 
   // resolves synchronously, so the flag has to be read before the load.
   assert.match(appSrc, /pluginViewShown as pluginsViewShown/);
   assert.match(appSrc, /var wasLoaded = !!viewLoaded\[name\];/);
-  assert.match(appSrc, /if \(wasLoaded\) pluginsViewShown\(name\);/);
+  assert.match(appSrc, /if \(wasLoaded\) (?:\{ )?pluginsViewShown\(name\);/);
   const wasLoadedAt = appSrc.indexOf("var wasLoaded = !!viewLoaded[name];");
   const loadAt = appSrc.indexOf("if (!viewLoaded[name] && viewLoaders[name]) {");
   const callAt = appSrc.indexOf("if (wasLoaded) pluginsViewShown(name);");
@@ -473,10 +514,12 @@ test("the two plugins that worked around the missing hook no longer watch the pa
 test("each plugin announces into its own live region, not one shared node", () => {
   const boot = bootHost();
   const specs = {};
+
   for (const id of ["alpha", "beta"]) {
-    specs[id] = { id, title: id, group: "Watch", mount: function () {} };
+    specs[id] = { id, title: id, group: "Watch", mount () {} };
     boot.clanker.registerView(specs[id]);
   }
+
   const alpha = boot.host.pluginApi(specs.alpha);
   const beta = boot.host.pluginApi(specs.beta);
 
@@ -492,7 +535,7 @@ test("each plugin announces into its own live region, not one shared node", () =
 
 test("a plugin's live region is a polite status node inside that plugin's panel", () => {
   const boot = bootHost();
-  boot.clanker.registerView({ id: "gamma", title: "Gamma", group: "Work", mount: function () {} });
+  boot.clanker.registerView({ id: "gamma", title: "Gamma", group: "Work", mount () {} });
   const live = boot.page.doc.getElementById("plugin-status-gamma");
   assert.equal(live.getAttribute("role"), "status");
   assert.equal(live.getAttribute("aria-live"), "polite");
@@ -505,7 +548,7 @@ test("a plugin's live region is a polite status node inside that plugin's panel"
 
 test("the same line twice running is one announcement", () => {
   const boot = bootHost();
-  const spec = { id: "delta", title: "Delta", group: "Work", mount: function () {} };
+  const spec = { id: "delta", title: "Delta", group: "Work", mount () {} };
   boot.clanker.registerView(spec);
   const api = boot.host.pluginApi(spec);
   const live = boot.page.doc.getElementById("plugin-status-delta");
@@ -555,19 +598,25 @@ function liftTabWiring(page, views, onShow) {
     showView: (name) => onShow.push(name),
     console
   };
+
   sandbox.window = sandbox;
   vm.createContext(sandbox);
+
   for (const name of ["railOrder", "wireTab"]) {
     const m = appSrc.match(new RegExp("\\nfunction " + name + "\\(([^)]*)\\) \\{\\n[\\s\\S]*?\\n\\}\\n"));
-    if (m) vm.runInContext(m[0], sandbox);
+
+    if (m) { vm.runInContext(m[0], sandbox); }
   }
+
   assert.equal(typeof sandbox.wireTab, "function", "wireTab not found in app.js");
+
   return sandbox;
 }
 
 function press(tab, key) {
   let prevented = 0;
   tab.dispatch("keydown", { key, preventDefault: () => { prevented++; } });
+
   return prevented;
 }
 
@@ -580,7 +629,7 @@ test("arrow keys on the rail follow the rail, not the order plugins registered i
 
   // A Work group plugin: its tab lands after Kanban, and it is pushed onto
   // VIEWS last. `files` is the shipped case.
-  boot.clanker.registerView({ id: "files", title: "Files", group: "Work", mount: function () {} });
+  boot.clanker.registerView({ id: "files", title: "Files", group: "Work", mount () {} });
   const tab = boot.page.doc.getElementById("tab-files");
   assert.equal(boot.views[boot.views.length - 1], "files", "registration appends");
   sandbox.wireTab(tab, boot.views.length - 1);
@@ -631,12 +680,14 @@ test("Retry after a failed script load fetches the script again", async () => {
   // loader's existing-tag check found it and resolved true without a fetch:
   // Retry could never succeed for a deferred plugin whose script had 404ed.
   const retries = [];
+
   const boot = bootHost({}, {
     showLoadError: (el, msg, retryFn) => {
       el.appendChild(makeText(msg));
       retries.push(retryFn);
     }
   });
+
   boot.host.loadPluginAssets([{ name: "ghost", title: "Ghost", group: "Watch", enabled: true, has_css: false }]);
   assert.equal(typeof boot.viewLoaders.ghost, "function", "a deferred plugin gets a loader");
 
@@ -658,7 +709,7 @@ test("Retry after a failed script load fetches the script again", async () => {
   assert.ok(s2 && s2 !== s1, "Retry must inject a fresh script tag, not find the dead one");
   // This time the script arrives and registers, the way app.js running would.
   let mounts = 0;
-  boot.clanker.registerView({ id: "ghost", title: "Ghost", group: "Watch", mount: function () { mounts++; } });
+  boot.clanker.registerView({ id: "ghost", title: "Ghost", group: "Watch", mount () { mounts++; } });
   s2.onload();
   await second;
   assert.equal(mounts, 1, "the retried load mounts the plugin");
@@ -676,8 +727,8 @@ test("a throwing boot lands in the loader's status line, not an empty catch", ()
     id: "dock",
     title: "Dock",
     group: "Watch",
-    mount: function () {},
-    boot: function (api) { calls.push(typeof api.getJSON); throw new Error("no audio"); }
+    mount () {},
+    boot (api) { calls.push(typeof api.getJSON); throw new Error("no audio"); }
   });
   assert.equal(calls.length, 1, "boot still runs, and is handed the api surface");
   assert.equal(calls[0], "function");
@@ -693,8 +744,8 @@ test("a throwing boot lands in the loader's status line, not an empty catch", ()
     id: "lazy",
     title: "Lazy",
     group: "Watch",
-    mount: function () {},
-    boot: function () { throw new Error("late throw"); }
+    mount () {},
+    boot () { throw new Error("late throw"); }
   });
   assert.equal(
     boot.el.webuiPluginsStatus.textContent,
@@ -703,6 +754,6 @@ test("a throwing boot lands in the loader's status line, not an empty catch", ()
 
   // Control: a healthy boot says nothing.
   boot.el.webuiPluginsStatus.textContent = "";
-  boot.clanker.registerView({ id: "fine", title: "Fine", group: "Watch", mount: function () {}, boot: function () {} });
+  boot.clanker.registerView({ id: "fine", title: "Fine", group: "Watch", mount () {}, boot () {} });
   assert.equal(boot.el.webuiPluginsStatus.textContent, "");
 });

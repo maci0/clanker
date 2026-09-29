@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const dir = dirname(fileURLToPath(import.meta.url));
+
 const js = readFileSync(join(dir, "arena.js"), "utf8");
 
 test("a failed match open replaces the transcript, not just the status line", function () {
@@ -24,7 +25,7 @@ test("the running-match poll is not gated on a live topic nothing publishes", fu
   // again: gate the poll on the stream only once something emits the topic.
   const live = readFileSync(join(dir, "..", "..", "..", "src", "serve", "live.zig"), "utf8");
   const hasPublisher = /publish\(\s*\.arena\b/.test(live);
-  const gatesOnLive = /if \(liveOk\(\)\) return;/.test(js);
+  const gatesOnLive = /if \(liveOk\(\)\) (?:\{ )?return;/.test(js);
   assert.equal(
     gatesOnLive && !hasPublisher,
     false,
@@ -51,20 +52,27 @@ function ensure3dHarness(stubBehaviour) {
     imports: 0, mounts: 0, unmounts: 0, statusText: "", mode3dAfter: null,
     stored: {}
   };
+
   const stub = {
     S: null,
-    mountArena3D: function (host) {
+    mountArena3D (host) {
       box.mounts += 1;
       box.lastHost = host;
-      if (stubBehaviour === "mount-throws") return Promise.reject(new Error("no WebGL"));
-      if (stub.S) return Promise.resolve();
-      stub.S = { host: host };
+
+      if (stubBehaviour === "mount-throws") { return Promise.reject(new Error("no WebGL")); }
+
+      if (stub.S) { return Promise.resolve(); }
+
+      stub.S = { host };
+
       return Promise.resolve();
     },
-    unmountArena3D: function () { box.unmounts += 1; stub.S = null; },
-    updateArena3D: function () {}
+    unmountArena3D () { box.unmounts += 1; stub.S = null; },
+    updateArena3D () {}
   };
+
   const nodes = {};
+
   const prelude = `
     var arena3d = null;
     var mode3d = true;
@@ -73,6 +81,7 @@ function ensure3dHarness(stubBehaviour) {
     function renderMatch() {}
     function __import() { box.imports += 1; if (importFails) return Promise.reject(new Error("404")); return Promise.resolve(stub); }
   `;
+
   const epilogue = `
     globalThis.__run = function () {
       return ensure3d().then(function (a) {
@@ -84,12 +93,15 @@ function ensure3dHarness(stubBehaviour) {
     globalThis.__unmount = function () { arena3d.unmountArena3D(); };
     globalThis.__memoized = function () { return arena3d; };
   `;
+
   const context = vm.createContext({
     box, stub, nodes, Promise,
     importFails: stubBehaviour === "import-fails",
-    window: { localStorage: { setItem: function (k, v) { box.stored[k] = v; }, getItem: function () { return null; } } }
+    window: { localStorage: { setItem (k, v) { box.stored[k] = v; }, getItem () { return null; } } }
   });
+
   vm.runInContext(prelude + source + epilogue, context);
+
   return { box, stub, context };
 }
 
@@ -135,6 +147,6 @@ test("the arena3d plugin's mount is idempotent, which is what lets ensure3d call
   // mountArena3D must keep its own `if (S) return`, and unmountArena3D must
   // keep clearing S. Drift either way is the blank-stage bug again.
   const plugin = readFileSync(join(dir, "..", "..", "plugins", "arena3d", "app.js"), "utf8");
-  assert.match(plugin, /export function mountArena3D\(host\) \{\s*if \(S\) return Promise\.resolve\(\);/);
+  assert.match(plugin, /export function mountArena3D\(host\) \{\s*if \(S\) (?:\{ )?return Promise\.resolve\(\);/);
   assert.match(plugin, /export function unmountArena3D\(\)[\s\S]*?\n  S = null;\n\}/);
 });

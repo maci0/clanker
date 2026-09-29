@@ -29,7 +29,7 @@ clanker.registerView({
   id: "schedule",
   title: "Schedule",
   group: "Set up",
-  mount: function (container, api) {
+  mount (container, api) {
     var state = { entries: [], log: [], busy: "", error: "" };
 
     var head = api.el("div", "section-head");
@@ -68,7 +68,7 @@ clanker.registerView({
       var unit = ms < 1000 ? "millisecond" : "second";
       var v = ms < 1000 ? Math.round(ms) : Math.round(ms / 100) / 10;
       return new Intl.NumberFormat(undefined, {
-        style: "unit", unit: unit, unitDisplay: "narrow", maximumFractionDigits: ms < 1000 ? 0 : 1
+        style: "unit", unit, unitDisplay: "narrow", maximumFractionDigits: ms < 1000 ? 0 : 1
       }).format(v);
     }
 
@@ -249,7 +249,7 @@ clanker.registerView({
     this.reload = load;
     return load();
   },
-  refresh: function () {
+  refresh () {
     if (this.reload) return this.reload();
   }
 });

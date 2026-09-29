@@ -22,9 +22,11 @@ import { T } from "./ui.js";
 /// thing without a dependency.
 export function cn() {
   var out = [];
+
   for (var i = 0; i < arguments.length; i++) {
-    if (arguments[i]) out.push(arguments[i]);
+    if (arguments[i]) { out.push(arguments[i]); }
   }
+
   return out.join(" ");
 }
 
@@ -32,15 +34,20 @@ export function cn() {
 /// call. `defaults` fills a prop the caller left out.
 export function variants(config) {
   var defaults = config.defaults || {};
+
   return function (props) {
     props = props || {};
     var out = [config.base || ""];
+
     for (var name in config.variants) {
       var value = props[name] == null ? defaults[name] : props[name];
       var table = config.variants[name];
-      if (value && table[value]) out.push(table[value]);
+
+      if (value && table[value]) { out.push(table[value]); }
     }
+
     out.push(props.class || "");
+
     return cn.apply(null, out);
   };
 }
@@ -81,9 +88,12 @@ export var recordRow = {
 export function button(opts) {
   var props = opts || {};
   var attrs = { type: props.type || "button", class: buttonVariants(props) };
+
   for (var key in props) {
-    if (key !== "type" && key !== "variant" && key !== "class") attrs[key] = props[key];
+    if (key !== "type" && key !== "variant" && key !== "class") { attrs[key] = props[key]; }
   }
+
   var children = Array.prototype.slice.call(arguments, 1);
+
   return T.button.apply(null, [attrs].concat(children));
 }

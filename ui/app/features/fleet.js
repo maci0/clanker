@@ -74,7 +74,7 @@ function groupRuns(runs) {
     byParent[k].forEach(function (c) { childIds[c.run_id] = true; });
   });
   roots = runs.filter(function (r) { return !childIds[r.run_id]; });
-  return { roots: roots, childrenOf: byParent, byId: byIdMap };
+  return { roots, childrenOf: byParent, byId: byIdMap };
 }
 
 function fmtRunMeta(r) {
@@ -242,7 +242,7 @@ function normalizeChatData(d) {
     if (!Array.isArray(rooms)) rooms = [];
     var subs = d.subscribed || d.subscriptions || d.subs || [];
     if (!Array.isArray(subs)) subs = [];
-    return { rooms: rooms, subscribed: subs };
+    return { rooms, subscribed: subs };
   }
   return { rooms: [], subscribed: [] };
 }

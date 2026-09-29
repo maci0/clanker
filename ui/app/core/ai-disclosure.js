@@ -14,5 +14,6 @@ export function createAnswerHead() {
   label.className = "font-sans text-sm font-semibold text-fg-muted";
   label.textContent = ANSWER_LABEL;
   head.appendChild(label);
+
   return head;
 }

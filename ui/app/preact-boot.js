@@ -13,7 +13,9 @@ import { h, render, Fragment } from "/webui/vendor/preact.module.js";
 import htm from "/webui/vendor/htm.module.js";
 import { signal, computed, effect, batch } from "/webui/vendor/signals-core.module.js";
 
-window.preact = { h: h, render: render, Fragment: Fragment };
+window.preact = { h, render, Fragment };
+
 window.html = htm.bind(h);
-window.signals = { signal: signal, computed: computed, effect: effect, batch: batch };
+
+window.signals = { signal, computed, effect, batch };
 

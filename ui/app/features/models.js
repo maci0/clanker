@@ -8,17 +8,27 @@ import { paintTomlInto, reducedMotion } from "../core/vendor.js";
    (ui/app/tailwind.src.css). The grid strings are spelled the same way
    core/usage.js spells them: the two tables are one presentation. */
 var WRAP_CLASS = "overflow-x-auto";
+
 var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
+
 var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted whitespace-nowrap";
+
 var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
+
 var NUM_CLASS = "text-right tabular-nums";
+
 var EMPTY_CLASS = "mt-4 font-mono text-sm text-fg-muted";
+
 /* A variant row is indented under the row it belongs to, and hidden until its
    group is unfolded. */
 var VARIANT_ROW_CLASS = "hidden [&>td:nth-child(3)]:pl-6";
+
 var UNCALLABLE_CLASS = "text-fg-muted";
+
 var ENABLED_TOGGLE_CLASS = "inline-grid w-8 min-h-8 cursor-pointer place-items-center [&_input]:m-0 [&_input]:h-4 [&_input]:w-4 [&_input]:accent-accent has-[:focus-visible]:rounded-plate-sm has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent has-[:focus-visible]:outline-offset-1";
+
 var GROUP_TOGGLE_CLASS = "secondary min-h-7 cursor-pointer rounded-none border-0 bg-transparent px-0 py-0.5 font-semibold text-fg hover:text-accent";
+
 var SNIPPET_BTN_CLASS = "whitespace-nowrap";
 
 function askConfirm(message, opts) {
@@ -41,6 +51,7 @@ function table(headers, rows) {
   headers.forEach(function (h, i) {
     var th = document.createElement("th");
     th.className = i === 0 ? TH_CLASS : TH_CLASS + " " + NUM_CLASS;
+
     // A column with no visible heading still names itself to a screen reader.
     if (h.sr) {
       const label = document.createElement("span");
@@ -51,6 +62,7 @@ function table(headers, rows) {
     } else {
       th.textContent = h;
     }
+
     hr.appendChild(th);
   });
   thead.appendChild(hr);
@@ -61,19 +73,23 @@ function table(headers, rows) {
     cells.forEach(function (c, i) {
       var td = document.createElement("td");
       td.className = TD_CLASS;
+
       // A cell is text, or a control: the catalog's rows carry a per-row
       // "config.toml" button in their last column.
-      if (c && c.nodeType === 1) td.appendChild(c);
+      if (c && c.nodeType === 1) { td.appendChild(c); }
       else {
         td.textContent = c;
-        if (i > 0 && /^[\d.,$]/.test(c)) td.className = TD_CLASS + " " + NUM_CLASS;
+
+        if (i > 0 && /^[\d.,$]/.test(c)) { td.className = TD_CLASS + " " + NUM_CLASS; }
       }
+
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
   });
   t.appendChild(tbody);
   wrap.appendChild(t);
+
   return wrap;
 }
 
@@ -81,11 +97,13 @@ function empty(text) {
   var p = document.createElement("p");
   p.className = EMPTY_CLASS;
   p.textContent = text;
+
   return p;
 }
 
 function failWithRetry(host, message, retryFn) {
-  if (!host) return;
+  if (!host) { return; }
+
   host.textContent = "";
   var p = empty(message + " ");
   var btn = document.createElement("button");
@@ -103,14 +121,17 @@ function failWithRetry(host, message, retryFn) {
    just failed. Which line a message lands on is data, so the mapping is a
    pure function the test can hold still. */
 export function modelsStatusId(panel) {
-  if (panel === "live") return "models-live-status";
-  if (panel === "catalog") return "models-catalog-status";
+  if (panel === "live") { return "models-live-status"; }
+
+  if (panel === "catalog") { return "models-catalog-status"; }
+
   return "models-status";
 }
 
 function status(msg, panel) {
   var el = document.getElementById(modelsStatusId(panel));
-  if (el) el.textContent = msg;
+
+  if (el) { el.textContent = msg; }
 }
 
 /* ---- config.toml snippets for discovered models -------------------------
@@ -129,6 +150,7 @@ function status(msg, panel) {
 // Not knowing is different from knowing the list is empty: it decides whether
 // the snippet is allowed to claim a provider is missing.
 var configuredProviders = [];
+
 var providersKnown = false;
 
 /* A bare TOML key is `[A-Za-z0-9_-]+`; anything else has to be quoted, and
@@ -150,6 +172,7 @@ function tomlStr(value) {
 export function configSnippet(m, configured, known) {
   var lines = [];
   var provider = m.provider;
+
   if (known && (configured || []).indexOf(provider) === -1) {
     // The models table alone would be rejected at startup: a model entry names
     // a provider, and clanker resolves it against [providers.*]. The catalog
@@ -159,38 +182,52 @@ export function configSnippet(m, configured, known) {
     if (m.kind) {
       lines.push("[providers." + tomlKey(provider) + "]");
       lines.push("kind = " + tomlStr(m.kind));
-      if (m.base_url) lines.push("base_url = " + tomlStr(m.base_url));
+
+      if (m.base_url) { lines.push("base_url = " + tomlStr(m.base_url)); }
       else if (m.kind === "vertex_anthropic" || m.kind === "vertex") {
         lines.push("# set project, location, service_account_file (base_url is optional)");
       } else if (m.kind === "azure_openai") {
         lines.push("# set base_url to https://<resource>.openai.azure.com");
       }
-      if (m.auth && m.auth !== "api_key") lines.push("auth = " + tomlStr(m.auth));
-      if (m.api_key_env) lines.push("api_key_env = " + tomlStr(m.api_key_env));
-      if (m.path) lines.push("path = " + tomlStr(m.path));
+
+      if (m.auth && m.auth !== "api_key") { lines.push("auth = " + tomlStr(m.auth)); }
+
+      if (m.api_key_env) { lines.push("api_key_env = " + tomlStr(m.api_key_env)); }
+
+      if (m.path) { lines.push("path = " + tomlStr(m.path)); }
+
       lines.push("");
     } else {
       lines.push("# " + provider + " has no [providers." + tomlKey(provider) + "] table yet.");
       lines.push("# Add one (kind, base_url, api_key_env) before this entry.");
     }
   }
+
   lines.push("[models." + tomlStr(provider + "/" + m.id) + "]");
   lines.push("provider = " + tomlStr(provider));
-  if (m.context) lines.push("context_window = " + m.context);
+
+  if (m.context) { lines.push("context_window = " + m.context); }
+
   // The field a hand-typed snippet forgets most expensively: without it the
   // entry takes config.Model's 1024-token default and truncates every answer.
-  if (m.output) lines.push("max_tokens = " + m.output);
-  if (m.display) lines.push("display = " + tomlStr(m.display));
+  if (m.output) { lines.push("max_tokens = " + m.output); }
+
+  if (m.display) { lines.push("display = " + tomlStr(m.display)); }
+
   // models.dev's own field only says the model accepts a temperature
   // parameter, not what to set it to; 0.7 matches sampling_profiles.zig's
   // chat default rather than leaving a fresh entry at the provider's own
   // default (often 1.0, noisier than clanker's other chat traffic).
-  if (m.temperature_ok) lines.push("temperature = 0.7");
-  if (m.cost_in != null) lines.push("cost_per_1m_input = " + m.cost_in);
-  if (m.cost_out != null) lines.push("cost_per_1m_output = " + m.cost_out);
+  if (m.temperature_ok) { lines.push("temperature = 0.7"); }
+
+  if (m.cost_in != null) { lines.push("cost_per_1m_input = " + m.cost_in); }
+
+  if (m.cost_out != null) { lines.push("cost_per_1m_output = " + m.cost_out); }
+
   if (m.capabilities && m.capabilities.length) {
     lines.push("capabilities = [" + m.capabilities.map(tomlStr).join(", ") + "]");
   }
+
   return lines.join("\n") + "\n";
 }
 
@@ -198,63 +235,83 @@ var snippetModel = null;
 
 function hideSnippet() {
   var host = document.getElementById("models-snippet");
-  if (host) host.hidden = true;
+
+  if (host) { host.hidden = true; }
 }
 
 function showSnippet(m) {
   var host = document.getElementById("models-snippet");
   var body = document.getElementById("models-snippet-body");
-  if (!host || !body) return;
+
+  if (!host || !body) { return; }
+
   hideEditPanel();
   snippetModel = m;
   var title = document.getElementById("models-snippet-title");
-  if (title) title.textContent = m.provider + "/" + m.id;
+
+  if (title) { title.textContent = m.provider + "/" + m.id; }
+
   body.textContent = configSnippet(m, configuredProviders, providersKnown);
   host.hidden = false;
   var copy = document.getElementById("models-snippet-copy");
-  if (copy) copy.textContent = "Copy";
+
+  if (copy) { copy.textContent = "Copy"; }
+
   resetSaveButtons();
   setSnippetNote("");
   status("config.local.toml entry for " + m.provider + "/" + m.id + ".");
+
   try { host.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "nearest" }); } catch (_) {}
 }
 
 function resetSaveButtons() {
   var save = document.getElementById("models-snippet-save");
   var def = document.getElementById("models-snippet-default");
+
   if (save) { save.disabled = false; save.textContent = "Save to config.local.toml"; }
+
   if (def) { def.disabled = false; def.textContent = "Set as default"; }
 }
 
 function setSnippetNote(text) {
   var note = document.getElementById("models-snippet-note");
-  if (!note) return;
+
+  if (!note) { return; }
+
   note.textContent = text;
   note.hidden = !text;
 }
 
 function postConfig(path, payload, btn, confirmMessage, doneLabel) {
-  if (!snippetModel) return;
+  if (!snippetModel) { return; }
+
   askConfirm(confirmMessage, { confirmLabel: "Save", title: "Write config.local.toml" }).then(function (yes) {
-    if (!yes) return;
+    if (!yes) { return; }
+
     var idleLabel = btn ? btn.textContent : "";
-    if (btn) btn.disabled = true;
+
+    if (btn) { btn.disabled = true; }
+
     postJson(path, payload)
       .then(function (d) {
-        if (!d.ok) throw new Error(d.error || "write failed");
-        if (btn) btn.textContent = doneLabel;
+        if (!d.ok) { throw new Error(d.error || "write failed"); }
+
+        if (btn) { btn.textContent = doneLabel; }
+
         setSnippetNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
         status("Wrote " + (d.path || "config.local.toml") + ".");
       })
       .catch(function (err) {
         if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+
         setSnippetNote("Could not save: " + err.message);
       });
   });
 }
 
 function saveSnippet() {
-  if (!snippetModel) return;
+  if (!snippetModel) { return; }
+
   postConfig(
     "/api/config/model",
     { provider: snippetModel.provider, model: snippetModel.id },
@@ -265,7 +322,8 @@ function saveSnippet() {
 }
 
 function saveDefault() {
-  if (!snippetModel) return;
+  if (!snippetModel) { return; }
+
   postConfig(
     "/api/config/default",
     { provider: snippetModel.provider, model: snippetModel.id },
@@ -283,13 +341,18 @@ function saveDefault() {
 function copySnippet() {
   var btn = document.getElementById("models-snippet-copy");
   var body = document.getElementById("models-snippet-body");
-  if (!btn || !body) return;
+
+  if (!btn || !body) { return; }
+
   var clip = typeof navigator !== "undefined" && navigator.clipboard;
+
   if (!clip || !clip.writeText) {
     btn.textContent = "Select it";
     status("The browser only offers the clipboard to a secure origin, and this page is plain http. The snippet is selectable.");
+
     return;
   }
+
   clip.writeText(body.textContent).then(function () {
     btn.textContent = "Copied";
     window.setTimeout(function () { btn.textContent = "Copy"; }, 1200);
@@ -306,6 +369,7 @@ function snippetButton(m) {
   btn.textContent = "config.local.toml";
   btn.setAttribute("aria-label", "Show the config.local.toml entry for " + m.provider + "/" + m.id);
   btn.addEventListener("click", function () { showSnippet(m); });
+
   return btn;
 }
 
@@ -317,9 +381,13 @@ function snippetButton(m) {
  *  to offer. Pure and exported so the refusal boundary is the tested text. */
 export function liveSnippetModel(provider, row, capValue) {
   var cap = Math.floor(Number(capValue));
-  if (!capValue || !isFinite(cap) || cap < 1 || cap !== Number(capValue)) return null;
-  var m = { provider: provider, id: row.id, output: cap };
-  if (row.context) m.context = row.context;
+
+  if (!capValue || !isFinite(cap) || cap < 1 || cap !== Number(capValue)) { return null; }
+
+  var m = { provider, id: row.id, output: cap };
+
+  if (row.context) { m.context = row.context; }
+
   return m;
 }
 
@@ -332,14 +400,18 @@ export function liveSnippetModel(provider, row, capValue) {
    removed from config.toml has to be detected and stepped back to the first
    option deliberately rather than left showing nothing. */
 function restoreProvider(sel, wanted) {
-  if (!wanted) return;
+  if (!wanted) { return; }
+
   sel.value = wanted;
-  if (sel.value === wanted) return;
+
+  if (sel.value === wanted) { return; }
+
   // The provider is gone from config.toml. The first option stands, and any
   // live listing still on screen belongs to a provider the select no longer
   // names — leaving it there reads as the new selection's models.
   sel.selectedIndex = 0;
   var out = document.getElementById("models-live-out");
+
   if (out) {
     out.textContent = "";
     out.appendChild(empty(wanted + " is no longer configured. Pick a provider and list again."));
@@ -349,7 +421,9 @@ function restoreProvider(sel, wanted) {
 function loadConfigured() {
   var box = document.getElementById("models-configured");
   var providerSel = document.getElementById("models-live-provider");
-  if (!box) return Promise.resolve();
+
+  if (!box) { return Promise.resolve(); }
+
   // Read before the refill, restored after it. loadModelsView() runs on every
   // entry to the view and behind Refresh, so without this the choice was lost
   // both times and the next "List models" quietly asked a different provider.
@@ -357,11 +431,14 @@ function loadConfigured() {
   // Inventory, not a live listing: without this the configured table is blank
   // for as long as /api/providers takes, which reads as "nothing configured".
   showLoading(box, "Loading configured models…");
+
   return fetch("/api/providers")
     .then(readJson)
     .then(function (d) {
       box.textContent = "";
-      if (providerSel) providerSel.textContent = "";
+
+      if (providerSel) { providerSel.textContent = ""; }
+
       // Recorded for the config.toml snippets: a discovered model whose
       // provider is not declared needs a [providers.*] table too, and only
       // this response knows which ones there are.
@@ -379,12 +456,14 @@ function loadConfigured() {
         // Its rows are dimmed below and the notice under the table names
         // the server's reason.
         var uncallableReason = providerUnusableReason(prov);
+
         if (providerSel) {
           var opt = document.createElement("option");
           opt.value = prov.name;
           opt.textContent = prov.name;
           providerSel.appendChild(opt);
         }
+
         var bySku = {};
         (prov.models || []).forEach(function (m) {
           var sku = m.id || m.name;
@@ -399,9 +478,11 @@ function loadConfigured() {
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
             capabilities: m.capabilities || []
           };
+
           var sku = m.id || m.name;
           var variants = bySku[sku];
           var groupKey = prov.name + "/" + sku;
+
           if (variants.length > 1 && variants[0] === m) {
             // First variant carries the fold row for the whole group.
             rows.push([
@@ -412,6 +493,7 @@ function loadConfigured() {
             ]);
             rowMeta.push({ group: groupKey, head: true, uncallable: uncallableReason });
           }
+
           rows.push([
             enabledCheckbox(entry),
             prov.name,
@@ -428,13 +510,16 @@ function loadConfigured() {
             : (uncallableReason ? { uncallable: uncallableReason } : null));
         });
       });
+
       // Before the early return below: a config with providers but no declared
       // models still fills the select, and the choice still has to survive.
-      if (providerSel) restoreProvider(providerSel, chosen);
+      if (providerSel) { restoreProvider(providerSel, chosen); }
+
       if (!rows.length) {
         var msg = configuredProviders.length
           ? "Providers are configured, but none list a model here. Use Add model… or Discover below."
           : "No models configured yet. Use Add model… above, or search Discover below.";
+
         var none = empty(msg + " ");
         var start = document.createElement("button");
         start.type = "button";
@@ -442,33 +527,40 @@ function loadConfigured() {
         start.textContent = "Add model…";
         start.addEventListener("click", function () {
           var add = document.getElementById("models-add");
-          if (add) add.click();
+
+          if (add) { add.click(); }
         });
         none.appendChild(start);
         box.appendChild(none);
+
         return;
       }
+
       // Providers this serve process cannot call, named with the server's
       // reason — the same wording idea as `clanker providers check` printing
       // "not configured". Their model rows stay in the table (inventory),
       // dimmed; only the chat picker hides them.
       var uncallable = (d.providers || []).filter(function (p) { return p && p.usable === false; });
+
       if (uncallable.length) {
         box.appendChild(empty("Not callable from this server: " + uncallable.map(function (p) {
           return p.name + ": " + providerUnusableReason(p);
         }).join("; ") + ". Still listed below; the chat picker hides them."));
       }
+
       box.appendChild(table(["enabled", "provider", "model", "category", "ctx", "in $/1M", "out $/1M", { sr: "Default" }, { sr: "Actions" }], rows));
       // Fold pass: hide variant rows behind their group's toggle row, and
       // dim the rows of a provider the server marked not callable.
       var trs = box.querySelectorAll("tbody tr");
       trs.forEach(function (tr, i) {
         var meta = rowMeta[i];
+
         if (meta && meta.variant) {
           tr.hidden = true;
           tr.className = VARIANT_ROW_CLASS;
           tr.setAttribute("data-group", meta.group);
         }
+
         if (meta && meta.uncallable) {
           tr.className = tr.className ? tr.className + " " + UNCALLABLE_CLASS : UNCALLABLE_CLASS;
           tr.title = "Not callable from this server: " + meta.uncallable;
@@ -483,19 +575,23 @@ function loadConfigured() {
 function modelEntryPayload(entry) {
   var payload = { provider: entry.provider, model: entry.model, enabled: entry.enabled !== false };
   ["id", "display", "category", "reasoning_effort"].forEach(function (key) {
-    if (entry[key]) payload[key] = entry[key];
+    if (entry[key]) { payload[key] = entry[key]; }
   });
   ["context_window", "max_tokens", "rpm", "temperature", "top_p", "cost_per_1m_input", "cost_per_1m_output"].forEach(function (key) {
-    if (entry[key] != null) payload[key] = entry[key];
+    if (entry[key] != null) { payload[key] = entry[key]; }
   });
-  if (entry.capabilities && entry.capabilities.length) payload.capabilities = entry.capabilities;
+
+  if (entry.capabilities && entry.capabilities.length) { payload.capabilities = entry.capabilities; }
+
   return payload;
 }
 
 function saveModelEntry(entry, checkbox) {
   checkbox.disabled = true;
+
   return postJson("/api/config/model/set", modelEntryPayload(entry)).then(function (d) {
-    if (!d.ok) throw new Error(d.error || "write failed");
+    if (!d.ok) { throw new Error(d.error || "write failed"); }
+
     checkbox.disabled = false;
     status((entry.enabled ? "Enabled " : "Disabled ") + entry.provider + "/" + entry.model + ".");
     window.dispatchEvent(new CustomEvent("clanker:model-visibility"));
@@ -520,6 +616,7 @@ function enabledCheckbox(entry) {
     saveModelEntry(entry, checkbox);
   });
   label.appendChild(checkbox);
+
   return label;
 }
 
@@ -538,9 +635,10 @@ function groupToggle(label, count, groupKey) {
     // Attribute-value comparison instead of a selector: the key is data,
     // not selector syntax, so no escaping questions.
     document.querySelectorAll("tr[data-group]").forEach(function (tr) {
-      if (tr.getAttribute("data-group") === groupKey) tr.hidden = open;
+      if (tr.getAttribute("data-group") === groupKey) { tr.hidden = open; }
     });
   });
+
   return btn;
 }
 
@@ -551,6 +649,7 @@ function editButton(entry) {
   btn.textContent = "Edit";
   btn.setAttribute("aria-label", "Edit " + entry.provider + "/" + entry.model);
   btn.addEventListener("click", function () { showEditPanel(entry, false); });
+
   return btn;
 }
 
@@ -562,18 +661,23 @@ function editButton(entry) {
    it to config.Model's struct default on the next `clanker serve` restart. */
 
 var editEntry = null;
+
 var editIsNew = false;
 
 function editField(id) { return document.getElementById(id); }
 
 function showEditPanel(entry, isNew) {
   var host = document.getElementById("models-edit");
-  if (!host) return;
+
+  if (!host) { return; }
+
   hideSnippet();
   editEntry = entry;
   editIsNew = !!isNew;
   var title = document.getElementById("models-edit-title");
-  if (title) title.textContent = isNew ? "Add a model" : entry.provider + "/" + entry.model;
+
+  if (title) { title.textContent = isNew ? "Add a model" : entry.provider + "/" + entry.model; }
+
   editField("models-edit-provider").value = entry.provider || "";
   editField("models-edit-provider").disabled = !isNew;
   editField("models-edit-model").value = entry.model || "";
@@ -591,63 +695,98 @@ function showEditPanel(entry, isNew) {
   editField("models-edit-rpm").value = entry.rpm != null ? entry.rpm : "";
   editField("models-edit-capabilities").value = (entry.capabilities || []).join(", ");
   var removeBtn = document.getElementById("models-edit-remove");
-  if (removeBtn) removeBtn.hidden = isNew;
+
+  if (removeBtn) { removeBtn.hidden = isNew; }
+
   var save = document.getElementById("models-edit-save");
+
   if (save) { save.disabled = false; save.textContent = isNew ? "Add model" : "Save changes"; }
+
   setTomlMode(false);
   setEditNote("");
   host.hidden = false;
+
   try { host.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "nearest" }); } catch (_) {}
 }
 
 function hideEditPanel() {
   var host = document.getElementById("models-edit");
-  if (host) host.hidden = true;
+
+  if (host) { host.hidden = true; }
+
   editEntry = null;
 }
 
 function setEditNote(text) {
   var note = document.getElementById("models-edit-note");
-  if (!note) return;
+
+  if (!note) { return; }
+
   note.textContent = text;
   note.hidden = !text;
 }
 
 function numOrNull(id) {
   var v = editField(id).value;
-  if (v === "" || v == null) return null;
+
+  if (v === "" || v == null) { return null; }
+
   var n = Number(v);
+
   return isNaN(n) ? null : n;
 }
 
 function editPayload() {
   var provider = editField("models-edit-provider").value.trim();
   var model = editField("models-edit-model").value.trim();
-  var payload = { provider: provider, model: model, enabled: !editEntry || editEntry.enabled !== false };
+  var payload = { provider, model, enabled: !editEntry || editEntry.enabled !== false };
   var sku = editField("models-edit-id").value.trim();
-  if (sku) payload.id = sku;
+
+  if (sku) { payload.id = sku; }
+
   var context = numOrNull("models-edit-context");
-  if (context != null) payload.context_window = context;
+
+  if (context != null) { payload.context_window = context; }
+
   var maxTok = numOrNull("models-edit-max-tokens");
-  if (maxTok != null) payload.max_tokens = maxTok;
+
+  if (maxTok != null) { payload.max_tokens = maxTok; }
+
   var temp = numOrNull("models-edit-temperature");
-  if (temp != null) payload.temperature = temp;
+
+  if (temp != null) { payload.temperature = temp; }
+
   var topP = numOrNull("models-edit-top-p");
-  if (topP != null) payload.top_p = topP;
+
+  if (topP != null) { payload.top_p = topP; }
+
   var reasoning = editField("models-edit-reasoning").value;
-  if (reasoning) payload.reasoning_effort = reasoning;
+
+  if (reasoning) { payload.reasoning_effort = reasoning; }
+
   var display = editField("models-edit-display").value.trim();
-  if (display) payload.display = display;
+
+  if (display) { payload.display = display; }
+
   var category = editField("models-edit-category").value.trim();
-  if (category) payload.category = category;
+
+  if (category) { payload.category = category; }
+
   var costIn = numOrNull("models-edit-cost-in");
-  if (costIn != null) payload.cost_per_1m_input = costIn;
+
+  if (costIn != null) { payload.cost_per_1m_input = costIn; }
+
   var costOut = numOrNull("models-edit-cost-out");
   var rpm = numOrNull("models-edit-rpm");
-  if (rpm != null) payload.rpm = rpm;
-  if (costOut != null) payload.cost_per_1m_output = costOut;
+
+  if (rpm != null) { payload.rpm = rpm; }
+
+  if (costOut != null) { payload.cost_per_1m_output = costOut; }
+
   var caps = editField("models-edit-capabilities").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-  if (caps.length) payload.capabilities = caps;
+
+  if (caps.length) { payload.capabilities = caps; }
+
   return payload;
 }
 
@@ -660,26 +799,41 @@ function editToml() {
   var p = editPayload();
   var lines = ["[models." + tomlStr(p.provider + "/" + p.model) + "]"];
   lines.push("provider = " + tomlStr(p.provider));
-  if (p.enabled === false) lines.push("enabled = false");
-  if (p.id) lines.push("id = " + tomlStr(p.id));
-  if (p.context_window != null) lines.push("context_window = " + p.context_window);
-  if (p.max_tokens != null) lines.push("max_tokens = " + p.max_tokens);
-  if (p.temperature != null) lines.push("temperature = " + p.temperature);
-  if (p.top_p != null) lines.push("top_p = " + p.top_p);
-  if (p.reasoning_effort) lines.push("reasoning_effort = " + tomlStr(p.reasoning_effort));
-  if (p.display) lines.push("display = " + tomlStr(p.display));
-  if (p.category) lines.push("category = " + tomlStr(p.category));
-  if (p.cost_per_1m_input != null) lines.push("cost_per_1m_input = " + p.cost_per_1m_input);
-  if (p.cost_per_1m_output != null) lines.push("cost_per_1m_output = " + p.cost_per_1m_output);
-  if (p.rpm != null) lines.push("rpm = " + p.rpm);
-  if (p.capabilities && p.capabilities.length) lines.push("capabilities = [" + p.capabilities.map(tomlStr).join(", ") + "]");
+
+  if (p.enabled === false) { lines.push("enabled = false"); }
+
+  if (p.id) { lines.push("id = " + tomlStr(p.id)); }
+
+  if (p.context_window != null) { lines.push("context_window = " + p.context_window); }
+
+  if (p.max_tokens != null) { lines.push("max_tokens = " + p.max_tokens); }
+
+  if (p.temperature != null) { lines.push("temperature = " + p.temperature); }
+
+  if (p.top_p != null) { lines.push("top_p = " + p.top_p); }
+
+  if (p.reasoning_effort) { lines.push("reasoning_effort = " + tomlStr(p.reasoning_effort)); }
+
+  if (p.display) { lines.push("display = " + tomlStr(p.display)); }
+
+  if (p.category) { lines.push("category = " + tomlStr(p.category)); }
+
+  if (p.cost_per_1m_input != null) { lines.push("cost_per_1m_input = " + p.cost_per_1m_input); }
+
+  if (p.cost_per_1m_output != null) { lines.push("cost_per_1m_output = " + p.cost_per_1m_output); }
+
+  if (p.rpm != null) { lines.push("rpm = " + p.rpm); }
+
+  if (p.capabilities && p.capabilities.length) { lines.push("capabilities = [" + p.capabilities.map(tomlStr).join(", ") + "]"); }
+
   return lines.join("\n") + "\n";
 }
 
 function paintEditToml() {
   var text = document.getElementById("models-edit-toml-text");
   var code = document.getElementById("models-edit-toml-code");
-  if (text && code) paintTomlInto(text, code);
+
+  if (text && code) { paintTomlInto(text, code); }
 }
 
 function setTomlMode(on) {
@@ -688,14 +842,21 @@ function setTomlMode(on) {
   var editor = document.getElementById("models-edit-toml-editor");
   var toggle = document.getElementById("models-edit-toml");
   var save = document.getElementById("models-edit-save");
-  if (!form || !editor) return;
+
+  if (!form || !editor) { return; }
+
   form.hidden = on;
   editor.hidden = !on;
-  if (toggle) toggle.setAttribute("aria-pressed", String(on));
-  if (save) save.textContent = on ? "Save TOML" : (editIsNew ? "Add model" : "Save changes");
+
+  if (toggle) { toggle.setAttribute("aria-pressed", String(on)); }
+
+  if (save) { save.textContent = on ? "Save TOML" : (editIsNew ? "Add model" : "Save changes"); }
+
   if (on) {
     var text = document.getElementById("models-edit-toml-text");
+
     if (text) { text.value = editToml(); paintEditToml(); }
+
     setEditNote("Editing the raw table. Saving validates the whole config first; an invalid table is refused and nothing is written.");
   } else {
     setEditNote("");
@@ -705,18 +866,22 @@ function setTomlMode(on) {
 function saveTomlEdit() {
   var text = document.getElementById("models-edit-toml-text");
   var btn = document.getElementById("models-edit-save");
-  if (!text) return;
-  if (btn) btn.disabled = true;
+
+  if (!text) { return; }
+
+  if (btn) { btn.disabled = true; }
+
   postJson("/api/config/table/set", { block: text.value })
     .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "write failed");
+      if (!d.ok) { throw new Error(d.error || "write failed"); }
+
       setEditNote("Saved to config.local.toml. " + (d.applied || "Hot reload applies it."));
       loadConfigured();
     })
     .catch(function (err) {
       setEditNote("Refused: " + err.message + ". The running config is unchanged.");
     })
-    .finally(function () { if (btn) btn.disabled = false; });
+    .finally(function () { if (btn) { btn.disabled = false; } });
 }
 
 /* The save control is a type=button outside the form, so the browser never
@@ -726,48 +891,66 @@ function saveTomlEdit() {
    that is out of range. */
 function firstInvalidEditField() {
   var form = document.getElementById("models-edit-form");
-  if (!form) return null;
+
+  if (!form) { return null; }
+
   var fields = form.querySelectorAll("input, select, textarea");
+
   for (var i = 0; i < fields.length; i++) {
-    if (!fields[i].checkValidity()) return fields[i];
+    if (!fields[i].checkValidity()) { return fields[i]; }
   }
+
   return null;
 }
 
 function saveEdit() {
-  if (tomlMode) return saveTomlEdit();
+  if (tomlMode) { return saveTomlEdit(); }
+
   var invalid = firstInvalidEditField();
+
   if (invalid) {
     var owner = invalid.closest("label");
     var name = owner ? owner.textContent.trim().split("\n")[0].trim() : "";
     setEditNote(name ? name + " is out of range." : "One of the fields is out of range.");
     invalid.reportValidity();
     invalid.focus();
+
     return;
   }
+
   var payload = editPayload();
+
   if (!payload.provider || !payload.model) {
     setEditNote("Provider and model ID are both required.");
+
     return;
   }
+
   var btn = document.getElementById("models-edit-save");
-  if (btn) btn.disabled = true;
+
+  if (btn) { btn.disabled = true; }
+
   postJson("/api/config/model/set", payload)
     .then(function (d) {
-      if (!d.ok) throw new Error(d.error || "write failed");
+      if (!d.ok) { throw new Error(d.error || "write failed"); }
+
       setEditNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
       status("Wrote " + (d.path || "config.local.toml") + " for " + payload.provider + "/" + payload.model + ".");
-      if (btn) btn.disabled = false;
+
+      if (btn) { btn.disabled = false; }
+
       loadConfigured();
     })
     .catch(function (err) {
-      if (btn) btn.disabled = false;
+      if (btn) { btn.disabled = false; }
+
       setEditNote("Could not save: " + err.message);
     });
 }
 
 function removeEdit() {
-  if (!editEntry || editIsNew) return;
+  if (!editEntry || editIsNew) { return; }
+
   var btn = document.getElementById("models-edit-remove");
   var name = editEntry.provider + "/" + editEntry.model;
   askConfirm("Remove \"" + name + "\" from config.local.toml? A model only declared in the shared config.toml cannot be removed here.", {
@@ -775,12 +958,16 @@ function removeEdit() {
     confirmLabel: "Remove",
     title: "Remove model"
   }).then(function (yes) {
-    if (!yes) return;
-    if (btn) btn.disabled = true;
+    if (!yes) { return; }
+
+    if (btn) { btn.disabled = true; }
+
     postJson("/api/config/model/remove", { provider: editEntry.provider, model: editEntry.model })
       .then(function (d) {
-        if (!d.ok) throw new Error(d.error || "remove failed");
+        if (!d.ok) { throw new Error(d.error || "remove failed"); }
+
         if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+
         if (d.removed) {
           setEditNote("Removed from config.local.toml. " + (d.applied || "The server reloads into it."));
           status("Removed " + name + ".");
@@ -791,6 +978,7 @@ function removeEdit() {
       })
       .catch(function (err) {
         if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
+
         setEditNote("Could not remove: " + err.message);
       });
   });
@@ -800,7 +988,9 @@ function loadLive() {
   var out = document.getElementById("models-live-out");
   var sel = document.getElementById("models-live-provider");
   var btn = document.getElementById("models-live-btn");
-  if (!out || !sel || !sel.value) return;
+
+  if (!out || !sel || !sel.value) { return; }
+
   btn.disabled = true;
   out.textContent = "";
   out.appendChild(empty("Asking " + sel.value + "…"));
@@ -809,6 +999,7 @@ function loadLive() {
     .then(function (d) {
       out.textContent = "";
       var provider = sel.value;
+
       var rows = (d.models || []).map(function (m) {
         var btn = document.createElement("button");
         btn.type = "button";
@@ -818,8 +1009,10 @@ function loadLive() {
         btn.addEventListener("click", function () {
           var capEl = document.getElementById("models-live-cap");
           var model = liveSnippetModel(provider, m, capEl ? capEl.value : "");
+
           if (!model) {
             status("Set the output cap first: the provider's listing does not state one, and an entry without max_tokens truncates every answer at the 1024-token default.", "live");
+
             if (capEl) {
               // The sr-only status line says why; sighted users get the
               // browser's own validation bubble on the input that needs
@@ -832,17 +1025,23 @@ function loadLive() {
               });
               capEl.focus();
             }
+
             return;
           }
+
           showSnippet(model);
         });
+
         return [m.id, m.context ? fmtInt(m.context) : "", btn];
       });
+
       if (!rows.length) {
         out.appendChild(empty("The provider listed no models."));
         status("The provider listed no models.", "live");
+
         return;
       }
+
       out.appendChild(table(["id", "ctx", { sr: "Actions" }], rows));
       status(rows.length + " models from " + sel.value + ".", "live");
     })
@@ -854,10 +1053,13 @@ function loadLive() {
 }
 
 var catalogSearching = false;
+
 function syncCatalogBtn() {
   var q = document.getElementById("models-catalog-q");
   var btn = document.getElementById("models-catalog-btn");
-  if (!btn) return;
+
+  if (!btn) { return; }
+
   var tooShort = !q || q.value.trim().length < 2;
   btn.disabled = catalogSearching || tooShort;
   btn.title = catalogSearching ? "Searching…" : (tooShort
@@ -868,14 +1070,19 @@ function syncCatalogBtn() {
 function searchCatalog() {
   var out = document.getElementById("models-catalog-out");
   var q = document.getElementById("models-catalog-q");
-  if (!out || !q) return;
+
+  if (!out || !q) { return; }
+
   var query = q.value.trim();
+
   if (query.length < 2) {
     out.textContent = "";
     out.appendChild(empty("Type at least 2 characters."));
     syncCatalogBtn();
+
     return;
   }
+
   catalogSearching = true;
   syncCatalogBtn();
   out.textContent = "";
@@ -886,10 +1093,14 @@ function searchCatalog() {
     .then(readJson)
     .then(function (d) {
       out.textContent = "";
+
       var rows = (d.models || []).map(function (m) {
         var caps = [];
-        if (m.reasoning) caps.push("reasoning");
-        if (m.tool_call) caps.push("tools");
+
+        if (m.reasoning) { caps.push("reasoning"); }
+
+        if (m.tool_call) { caps.push("tools"); }
+
         return [
           m.provider + "/" + m.id,
           m.context ? fmtInt(m.context) : "",
@@ -899,13 +1110,17 @@ function searchCatalog() {
           snippetButton(m)
         ];
       });
+
       if (!rows.length) {
         out.appendChild(empty("No catalog entry matches \"" + query + "\". Try another name, or refresh the catalog."));
         status("No catalog entry matches \"" + query + "\".", "catalog");
+
         return;
       }
+
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", { sr: "Actions" }], rows));
       status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.", "catalog");
+
       if (d.truncated) {
         out.appendChild(empty("Showing the first " + rows.length + " matches; narrow the query for more specific results."));
       }
@@ -920,16 +1135,20 @@ function searchCatalog() {
 function refreshCatalog() {
   var out = document.getElementById("models-catalog-out");
   var btn = document.getElementById("models-catalog-refresh");
-  if (btn) btn.disabled = true;
+
+  if (btn) { btn.disabled = true; }
+
   if (out) {
     out.textContent = "";
     out.appendChild(empty("Downloading models.dev into the local catalog…"));
   }
+
   fetch("/api/catalog/refresh", { method: "POST" })
     .then(readJson)
     .then(function (d) {
       var n = typeof d.bytes === "number" ? d.bytes : 0;
       status("Catalog refreshed (" + fmtBytes(n) + "). Search uses the new snapshot.", "catalog");
+
       if (out) {
         out.textContent = "";
         out.appendChild(empty("Catalog updated. Search again to see current matches."));
@@ -939,7 +1158,7 @@ function refreshCatalog() {
       status("Catalog refresh failed: " + err.message, "catalog");
       failWithRetry(out, "Catalog refresh failed: " + err.message, refreshCatalog);
     })
-    .finally(function () { if (btn) btn.disabled = false; });
+    .finally(function () { if (btn) { btn.disabled = false; } });
 }
 
 export function loadModelsView() {
@@ -947,55 +1166,85 @@ export function loadModelsView() {
 }
 
 var bound = false;
+
 export function bindModels() {
-  if (bound) return;
+  if (bound) { return; }
+
   bound = true;
   var liveBtn = document.getElementById("models-live-btn");
-  if (liveBtn) liveBtn.addEventListener("click", loadLive);
+
+  if (liveBtn) { liveBtn.addEventListener("click", loadLive); }
+
   var catBtn = document.getElementById("models-catalog-btn");
-  if (catBtn) catBtn.addEventListener("click", searchCatalog);
+
+  if (catBtn) { catBtn.addEventListener("click", searchCatalog); }
+
   var catRefresh = document.getElementById("models-catalog-refresh");
-  if (catRefresh) catRefresh.addEventListener("click", refreshCatalog);
+
+  if (catRefresh) { catRefresh.addEventListener("click", refreshCatalog); }
+
   var q = document.getElementById("models-catalog-q");
+
   if (q) {
     q.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); searchCatalog(); }
     });
     q.addEventListener("input", syncCatalogBtn);
   }
+
   syncCatalogBtn();
   var refresh = document.getElementById("models-refresh");
   wireRefresh(refresh, loadModelsView);
   var copy = document.getElementById("models-snippet-copy");
-  if (copy) copy.addEventListener("click", copySnippet);
+
+  if (copy) { copy.addEventListener("click", copySnippet); }
+
   var save = document.getElementById("models-snippet-save");
-  if (save) save.addEventListener("click", saveSnippet);
+
+  if (save) { save.addEventListener("click", saveSnippet); }
+
   var def = document.getElementById("models-snippet-default");
-  if (def) def.addEventListener("click", saveDefault);
+
+  if (def) { def.addEventListener("click", saveDefault); }
+
   var close = document.getElementById("models-snippet-close");
-  if (close) close.addEventListener("click", hideSnippet);
+
+  if (close) { close.addEventListener("click", hideSnippet); }
+
   var add = document.getElementById("models-add");
-  if (add) add.addEventListener("click", function () {
+
+  if (add) { add.addEventListener("click", function () {
     showEditPanel({
       provider: "", model: "", id: "", display: "", category: "",
       context_window: 131072, max_tokens: 1024, rpm: null,
       temperature: null, top_p: null, reasoning_effort: "",
       cost_per_1m_input: null, cost_per_1m_output: null, capabilities: []
     }, true);
-  });
+  }); }
+
   var editSave = document.getElementById("models-edit-save");
-  if (editSave) editSave.addEventListener("click", saveEdit);
+
+  if (editSave) { editSave.addEventListener("click", saveEdit); }
+
   var editRemove = document.getElementById("models-edit-remove");
-  if (editRemove) editRemove.addEventListener("click", removeEdit);
+
+  if (editRemove) { editRemove.addEventListener("click", removeEdit); }
+
   var editClose = document.getElementById("models-edit-close");
-  if (editClose) editClose.addEventListener("click", hideEditPanel);
+
+  if (editClose) { editClose.addEventListener("click", hideEditPanel); }
+
   var tomlToggle = document.getElementById("models-edit-toml");
-  if (tomlToggle) tomlToggle.addEventListener("click", function () { setTomlMode(!tomlMode); });
+
+  if (tomlToggle) { tomlToggle.addEventListener("click", function () { setTomlMode(!tomlMode); }); }
+
   var tomlText = document.getElementById("models-edit-toml-text");
+
   if (tomlText) {
     tomlText.addEventListener("input", paintEditToml);
     tomlText.addEventListener("scroll", function () {
       var pre = tomlText.previousElementSibling;
+
       if (pre) { pre.scrollTop = tomlText.scrollTop; pre.scrollLeft = tomlText.scrollLeft; }
     });
   }

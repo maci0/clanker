@@ -18,6 +18,7 @@ test("installed coding-agent backends sit in a local-CLI group, not an API-key p
       { name: "grok", group: "Local coding-agent backend", kind: "coding-agent" },
     ],
   });
+
   assert.equal(index[0].backend, "grok");
   assert.equal(index[0].provider, "Local coding-agent backend");
   assert.equal(index[0].value, "backend:grok");
@@ -47,6 +48,7 @@ test("disabled configured models stay out of the picker", function () {
       ],
     }],
   });
+
   assert.deepEqual(index.map(function (row) { return row.model; }), ["claude-opus", "claude-sonnet"]);
 });
 

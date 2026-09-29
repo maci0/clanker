@@ -4,30 +4,39 @@
 
 export function runLabel(r, clipFn) {
   var task = (r.task || "").replace(/\s+/g, " ").trim();
-  if (typeof clipFn === "function") task = clipFn(task, 60);
-  else if (task.length > 60) task = task.slice(0, 57) + "\u2026";
+
+  if (typeof clipFn === "function") { task = clipFn(task, 60); }
+  else if (task.length > 60) { task = task.slice(0, 57) + "\u2026"; }
+
   return r.run_id + "  \u00b7  " + (task || "(no task)");
 }
 
 export function modelLabel(provider, model, providerCache) {
   var cache = providerCache || [];
+
   for (var i = 0; i < cache.length; i++) {
-    if (cache[i].name !== provider) continue;
+    if (cache[i].name !== provider) { continue; }
+
     var models = cache[i].models || [];
+
     for (var k = 0; k < models.length; k++) {
-      if (models[k].name === model) return models[k].display || model;
+      if (models[k].name === model) { return models[k].display || model; }
     }
   }
+
   return model;
 }
 
 export function chatRoomLabel(room, isDmFn, dmPartnerFn, clankerMarkFn) {
   var r = room;
+
   if (typeof isDmFn === "function" && isDmFn(r.room)) {
     var who = typeof dmPartnerFn === "function" ? dmPartnerFn(r.room) : r.room;
     var mark = typeof clankerMarkFn === "function" ? clankerMarkFn(who) + " " : "";
+
     return mark + who;
   }
+
   return "# " + r.room;
 }
 
@@ -51,22 +60,30 @@ var toolCategoryLabels = {
 
 export function toolCategoryLabel(cat) {
   var key = cat || "other";
-  if (toolCategoryLabels[key]) return toolCategoryLabels[key];
+
+  if (toolCategoryLabels[key]) { return toolCategoryLabels[key]; }
+
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
 export function compareToolCategories(a, b) {
-  if (a === b) return 0;
+  if (a === b) { return 0; }
+
   var ia = toolCategoryRank(a);
   var ib = toolCategoryRank(b);
-  if (ia !== ib) return ia - ib;
+
+  if (ia !== ib) { return ia - ib; }
+
   return a < b ? -1 : 1;
 }
 
 function toolCategoryRank(cat) {
   var key = cat || "other";
-  if (key === "other") return toolCategoryOrder.length + 1;
+
+  if (key === "other") { return toolCategoryOrder.length + 1; }
+
   var i = toolCategoryOrder.indexOf(key);
+
   return i < 0 ? toolCategoryOrder.length : i;
 }
 

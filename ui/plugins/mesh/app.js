@@ -10,15 +10,18 @@
    already carry the 16px phone guard, at a specificity this plugin's own sheet
    never won against. */
 var FACTS_CLASS = "mt-0 mx-0 mb-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 text-sm max-[40rem]:grid-cols-[5.5rem_1fr]";
+
 var LIST_CLASS = "mb-3 flex flex-col gap-2";
+
 var ROW_CLASS = "flex min-h-8 flex-wrap items-center gap-x-3 gap-y-2 rounded-plate border border-rule bg-surface px-4 py-3";
+
 var JOIN_FORM_CLASS = "mb-4 flex flex-wrap items-end gap-x-3 gap-y-2";
 
 clanker.registerView({
   id: "mesh",
   title: "Mesh",
   group: "Watch",
-  mount: function (container, api) {
+  mount (container, api) {
     var state = { status: null, pending: [], busy: "", error: "", loadedAt: 0 };
     var poll = null;
     var tick = null;
@@ -98,25 +101,33 @@ clanker.registerView({
 
     function showErr(msg, retry) {
       errHost.textContent = "";
-      if (!msg) return;
+
+      if (!msg) { return; }
+
       var p = api.el("p", "run-empty mt-0");
       p.appendChild(document.createTextNode(msg + " "));
+
       if (retry) {
         var again = api.el("button", "secondary", "Try again");
         again.type = "button";
         again.addEventListener("click", load);
         p.appendChild(again);
       }
+
       errHost.appendChild(p);
     }
 
     function fact(term, value, extra) {
       var dt = api.el("dt", "font-semibold text-fg-muted", term);
       var dd = api.el("dd", "m-0 flex flex-wrap items-center gap-2 wrap-anywhere");
-      if (value) dd.appendChild(document.createTextNode(value));
-      if (extra) dd.appendChild(extra);
+
+      if (value) { dd.appendChild(document.createTextNode(value)); }
+
+      if (extra) { dd.appendChild(extra); }
+
       facts.appendChild(dt);
       facts.appendChild(dd);
+
       return dd;
     }
 
@@ -126,10 +137,13 @@ clanker.registerView({
       btn.setAttribute("aria-label", "Copy listen address");
       btn.addEventListener("click", function () {
         var clip = typeof navigator !== "undefined" && navigator.clipboard;
+
         if (!clip || !window.isSecureContext) {
           api.prompt("Listen address", text);
+
           return;
         }
+
         clip.writeText(text).then(function () {
           btn.textContent = "Copied";
           api.toast("copied " + text, "ok");
@@ -138,15 +152,20 @@ clanker.registerView({
           api.toast("The browser refused the clipboard.", "error");
         });
       });
+
       return btn;
     }
 
     function memberRow(m) {
       var row = api.el("article", ROW_CLASS + " data-[down=true]:border-dashed");
-      if (!m.up) row.dataset.down = "true";
+
+      if (!m.up) { row.dataset.down = "true"; }
+
       var name = m.name || m.id || "?";
       row.appendChild(api.el("code", "text-sm", name));
-      if (m.id && m.id !== name) row.appendChild(api.el("span", "meta", m.id));
+
+      if (m.id && m.id !== name) { row.appendChild(api.el("span", "meta", m.id)); }
+
       var chip = api.el("span", "meta data-[state=ok]:text-ok data-[state=down]:text-danger");
       chip.dataset.state = m.up ? "ok" : "down";
       chip.textContent = m.up ? "up" : "down";
@@ -157,16 +176,18 @@ clanker.registerView({
       drop.setAttribute("aria-label", "Leave " + name);
       drop.addEventListener("click", function () {
         api.confirm("Leave \"" + name + "\"? That peer will no longer see this instance.").then(function (yes) {
-          if (yes) act(function () { return api.postJSON("/api/mesh/leave", { peer_id: m.id || name }); }, "left " + name);
+          if (yes) { act(function () { return api.postJSON("/api/mesh/leave", { peer_id: m.id || name }); }, "left " + name); }
         });
       });
       row.appendChild(drop);
+
       return row;
     }
 
     function pendingAge(p) {
       var base = typeof p.age_s === "number" ? p.age_s : 0;
       var extra = state.loadedAt ? Math.floor((Date.now() - state.loadedAt) / 1000) : 0;
+
       return base + extra;
     }
 
@@ -174,22 +195,25 @@ clanker.registerView({
       var row = api.el("article", ROW_CLASS);
       var id = p.id || "?";
       row.appendChild(api.el("code", "text-sm", id));
-      if (p.name && p.name !== id) row.appendChild(api.el("span", "meta", p.name));
+
+      if (p.name && p.name !== id) { row.appendChild(api.el("span", "meta", p.name)); }
+
       row.appendChild(api.el("span", "meta", pendingAge(p) + "s"));
       var admit = api.el("button", "primary", "Admit");
       admit.type = "button";
       admit.disabled = !!state.busy;
       admit.addEventListener("click", function () {
-        act(function () { return api.postJSON("/api/mesh/pending", { id: id, allow: true }); }, "admitted " + id);
+        act(function () { return api.postJSON("/api/mesh/pending", { id, allow: true }); }, "admitted " + id);
       });
       var deny = api.el("button", "secondary", "Deny");
       deny.type = "button";
       deny.disabled = !!state.busy;
       deny.addEventListener("click", function () {
-        act(function () { return api.postJSON("/api/mesh/pending", { id: id, allow: false }); }, "denied " + id);
+        act(function () { return api.postJSON("/api/mesh/pending", { id, allow: false }); }, "denied " + id);
       });
       row.appendChild(admit);
       row.appendChild(deny);
+
       return row;
     }
 
@@ -197,9 +221,12 @@ clanker.registerView({
       var s = state.status;
       var list = (s && s.members) || [];
       facts.textContent = "";
+
       if (s) {
         fact("id", s.id || "unset");
-        if (s.listen) fact("listen", s.listen, copyListen(s.listen));
+
+        if (s.listen) { fact("listen", s.listen, copyListen(s.listen)); }
+
         fact("admission", s.admission || "unset");
         fact("state", s.listening ? "listening" : "not listening");
       }
@@ -209,13 +236,17 @@ clanker.registerView({
       } else {
         var bits = [];
         bits.push(api.fmt.plural(list.length, { one: "member", other: "members" }));
-        if (state.pending.length) bits.push(state.pending.length + " pending");
-        if (state.busy) bits.push(state.busy);
+
+        if (state.pending.length) { bits.push(state.pending.length + " pending"); }
+
+        if (state.busy) { bits.push(state.busy); }
+
         statusLine.textContent = bits.join(" · ");
       }
 
       membersHead.textContent = list.length ? "Members (" + list.length + ")" : "Members";
       members.textContent = "";
+
       if (!list.length) {
         members.appendChild(api.el("p", "run-empty", "No members. Join a listen address below, or wait for someone to join you."));
       } else {
@@ -230,6 +261,7 @@ clanker.registerView({
         ? "Pending joins (" + state.pending.length + ")"
         : "Pending joins";
       pending.textContent = "";
+
       if (!state.pending.length) {
         pending.appendChild(api.el("p", "run-empty", "No pending joins."));
       } else {
@@ -247,6 +279,7 @@ clanker.registerView({
       state.error = "";
       showErr("");
       draw();
+
       return Promise.all([
         api.getJSON("/api/mesh/status"),
         api.getJSON("/api/mesh/pending").catch(function () { return { pending: [] }; })
@@ -261,24 +294,30 @@ clanker.registerView({
         state.pending = [];
         state.busy = "";
         var msg = (e && e.message) || "mesh request failed";
+
         if (/modules\.mesh is off/i.test(msg)) {
           showErr("Mesh is off. Set modules.mesh = true and restart clanker serve.", true);
         } else {
           showErr(msg, true);
         }
+
         draw();
       });
     }
 
     function act(fn, okMsg) {
-      if (state.busy && state.busy !== "Loading…") return Promise.resolve();
+      if (state.busy && state.busy !== "Loading…") { return Promise.resolve(); }
+
       state.busy = "Working…";
       draw();
+
       return fn().then(function () {
         api.toast(okMsg, "ok");
+
         return load();
       }).catch(function (e) {
         api.toast((e && e.message) || "failed", "error");
+
         return load();
       });
     }
@@ -287,12 +326,14 @@ clanker.registerView({
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       var address = (addr.value || "").trim();
-      if (!address) return;
-      act(function () { return api.postJSON("/api/mesh/join", { address: address }); }, "joined " + address);
+
+      if (!address) { return; }
+
+      act(function () { return api.postJSON("/api/mesh/join", { address }); }, "joined " + address);
     });
     leaveSelf.addEventListener("click", function () {
       api.confirm("Leave the mesh? Other members will drop this instance.").then(function (yes) {
-        if (yes) act(function () { return api.postJSON("/api/mesh/leave", {}); }, "left the mesh");
+        if (yes) { act(function () { return api.postJSON("/api/mesh/leave", {}); }, "left the mesh"); }
       });
     });
 
@@ -304,12 +345,14 @@ clanker.registerView({
        health and office views do. */
     function viewHidden() {
       var view = container.closest ? container.closest(".view") : null;
+
       return !!(view && view.hidden);
     }
 
     api.onLive(function (ev) {
-      if (!ev || viewHidden()) return;
-      if (ev.t === "mesh" || ev.t === "talk") load();
+      if (!ev || viewHidden()) { return; }
+
+      if (ev.t === "mesh" || ev.t === "talk") { load(); }
     });
 
     /* Both timers idle while the view is hidden: without the guard, opening
@@ -317,18 +360,21 @@ clanker.registerView({
        tab, from a view nobody could see. api.onLive above still refreshes
        instantly on mesh events, and refresh() covers re-entry. */
     poll = setInterval(function () {
-      if (viewHidden() || state.busy) return;
+      if (viewHidden() || state.busy) { return; }
+
       load();
     }, 4000);
     tick = setInterval(function () {
-      if (viewHidden() || !state.pending.length) return;
+      if (viewHidden() || !state.pending.length) { return; }
+
       draw();
     }, 1000);
 
     load();
   },
-  refresh: function (container, api) {
+  refresh (container, api) {
     var btn = container.querySelector("#mesh-refresh");
-    if (btn) btn.click();
+
+    if (btn) { btn.click(); }
   }
 });

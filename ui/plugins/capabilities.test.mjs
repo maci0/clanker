@@ -37,11 +37,15 @@ function stripComments(src) {
 
 function usedMembers(appJs) {
   const hits = new Set();
+
   for (const m of stripComments(appJs).matchAll(/\bapi\.([a-zA-Z_]\w*)/g)) {
     const member = m[1];
+
     if (member === "storage") { hits.add("storage"); continue; }
+
     hits.add(ALIAS[member] || member);
   }
+
   return hits;
 }
 
@@ -54,17 +58,24 @@ function pluginDirs() {
 
 test("every non-module plugin declares the api members it uses", () => {
   const problems = [];
+
   for (const name of pluginDirs()) {
     const dir = path.join(here, name);
     const metaPath = path.join(dir, "plugin.json");
     const appPath = path.join(dir, "app.js");
-    if (!fs.existsSync(metaPath) || !fs.existsSync(appPath)) continue;
+
+    if (!fs.existsSync(metaPath) || !fs.existsSync(appPath)) { continue; }
+
     const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-    if (meta.module) continue;
+
+    if (meta.module) { continue; }
+
     const declared = new Set(meta.capabilities || []);
+
     for (const cap of declared) {
-      if (!KNOWN.includes(cap)) problems.push(`${name}: unknown capability "${cap}"`);
+      if (!KNOWN.includes(cap)) { problems.push(`${name}: unknown capability "${cap}"`); }
     }
+
     for (const used of usedMembers(fs.readFileSync(appPath, "utf8"))) {
       if (!KNOWN.includes(used)) {
         problems.push(`${name}: uses api.${used}, which has no capability name`);
@@ -73,6 +84,7 @@ test("every non-module plugin declares the api members it uses", () => {
       }
     }
   }
+
   assert.equal(problems.length, 0, problems.join("\n"));
 });
 
@@ -81,10 +93,12 @@ test("the known-name list covers every pluginApi method the page offers", () => 
   assert.notEqual(src.indexOf("export function pluginApi"), -1, "pluginApi moved out of core/plugins.js");
   // The returned object literal's own members sit at exactly four spaces;
   // anything deeper belongs to a member's body, not the surface.
-  const keys = [...pluginApiBody(src).matchAll(/^ {4}([a-zA-Z_]\w*):/gm)].map((m) => m[1]);
+  const keys = [...pluginApiBody(src).matchAll(/^ {4}([a-zA-Z_]\w*)\s*(?:[:,(]|$)/gm)].map((m) => m[1]);
   assert.ok(keys.length >= 20, `pluginApi surface parse found only ${keys.length}: ${keys}`);
+
   for (const key of keys) {
-    if (key === "spec") continue;
+    if (key === "spec") { continue; }
+
     const cap = ALIAS[key] || key;
     assert.ok(
       KNOWN.includes(cap),
@@ -140,33 +154,40 @@ const EXPOSED = {
 function pluginApiBody(src) {
   const start = src.indexOf("export function pluginApi");
   const end = src.indexOf("\n  }", start);
+
   return src.slice(start, end === -1 ? src.length : end);
 }
 
 function apiSurface() {
   const src = fs.readFileSync(path.join(here, "..", "app", "core", "plugins.js"), "utf8");
   const body = pluginApiBody(src);
-  const top = new Set([...body.matchAll(/^ {4}([a-zA-Z_]\w*):/gm)].map((m) => m[1]));
+  const top = new Set([...body.matchAll(/^ {4}([a-zA-Z_]\w*)\s*(?:[:,(]|$)/gm)].map((m) => m[1]));
   const nested = new Set();
+
   // A group is written on one line (`van: { tags: T, state: state }`) or across
   // several, and both spellings are read by the same match: the group body
   // runs to its own closing brace. A group that grows a nested object stops
   // the scan at that inner brace, and the EXPOSED check below then names the
   // member it cannot see.
   const membersOf = (text) => text.split(",")
-    .map((part) => part.trim().match(/^([a-zA-Z_]\w*):/))
+    .map((part) => part.trim().match(/^([a-zA-Z_]\w*)\s*(?::|\(|$)/))
     .filter(Boolean).map((m) => m[1]);
+
   for (const m of body.matchAll(/^ {4}([a-zA-Z_]\w*):\s*\{([^}]*)\}/gm)) {
-    for (const k of membersOf(m[2])) nested.add(`${m[1]}.${k}`);
+    for (const k of membersOf(m[2])) { nested.add(`${m[1]}.${k}`); }
   }
+
   // `fmt` is built by a factory rather than written inline, so its keys live
   // in that function's return object.
   const fmtStart = src.indexOf("function fmt()");
+
   if (fmtStart !== -1) {
     const fmtEnd = src.indexOf("\n  }", fmtStart);
     const open = src.indexOf("return {", fmtStart);
-    for (const k of membersOf(src.slice(open + "return {".length, fmtEnd))) nested.add(`fmt.${k}`);
+
+    for (const k of membersOf(src.slice(open + "return {".length, fmtEnd))) { nested.add(`fmt.${k}`); }
   }
+
   return { top, nested };
 }
 
@@ -178,45 +199,57 @@ const CORE = "../core/";
 
 function coreImports(src) {
   const names = new Set();
+
   for (const m of stripComments(src).matchAll(/import \{([^}]*)\} from "([^"]*)"/g)) {
-    if (!m[2].includes(CORE)) continue;
+    if (!m[2].includes(CORE)) { continue; }
+
     for (const part of m[1].split(",")) {
       const name = part.trim().split(/\s+as\s+/)[0].trim();
-      if (name) names.add(name);
+
+      if (name) { names.add(name); }
     }
   }
+
   return names;
 }
 
 test("every core helper a built-in view imports is reachable from pluginApi", () => {
   const features = path.join(here, "..", "app", "features");
   const problems = [];
+
   for (const file of fs.readdirSync(features).sort()) {
-    if (!file.endsWith(".js")) continue;
+    if (!file.endsWith(".js")) { continue; }
+
     for (const name of coreImports(fs.readFileSync(path.join(features, file), "utf8"))) {
       if (!(name in EXPOSED)) {
         problems.push(`${file}: imports ${name}, which pluginApi() does not carry; add it to pluginApi() and to EXPOSED here`);
       }
     }
   }
+
   assert.equal(problems.length, 0, problems.join("\n"));
 });
 
 test("every EXPOSED path is a real pluginApi member, and a known capability", () => {
   const { top, nested } = apiSurface();
   const problems = [];
+
   for (const [name, apiPath] of Object.entries(EXPOSED)) {
-    if (apiPath === null) continue;
+    if (apiPath === null) { continue; }
+
     const [head, ...rest] = apiPath.split(".");
     const cap = ALIAS[head] || head;
+
     if (!KNOWN.includes(cap)) {
       problems.push(`${name}: api.${head} has no capability name; add "${cap}" here and to webui_addon_logic.zig`);
     }
+
     if (rest.length === 0) {
-      if (!top.has(head)) problems.push(`${name}: pluginApi() has no "${head}" member (api.${apiPath})`);
+      if (!top.has(head)) { problems.push(`${name}: pluginApi() has no "${head}" member (api.${apiPath})`); }
     } else if (!nested.has(apiPath)) {
       problems.push(`${name}: pluginApi() has no "${apiPath}" member`);
     }
   }
+
   assert.equal(problems.length, 0, problems.join("\n"));
 });

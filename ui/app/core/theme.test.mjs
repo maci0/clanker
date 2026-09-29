@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const themesDir = join(here, "..", "..", "..", "themes");
+
 const themeJs = readFileSync(join(here, "theme.js"), "utf8");
 
 const REQUIRED = ["--code-bg", "--code-fg", "--bg", "--fg", "--accent", "--paper"];
@@ -15,6 +17,7 @@ const REQUIRED = ["--code-bg", "--code-fg", "--bg", "--fg", "--accent", "--paper
 test("every themes/*.json file is a named palette with tokens", function () {
   const files = readdirSync(themesDir).filter((n) => n.endsWith(".json")).sort();
   assert.ok(files.length >= 10, "expected the shipped palettes, got " + files.join(","));
+
   for (const file of files) {
     const rec = JSON.parse(readFileSync(join(themesDir, file), "utf8"));
     const id = file.slice(0, -".json".length);
@@ -22,6 +25,7 @@ test("every themes/*.json file is a named palette with tokens", function () {
     assert.match(rec.scheme, /^(light|dark)$/, file + " scheme");
     assert.equal(typeof rec.order, "number", file + " order");
     assert.ok(rec.tokens && typeof rec.tokens === "object", file + " tokens");
+
     for (const key of REQUIRED) {
       assert.ok(rec.tokens[key], file + " missing " + key);
     }
@@ -43,11 +47,11 @@ test("only a loaded catalog is memoized, so a failed fetch can be retried", func
   assert.match(themeJs, /return true;[\s\S]{0,400}return false;/, "loadCatalog must report whether it loaded");
   assert.match(
     themeJs,
-    /_catalogPromise = loadCatalog\(\)\.then\(function \(loaded\) \{[\s\S]{0,80}?if \(!loaded\) _catalogPromise = null;/,
+    /_catalogPromise = loadCatalog\(\)\.then\(function \(loaded\) \{[\s\S]{0,80}?if \(!loaded\) (?:\{ )?_catalogPromise = null;/,
     "themesReady must clear the memo when the fetch failed",
   );
   // The success path stays a single in-flight request, not one per caller.
-  assert.match(themeJs, /if \(_catalogPromise\) return _catalogPromise;/);
+  assert.match(themeJs, /if \(_catalogPromise\) (?:\{ )?return _catalogPromise;/);
 });
 
 // A palette can ship chrome its tokens cannot express. The catalog names that
@@ -55,7 +59,7 @@ test("only a loaded catalog is memoized, so a failed fetch can be retried", func
 // first apply, so every other theme still pays nothing for the skin.
 test("a theme's companion chrome sheet is linked once, on apply", function () {
   assert.match(themeJs, /function ensureChromeSheet\(rec\)/);
-  assert.match(themeJs, /if \(!rec \|\| !rec\.css \|\| _chromeSheets\[rec\.css\]\) return;/);
+  assert.match(themeJs, /if \(!rec \|\| !rec\.css \|\| _chromeSheets\[rec\.css\]\) (?:\{ )?return;/);
   assert.match(themeJs, /ensureChromeSheet\(rec\);/);
   assert.match(themeJs, /link\.setAttribute\("data-theme-css", rec\.css\)/);
   assert.match(themeJs, /document\.head\.appendChild\(link\)/);
@@ -69,15 +73,18 @@ test("the win2k skin is scoped to its theme and draws from its own tokens", func
   // sheet invites and a token cannot prevent.
   assert.ok(body.startsWith('html[data-theme="win2k"] {'), "the skin must open its own scope");
   let depth = 0;
+
   for (let i = 0; i < body.length; i++) {
     if (body[i] === "{") {
       depth++;
     } else if (body[i] === "}") {
       depth--;
+
       // Only the scope's own brace closes back to depth 0, and it is last.
-      if (depth === 0) assert.equal(i, body.length - 1, "a rule escapes the win2k scope");
+      if (depth === 0) { assert.equal(i, body.length - 1, "a rule escapes the win2k scope"); }
     }
   }
+
   assert.equal(depth, 0, "the skin has unbalanced braces");
   // Colours come from the palette's tokens; the only literals left are inside
   // the cursor and glyph artwork, which is a drawing rather than a colour

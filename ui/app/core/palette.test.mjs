@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const appSource = readFileSync(join(here, "..", "app.js"), "utf8");
 
 function shippedPaletteRefs() {
@@ -23,20 +24,25 @@ function shippedPaletteRefs() {
   const open = appSource.indexOf("{", start);
   let depth = 0;
   let end = -1;
+
   for (let i = open; i < appSource.length; i++) {
     const ch = appSource[i];
-    if (ch === "{") depth++;
+
+    if (ch === "{") { depth++; }
     else if (ch === "}") {
       depth--;
+
       if (depth === 0) { end = i; break; }
     }
   }
+
   assert.ok(end !== -1, "the paletteRefs literal is closed");
+
   return new Function("return " + appSource.slice(open, end + 1) + ";")();
 }
 
 function stubNode() {
-  return { addEventListener: function () {}, value: "", textContent: "" };
+  return { addEventListener () {}, value: "", textContent: "" };
 }
 
 test("the palette indexes its refs before any lazy view module has loaded", async function () {
@@ -51,10 +57,12 @@ test("the palette indexes its refs before any lazy view module has loaded", asyn
   const startup = {
     knownSessionsHolder: { list: [] },
     allToolsHolder: { list: [] },
-    sessionLabel: function (s) { return s.title || s.id; },
-    runLabel: function (r) { return r.run_id; }
+    sessionLabel (s) { return s.title || s.id; },
+    runLabel (r) { return r.run_id; }
   };
+
   Object.assign(refs, startup);
+
   for (const key of Object.keys(refs)) {
     assert.notEqual(refs[key], null, "paletteRefs." + key + " is null; the palette dereferences it");
   }
@@ -62,18 +70,18 @@ test("the palette indexes its refs before any lazy view module has loaded", asyn
   const { bindPalette, paletteEntries } = await import("./palette.js");
   bindPalette({
     VIEWS: ["chat", "runs", "kanban"],
-    showView: function () {},
+    showView () {},
     el: {
       paletteOpen: stubNode(), paletteInput: stubNode(), paletteList: stubNode(),
       palette: stubNode(), help: stubNode()
     },
-    refs: refs,
-    setRailOpen: function () {},
-    switchSession: function () {},
-    openRun: function () {},
-    renderBoard: function () {},
-    showToolDetail: function () {},
-    setOpenCardId: function () {}
+    refs,
+    setRailOpen () {},
+    switchSession () {},
+    openRun () {},
+    renderBoard () {},
+    showToolDetail () {},
+    setOpenCardId () {}
   });
 
   const entries = paletteEntries();

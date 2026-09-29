@@ -45,11 +45,13 @@ test("readJson carries the status onto the error it throws", async function () {
   const res = {
     ok: false,
     status: 404,
-    json: function () { return Promise.resolve({ ok: false, error: "sessions module disabled" }); },
+    json () { return Promise.resolve({ ok: false, error: "sessions module disabled" }); },
   };
+
   await assert.rejects(readJson(res), function (err) {
     assert.equal(err.message, "sessions module disabled");
     assert.equal(err.status, 404);
+
     return true;
   });
 });
@@ -58,10 +60,12 @@ test("readJson carries the status even when the body is not JSON", async functio
   const res = {
     ok: false,
     status: 502,
-    json: function () { return Promise.reject(new Error("not json")); },
+    json () { return Promise.reject(new Error("not json")); },
   };
+
   await assert.rejects(readJson(res), function (err) {
     assert.equal(err.status, 502);
+
     return true;
   });
 });
@@ -186,7 +190,9 @@ test("graphemes falls back to whole code points without Intl.Segmenter", functio
    record carries; `at` is the same instant in the milliseconds the
    `now` argument takes. */
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
 const atS = (y, m, d, h, min) => Math.floor(new Date(y, m - 1, d, h, min, 0).getTime() / 1000);
+
 const at = (y, m, d, h, min) => new Date(y, m - 1, d, h, min, 0).getTime();
 
 test("a spring-forward weekend is grouped by calendar day, not by 24 hours", function () {
@@ -197,6 +203,7 @@ test("a spring-forward weekend is grouped by calendar day, not by 24 hours", fun
   // other suite in the sweep sees it.
   const before = process.env.TZ;
   process.env.TZ = "Europe/Warsaw";
+
   try {
     const now = at(2026, 3, 30, 0, 30);
     assert.ok(Math.abs((now - at(2026, 3, 28, 0, 0)) / 3600000 - 47.5) < 1.5);
@@ -204,8 +211,8 @@ test("a spring-forward weekend is grouped by calendar day, not by 24 hours", fun
     assert.equal(recencyGroup(atS(2026, 3, 29, 23, 30), now), rtf.format(-1, "day"));
     assert.equal(recencyGroup(atS(2026, 3, 28, 0, 0), now), "Previous 7 days");
   } finally {
-    if (before === undefined) delete process.env.TZ;
-    else process.env.TZ = before;
+    if (before === undefined) { delete process.env.TZ; }
+    else { process.env.TZ = before; }
   }
 });
 
@@ -242,7 +249,9 @@ test("plural falls back to `other` for a category the caller omitted", function 
   // passes must render the fallback, never the key name.
   const rules = new Intl.PluralRules();
   const count = [0, 1, 2, 3, 4, 5, 11, 21].find((n) => rules.select(n) !== "one" && rules.select(n) !== "other");
-  if (count === undefined) return;
+
+  if (count === undefined) { return; }
+
   assert.equal(plural(count, { one: "x", other: "y" }), count + " y");
 });
 

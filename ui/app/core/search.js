@@ -12,11 +12,14 @@ import { searchFoldFind } from "./utils.js";
    than to nothing, because scrolling to roughly the right place beats
    silently not moving. -1 only when there are no turns at all. */
 export function turnForMessage(spans, index) {
-  if (!spans || !spans.length) return -1;
-  if (typeof index !== "number" || !isFinite(index) || index < 0) return -1;
+  if (!spans || !spans.length) { return -1; }
+
+  if (typeof index !== "number" || !isFinite(index) || index < 0) { return -1; }
+
   for (var i = 0; i < spans.length; i++) {
-    if (index >= spans[i].from && index <= spans[i].to) return i;
+    if (index >= spans[i].from && index <= spans[i].to) { return i; }
   }
+
   return spans.length - 1;
 }
 
@@ -26,30 +29,38 @@ export function clearMarks(root) {
     var text = document.createTextNode(m.textContent);
     m.parentNode.replaceChild(text, m);
   });
+
   // Splitting a text node to highlight leaves neighbours behind; rejoining
   // them keeps repeated searches from fragmenting the answer into hundreds
   // of nodes.
-  if (root.normalize) root.normalize();
+  if (root.normalize) { root.normalize(); }
 }
 
 export function markMatches(root, needle) {
-  if (!needle) return 0;
+  if (!needle) { return 0; }
+
   var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   var targets = [];
   var node;
+
   while ((node = walker.nextNode())) {
-    if (searchFoldFind(node.nodeValue, needle) !== null) targets.push(node);
+    if (searchFoldFind(node.nodeValue, needle) !== null) { targets.push(node); }
   }
+
   var hits = 0;
   targets.forEach(function (text) {
     var value = text.nodeValue;
     var frag = document.createDocumentFragment();
     var origFrom = 0;
     var foldFrom = 0;
+
     for (;;) {
       var hit = searchFoldFind(value, needle, foldFrom);
-      if (!hit) break;
-      if (hit.start > origFrom) frag.appendChild(document.createTextNode(value.slice(origFrom, hit.start)));
+
+      if (!hit) { break; }
+
+      if (hit.start > origFrom) { frag.appendChild(document.createTextNode(value.slice(origFrom, hit.start))); }
+
       var mark = document.createElement("mark");
       mark.textContent = value.slice(hit.start, hit.end);
       frag.appendChild(mark);
@@ -57,8 +68,11 @@ export function markMatches(root, needle) {
       origFrom = hit.end;
       foldFrom = hit.next;
     }
-    if (origFrom < value.length) frag.appendChild(document.createTextNode(value.slice(origFrom)));
+
+    if (origFrom < value.length) { frag.appendChild(document.createTextNode(value.slice(origFrom))); }
+
     text.parentNode.replaceChild(frag, text);
   });
+
   return hits;
 }

@@ -11,19 +11,23 @@ import { fileURLToPath } from "node:url";
 import { dispatch, installDom, serialize } from "../../app/lib/dom-stub.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
+
 const spec = readFileSync(join(dir, "plugin.json"), "utf8");
 
 let restoreDom;
+
 let view;
+
 before(async function () {
   restoreDom = installDom();
   let registered = null;
-  globalThis.clanker = { registerView: function (v) { registered = v; } };
+  globalThis.clanker = { registerView (v) { registered = v; } };
   await import(join(dir, "app.js"));
   globalThis.clanker = undefined;
   assert.ok(registered, "app.js registers a view");
   view = registered;
 });
+
 after(function () { restoreDom(); });
 
 // The host's `api` surface, with the three seams a test has to own: the
@@ -32,33 +36,41 @@ after(function () { restoreDom(); });
 function makeApi(opts) {
   opts = opts || {};
   const calls = { getJSON: [], opened: [], status: [] };
+
   const plural = function (n, forms) {
     return n + " " + (n === 1 ? forms.one : forms.other);
   };
+
   return {
     calls,
-    el: function (tag, cls, text) {
+    el (tag, cls, text) {
       const el = document.createElement(tag);
-      if (cls) el.className = cls;
-      if (text !== null && text !== undefined) el.textContent = text;
+
+      if (cls) { el.className = cls; }
+
+      if (text !== null && text !== undefined) { el.textContent = text; }
+
       return el;
     },
     kit: { recordRow: { row: "row", head: "head", name: "name", snippet: "snippet", foot: "foot" } },
-    fmt: { time: function () { return "then"; }, plural: plural },
-    status: function (msg) { calls.status.push(msg); },
-    foldFind: function (text, needle, from) {
+    fmt: { time () { return "then"; }, plural },
+    status (msg) { calls.status.push(msg); },
+    foldFind (text, needle, from) {
       const hay = text.toLowerCase();
       const at = hay.indexOf((needle || "").toLowerCase(), from || 0);
-      if (at === -1) return null;
+
+      if (at === -1) { return null; }
+
       return { start: at, end: at + needle.length, next: at + needle.length };
     },
     // Every answer goes through the recorder, so a test can count what the
     // view asked for even when it supplies its own transport.
-    getJSON: function (url) {
+    getJSON (url) {
       calls.getJSON.push(url);
+
       return opts.getJSON ? opts.getJSON(url) : Promise.resolve({ hits: [], truncated: false });
     },
-    openSession: function (id, arg) { calls.opened.push({ id: id, arg: arg }); },
+    openSession (id, arg) { calls.opened.push({ id, arg }); },
   };
 }
 
@@ -68,7 +80,8 @@ function mount(opts) {
   // mount() runs the view's own initial load, so the returned promise is part
   // of mounting and every test waits on it before it types.
   const ready = view.mount.call(view, container, api);
-  return { api: api, container: container, ready: ready };
+
+  return { api, container, ready };
 }
 
 function field(container) {
@@ -80,6 +93,7 @@ function field(container) {
 function recurse(el) {
   return (el.childNodes || []).reduce(function (acc, c) {
     acc.push(c);
+
     return acc.concat(recurse(c));
   }, []);
 }
@@ -120,7 +134,7 @@ test("a query under three characters asks for more instead of calling the host",
 });
 
 test("a long enough query searches the trimmed text and renders a hit", async function () {
-  const m = mount({ getJSON: function () { return Promise.resolve({ hits: [HIT], truncated: false }); } });
+  const m = mount({ getJSON () { return Promise.resolve({ hits: [HIT], truncated: false }); } });
   await m.ready;
   const input = field(m.container);
   input.value = "  cron spec  ";
@@ -138,7 +152,7 @@ test("a long enough query searches the trimmed text and renders a hit", async fu
 });
 
 test("a hit opens its conversation at the turn that matched", async function () {
-  const m = mount({ getJSON: function () { return Promise.resolve({ hits: [HIT], truncated: false }); } });
+  const m = mount({ getJSON () { return Promise.resolve({ hits: [HIT], truncated: false }); } });
   await m.ready;
   field(m.container).value = "cron spec";
   await view.reload();
@@ -150,7 +164,7 @@ test("a hit opens its conversation at the turn that matched", async function () 
 });
 
 test("a truncated result says the list is the newest only", async function () {
-  const m = mount({ getJSON: function () { return Promise.resolve({ hits: [HIT], truncated: true }); } });
+  const m = mount({ getJSON () { return Promise.resolve({ hits: [HIT], truncated: true }); } });
   await m.ready;
   field(m.container).value = "cron spec";
   await view.reload();
@@ -159,12 +173,15 @@ test("a truncated result says the list is the newest only", async function () {
 
 test("a failed search says so and offers to run it again", async function () {
   let calls = 0;
+
   const m = mount({
-    getJSON: function () {
+    getJSON () {
       calls++;
+
       return calls === 1 ? Promise.reject(new Error("connection refused")) : Promise.resolve({ hits: [HIT] });
     },
   });
+
   await m.ready;
   field(m.container).value = "cron spec";
   await view.reload();
@@ -180,7 +197,7 @@ test("a failed search says so and offers to run it again", async function () {
 });
 
 test("no match says no conversation says it, and clearing empties the query", async function () {
-  const m = mount({ getJSON: function () { return Promise.resolve({ hits: [] }); } });
+  const m = mount({ getJSON () { return Promise.resolve({ hits: [] }); } });
   await m.ready;
   field(m.container).value = "cron spec";
   await view.reload();
@@ -194,11 +211,13 @@ test("no match says no conversation says it, and clearing empties the query", as
 
 test("a slow answer that arrives after a newer query does not overwrite it", async function () {
   const pending = [];
+
   const m = mount({
-    getJSON: function (url) {
-      return new Promise(function (resolve) { pending.push({ url: url, resolve: resolve }); });
+    getJSON (url) {
+      return new Promise(function (resolve) { pending.push({ url, resolve }); });
     },
   });
+
   await m.ready;
   const input = field(m.container);
   input.value = "first query";

@@ -16,7 +16,7 @@ clanker.registerView({
   id: "search",
   title: "Search",
   group: "Work",
-  mount: function (container, api) {
+  mount (container, api) {
     var state = { query: "", hits: [], truncated: false, minLen: 3, searching: false, error: "" };
     var seq = 0;
     var timer = null;
@@ -57,10 +57,14 @@ clanker.registerView({
     function markInto(parent, text, needle) {
       var origFrom = 0;
       var foldFrom = 0;
+
       for (;;) {
         var hit = api.foldFind(text, needle, foldFrom);
-        if (!hit) break;
-        if (hit.start > origFrom) parent.appendChild(document.createTextNode(text.slice(origFrom, hit.start)));
+
+        if (!hit) { break; }
+
+        if (hit.start > origFrom) { parent.appendChild(document.createTextNode(text.slice(origFrom, hit.start))); }
+
         var m = document.createElement("mark");
         m.className = api.kit.recordRow.mark;
         m.textContent = text.slice(hit.start, hit.end);
@@ -68,7 +72,8 @@ clanker.registerView({
         origFrom = hit.end;
         foldFrom = hit.next;
       }
-      if (origFrom < text.length) parent.appendChild(document.createTextNode(text.slice(origFrom)));
+
+      if (origFrom < text.length) { parent.appendChild(document.createTextNode(text.slice(origFrom))); }
     }
 
     function hitRow(h) {
@@ -79,7 +84,9 @@ clanker.registerView({
       var rowHead = api.el("div", api.kit.recordRow.head);
       rowHead.appendChild(api.el("span", api.kit.recordRow.name, h.title || h.id));
       rowHead.appendChild(api.el("span", "meta", api.fmt.time(h.updated)));
-      if (h.archived) rowHead.appendChild(api.el("span", "meta", "archived"));
+
+      if (h.archived) { rowHead.appendChild(api.el("span", "meta", "archived")); }
+
       row.appendChild(rowHead);
 
       var body = api.el("p", api.kit.recordRow.snippet);
@@ -93,6 +100,7 @@ clanker.registerView({
       row.addEventListener("click", function () {
         api.openSession(h.id, { index: h.turn, query: state.query });
       });
+
       return row;
     }
 
@@ -107,20 +115,26 @@ clanker.registerView({
 
     function render() {
       list.textContent = "";
+
       if (state.searching) {
         status.textContent = "Searching…";
         api.status("Searching…");
         list.setAttribute("aria-busy", "true");
         list.appendChild(api.el("p", "run-empty", "Searching…"));
+
         return;
       }
+
       list.removeAttribute("aria-busy");
+
       if (state.query.length < state.minLen) {
         list.appendChild(api.el("p", "run-empty",
           "Type at least " + state.minLen + " characters to search every saved conversation's messages."));
         status.textContent = "";
+
         return;
       }
+
       if (state.error) {
         var failed = api.el("p", "run-empty");
         failed.appendChild(document.createTextNode("Search failed: " + state.error + " "));
@@ -131,8 +145,10 @@ clanker.registerView({
         list.appendChild(failed);
         status.textContent = "Search failed: " + state.error;
         api.status(status.textContent);
+
         return;
       }
+
       if (!state.hits.length) {
         var none = api.el("p", "run-empty");
         none.appendChild(document.createTextNode("No conversation says “" + state.query + "”. Try another phrase, or filter titles in the sidebar. "));
@@ -151,17 +167,22 @@ clanker.registerView({
         none.appendChild(clear);
         list.appendChild(none);
         status.textContent = "No matches.";
+
         return;
       }
+
       state.hits.forEach(function (h) { list.appendChild(hitRow(h)); });
+
       var msg = api.fmt.plural(state.hits.length, { one: "conversation", other: "conversations" }) +
         (state.truncated ? " (showing the newest; narrow the search for more)" : "") + ".";
+
       status.textContent = msg;
       api.status(msg);
     }
 
     function runSearch(q) {
       state.query = (q || "").trim();
+
       if (state.query.length < state.minLen) {
         state.hits = [];
         state.truncated = false;
@@ -169,31 +190,38 @@ clanker.registerView({
         state.error = "";
         setBusy(false);
         render();
+
         return Promise.resolve(null);
       }
+
       var mine = ++seq;
       state.searching = true;
       state.error = "";
       setBusy(true);
       render();
+
       return api.getJSON("/api/sessions/search?q=" + encodeURIComponent(state.query))
         .then(function (data) {
-          if (mine !== seq) return null;
+          if (mine !== seq) { return null; }
+
           state.hits = (data && data.hits) || [];
           state.truncated = !!(data && data.truncated);
           state.error = "";
           state.searching = false;
           setBusy(false);
           render();
+
           return data;
         })
         .catch(function (err) {
-          if (mine !== seq) return null;
+          if (mine !== seq) { return null; }
+
           state.searching = false;
           state.hits = [];
           state.error = err.message;
           setBusy(false);
           render();
+
           return null;
         });
     }
@@ -203,9 +231,12 @@ clanker.registerView({
         input.value = window._pendingSearchQuery;
         window._pendingSearchQuery = null;
       }
-      if (input.value.trim()) return runSearch(input.value);
+
+      if (input.value.trim()) { return runSearch(input.value); }
+
       setBusy(false);
       render();
+
       return Promise.resolve(null);
     }
 
@@ -215,14 +246,17 @@ clanker.registerView({
     });
     input.addEventListener("input", function () {
       setBusy(false);
-      if (timer) window.clearTimeout(timer);
+
+      if (timer) { window.clearTimeout(timer); }
+
       timer = window.setTimeout(function () { runSearch(input.value); }, 250);
     });
 
     this.reload = load;
+
     return load();
   },
-  refresh: function () {
-    if (this.reload) return this.reload();
+  refresh () {
+    if (this.reload) { return this.reload(); }
   }
 });

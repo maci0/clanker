@@ -51,11 +51,11 @@ function fmt() {
   return {
     bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime,
     ms: fmtMs, pct: fmtPct, usd: fmtUsd, deadline: fmtDeadline,
-    unit: fmtUnit, ago: fmtAgo, plural: plural,
-    runLabel: runLabel,
+    unit: fmtUnit, ago: fmtAgo, plural,
+    runLabel,
     providerReason: providerUnusableReason,
     fold: searchFold,
-    compare: function (a, b) { return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }); }
+    compare (a, b) { return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }); }
   };
 }
 
@@ -82,13 +82,13 @@ function readJsonResponse(r) {
 function pluginStorage(spec) {
   var prefix = "clanker.plugin." + ((spec && spec.id) ? spec.id : "unknown") + ".";
   return {
-    get: function (key) {
+    get (key) {
       try { return window.localStorage.getItem(prefix + key); } catch (e) { return null; }
     },
-    set: function (key, value) {
+    set (key, value) {
       try { window.localStorage.setItem(prefix + key, value); } catch (e) {}
     },
-    remove: function (key) {
+    remove (key) {
       try { window.localStorage.removeItem(prefix + key); } catch (e) {}
     }
   };
@@ -114,10 +114,10 @@ function loadKit() {
 
 export function pluginApi(spec) {
   return {
-    getJSON: function (path) {
+    getJSON (path) {
       return fetch(path).then(readJsonResponse);
     },
-    postJSON: function (path, body) {
+    postJSON (path, body) {
       return fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -126,7 +126,7 @@ export function pluginApi(spec) {
     },
     // DELETE without a body is the common shape (drop a resource by id);
     // when a body is passed it is JSON, matching postJSON.
-    del: function (path, body) {
+    del (path, body) {
       var init = { method: "DELETE" };
       if (body != null) {
         init.headers = { "Content-Type": "application/json" };
@@ -134,8 +134,8 @@ export function pluginApi(spec) {
       }
       return fetch(path, init).then(readJsonResponse);
     },
-    onLive: onLive,
-    emit: function (data) {
+    onLive,
+    emit (data) {
       return fetch("/api/live", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,21 +144,21 @@ export function pluginApi(spec) {
     },
     confirm: uiConfirm,
     prompt: uiPrompt,
-    toast: toast,
-    workspace: function () { return window.clankerWorkspace || ""; },
-    icon: icon,
+    toast,
+    workspace () { return window.clankerWorkspace || ""; },
+    icon,
     storage: pluginStorage(spec),
-    openSession: function (id, jump) {
+    openSession (id, jump) {
       if (_openSession) _openSession(id, jump);
     },
     foldFind: searchFoldFind,
-    el: function (tag, className, text) {
+    el (tag, className, text) {
       var node = document.createElement(tag);
       if (className) node.className = className;
       if (text != null) node.textContent = text;
       return node;
     },
-    status: function (message) {
+    status (message) {
       var node = (spec && spec.id) ? pluginStatusNodes[spec.id] : null;
       if (!node) { hostStatus(message); return; }
       // The same line written twice running is one announcement, not two.
@@ -171,7 +171,7 @@ export function pluginApi(spec) {
     kit: kitModule,
     // Kept under the old name so plugins written against the VanJS-era API
     // keep working: same tags/state/add semantics, now signals-backed.
-    van: { tags: T, state: state, add: add, derive: effect, bind: bind },
+    van: { tags: T, state, add, derive: effect, bind },
     // The page's own chrome (`core/ui.js`), which a built-in view imports by
     // name: the empty/loading plate, the skeleton rows a list shows before its
     // first answer, the run and tool rows, the button upgrade, the refresh
@@ -181,12 +181,12 @@ export function pluginApi(spec) {
     ui: {
       loadError: showLoadError,
       loading: showLoading,
-      skeletonRows: skeletonRows,
-      toolRow: toolRow,
-      runDetail: runDetail,
+      skeletonRows,
+      toolRow,
+      runDetail,
       button: stampButtonVariant,
       refresh: wireRefresh,
-      requireText: requireText,
+      requireText,
       kit: UI
     },
     // A modal dialog with focus handling (`core/overlay.js`). A view that
@@ -199,13 +199,13 @@ export function pluginApi(spec) {
     // container, and read whether the live bus is currently up.
     stream: { lines: makeLineSplitter, pump: pumpInto, ok: liveOk },
     // Text shaping shared with the transcript rows.
-    text: { clip: clip, escape: escapeHtml },
+    text: { clip, escape: escapeHtml },
     // Page-level DOM helpers (`core/vendor.js`) and the theme's colour
     // helpers, so a view painting a peer or a themed chart reads the same
     // tokens the page does instead of hardcoding a palette.
     dom: {
-      copy: copyText, scrollTo: scrollTo, toml: paintTomlInto, d3: loadD3,
-      reducedMotion: reducedMotion
+      copy: copyText, scrollTo, toml: paintTomlInto, d3: loadD3,
+      reducedMotion
     },
     color: {
       peer: peerColor, token: themeToken, alpha: cssColorAlpha, mix: cssColorMix
@@ -220,13 +220,13 @@ export function pluginApi(spec) {
     preact: window.preact,
     html: window.html,
     signals: window.signals,
-    showView: function (id) { _showView(id, false); },
+    showView (id) { _showView(id, false); },
     // What the board recorded happening, as one dated timeline over the card
     // logs and the board room's action messages (`lib/board.js`). Here rather
     // than in the plugin because reading either feed alone is wrong in a way
     // that is not obvious: only the `log` action writes a card's log, so that
     // feed on its own shows nothing while the board is being worked on.
-    boardTimeline: boardTimeline,
+    boardTimeline,
     // The same markdown/code/mermaid renderers the chat transcript uses
     // (`lib/markdown.js`), so a plugin showing a whole document (markdown,
     // source, a diagram fence) does not grow a second implementation of any
@@ -236,11 +236,11 @@ export function pluginApi(spec) {
     // fences it found; `code` returns one already-highlighted block for a
     // file that is source but not markdown.
     render: {
-      markdown: function (el, text) {
+      markdown (el, text) {
         el.appendChild(renderMarkdownWithFences(text));
         renderMermaidBlocks(el);
       },
-      code: function (lang, text) { return buildCodeBlock(lang, text); }
+      code (lang, text) { return buildCodeBlock(lang, text); }
     }
   };
 }
@@ -329,7 +329,7 @@ var pluginMounts = {};
 function trackMount(id, label, section, getSpec) {
   var st = pluginMounts[id];
   if (st && st.section === section) return st;
-  st = { mounted: false, section: section };
+  st = { mounted: false, section };
   st.retry = function () {
     st.mounted = false;
     return _viewLoaders[id]();
@@ -374,7 +374,7 @@ export function pluginViewShown(id) {
 function registerDeferredView(meta) {
   if (pluginShells[meta.name] || _VIEWS.indexOf(meta.name) !== -1) return;
   var section = makeViewShell(meta.name, meta.title || meta.name, meta.group || "Watch");
-  var shell = { section: section, spec: null };
+  var shell = { section, spec: null };
   pluginShells[meta.name] = shell;
   var st = trackMount(meta.name, meta.title || meta.name, section, function () { return shell.spec; });
   _viewLoaders[meta.name] = function () {
@@ -579,7 +579,7 @@ export function bindPlugins(ctx) {
   _openSession = ctx.openSession;
   _observeStatus = ctx.observeStatus || null;
   window.clanker = {
-    registerView: function (spec) {
+    registerView (spec) {
       if (!spec || !spec.id || typeof spec.mount !== "function") return;
       // The tab may already be on screen: a deferred addon's shell is built
       // from its manifest and its script only runs once the tab is opened, so
@@ -587,13 +587,13 @@ export function bindPlugins(ctx) {
       var shell = pluginShells[spec.id];
       if (shell) {
         shell.spec = spec;
-        pluginViews[spec.id] = { spec: spec, section: shell.section };
+        pluginViews[spec.id] = { spec, section: shell.section };
         runPluginBoot(spec);
         return;
       }
       if (_VIEWS.indexOf(spec.id) !== -1) return;
       var section = makeViewShell(spec.id, spec.title || spec.id, spec.group || "Watch");
-      pluginViews[spec.id] = { spec: spec, section: section };
+      pluginViews[spec.id] = { spec, section };
       var st = trackMount(spec.id, spec.title || spec.id, section, function () { return spec; });
       _viewLoaders[spec.id] = function () {
         if (!st.mounted) return st.mount();

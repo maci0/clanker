@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const js = readFileSync(join(here, "app.js"), "utf8");
+
 const host = readFileSync(join(here, "../../app/tailwind.src.css"), "utf8");
 
 /// The utility string a named class constant holds, including what it is built
@@ -23,12 +25,17 @@ function classOf(name) {
   const decl = new RegExp("\\b" + name + " = [\\s\\S]*?;").exec(js);
   assert.ok(decl, `${name} is still a class list`);
   const parts = [];
+
   for (const q of decl[0].matchAll(/"([^"]*)"|\+\s*\b([A-Z_]+)\b/g)) {
     if (q[1] !== undefined) { parts.push(q[1]); continue; }
+
     const base = new RegExp("\\b" + q[2] + " = \"([^\"]*)\"").exec(js);
-    if (base) parts.push(base[1]);
+
+    if (base) { parts.push(base[1]); }
   }
+
   assert.ok(parts.length, `${name} holds a class string`);
+
   return parts.join(" ");
 }
 

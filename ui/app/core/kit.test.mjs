@@ -17,8 +17,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 async function loadKit() {
   const src = readFileSync(join(here, "kit.js"), "utf8")
     .replace(/import \{ T \} from "\.\/ui\.js";/, "const T = globalThis.__T;");
-  globalThis.__T = { button: function (attrs) { return { attrs: attrs }; } };
+
+  globalThis.__T = { button (attrs) { return { attrs }; } };
   const url = "data:text/javascript;base64," + Buffer.from(src).toString("base64");
+
   return import(url);
 }
 
@@ -30,11 +32,13 @@ test("cn drops the empty class lists and keeps the order", async function () {
 
 test("variants fills a missing prop from defaults and appends the caller's class", async function () {
   const kit = await loadKit();
+
   const cls = kit.variants({
     base: "base",
     defaults: { variant: "secondary" },
     variants: { variant: { primary: "primary", secondary: "secondary" } },
   });
+
   assert.equal(cls({}), "base secondary");
   assert.equal(cls({ variant: "primary" }), "base primary");
   assert.equal(cls({ variant: "primary", class: "extra" }), "base primary extra");
@@ -44,12 +48,16 @@ test("variants fills a missing prop from defaults and appends the caller's class
 
 test("the button table's every class exists in a shipped sheet", async function () {
   const kit = await loadKit();
+
   const sheets = ["tailwind.src.css", "tailwind.css"]
     .map((f) => readFileSync(join(here, "..", f), "utf8")).join("\n");
+
   const plain = sheets.replace(/\\(.)/g, "$1");
+
   for (const variant of ["primary", "secondary", "danger", "secondary-danger"]) {
     const classes = kit.buttonVariants({ variant });
     assert.ok(classes, `buttonVariants({variant:"${variant}"}) names a class`);
+
     for (const token of classes.split(/\s+/)) {
       assert.ok(plain.includes("." + token), `${variant} names .${token}, which no sheet defines`);
     }

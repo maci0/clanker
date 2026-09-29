@@ -19,8 +19,11 @@ import test from "node:test";
 // are deleted, and while it is on the list every class in it must resolve.
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const source = readFileSync(join(here, "tailwind.src.css"), "utf8");
+
 const built = readFileSync(join(here, "tailwind.css"), "utf8");
+
 const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
 
 /// Files whose class strings are Tailwind utilities. Add a path only with the
@@ -70,18 +73,23 @@ const arbitrary_ok = [
   // A transition names the properties it covers; there is no token for that list.
   /^transition-\[/,
 ];
+
 /// A generated-content utility: `content-['…']` is the only spelling for an
 /// empty output's placeholder, and the value is a character, not a size.
 const content_ok = /^content-\[/;
+
 /// An arbitrary *property* (`[stroke-dasharray:5_9]`) is Tailwind's escape hatch
 /// for a property no utility carries at all.
 const property_ok = /^\[[a-z-]+:/;
+
 /// A value that reads a `var(--…)` is an expression over the tokens, the same
 /// thing a theme key is; a value that says `#1b1b1b` is the drift this test is
 /// for, whichever utility it rides on.
 const token_value_ok = /var\(--/;
+
 /// An SVG paint server reference, not a colour.
 const paint_ok = /^(?:fill|stroke)-\[url\(/;
+
 /// A colour written as a literal, wherever it appears: a hex value, or an
 /// `rgb()`/`hsl()` call. `url(#mesh-lamp-idle)` is a fragment reference to a
 /// paint server, not a colour, and does not match.
@@ -94,15 +102,21 @@ function splitVariants(token) {
   const parts = [];
   let depth = 0;
   let cur = "";
+
   for (const ch of token) {
-    if (ch === "[") depth += 1;
-    else if (ch === "]") depth -= 1;
+    if (ch === "[") { depth += 1; }
+    else if (ch === "]") { depth -= 1; }
+
     if (ch === ":" && depth === 0) { parts.push(cur); cur = ""; continue; }
+
     cur += ch;
   }
+
   parts.push(cur);
+
   return parts;
 }
+
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
@@ -120,6 +134,7 @@ function escapeRe(s) {
 // sheets are unescaped too, because a migrated file still carries the chrome
 // classes it has not been moved off yet (`section-head`, `secondary`).
 const plain = built.replace(/\\(.)/g, "$1");
+
 const cabinet = appCss.replace(/\\(.)/g, "$1");
 
 function hasSelector(sheet, token) {
@@ -144,15 +159,21 @@ function inCabinet(token) {
 /// only, where it is a whole attribute.
 function classStrings(src, isHtml) {
   const out = [];
-  for (const m of src.matchAll(/api\.el\(\s*[^,]+,\s*"([^"]*)"/g)) out.push(m[1]);
-  if (isHtml) for (const m of src.matchAll(/class="([^"]*)"/g)) out.push(m[1]);
+
+  for (const m of src.matchAll(/api\.el\(\s*[^,]+,\s*"([^"]*)"/g)) { out.push(m[1]); }
+
+  if (isHtml) { for (const m of src.matchAll(/class="([^"]*)"/g)) { out.push(m[1]); } }
+
   // The named class lists a ported file keeps at module scope (`ROW_CLASS`,
   // `FACTS_CLASS`) are class strings too: reading only the literals beside
   // `api.el` would leave most of a ported view unchecked.
-  for (const m of src.matchAll(/\b[A-Z][A-Z0-9_]*CLASS\s*=\s*"([^"]*)"/g)) out.push(m[1]);
+  for (const m of src.matchAll(/\b[A-Z][A-Z0-9_]*CLASS\s*=\s*"([^"]*)"/g)) { out.push(m[1]); }
+
   // `T.ul({ class: "…" })` is the same statement spelled as an object property.
-  for (const m of src.matchAll(/class:\s*"([^"]*)"/g)) out.push(m[1]);
-  for (const m of src.matchAll(/\.className\s*=\s*"([^"]*)"/g)) out.push(m[1]);
+  for (const m of src.matchAll(/class:\s*"([^"]*)"/g)) { out.push(m[1]); }
+
+  for (const m of src.matchAll(/\.className\s*=\s*"([^"]*)"/g)) { out.push(m[1]); }
+
   return out;
 }
 
@@ -162,26 +183,37 @@ test("every file that speaks the port's shape is on the ledger", function () {
   // replaced are already deleted from the sheets. Two shapes give it away: a
   // named class list, or a bracketed Tailwind variant (`data-[status=…]`).
   const missing = [];
-  for (const rel of migrated.concat([])) void rel; // keep the list referenced
+
+  for (const rel of migrated.concat([])) { void rel; } // keep the list referenced
+
   const { readdirSync } = require("node:fs");
   const isPorted = (src) => /^var [A-Z][A-Z0-9_]*CLASS\s*=/m.test(src) || /:\s*(?:data|group-data|aria|max|min)-?\[/.test(src);
   const files = ["app.js", "preact-boot.js"];
+
   for (const dir of ["features", "core", "lib"]) {
     for (const entry of readdirSync(join(here, dir))) {
-      if (entry.endsWith(".js") && !entry.endsWith(".test.mjs")) files.push(`${dir}/${entry}`);
+      if (entry.endsWith(".js") && !entry.endsWith(".test.mjs")) { files.push(`${dir}/${entry}`); }
     }
   }
+
   for (const rel of files) {
     const src = readFileSync(join(here, rel), "utf8");
-    if (isPorted(src) && !migrated.includes(rel)) missing.push(rel);
+
+    if (isPorted(src) && !migrated.includes(rel)) { missing.push(rel); }
   }
+
   for (const dir of readdirSync(join(here, "..", "plugins"))) {
-    if (dir.endsWith(".test.mjs")) continue;
+    if (dir.endsWith(".test.mjs")) { continue; }
+
     let src = "";
+
     try { src = readFileSync(join(here, "..", "plugins", dir, "app.js"), "utf8"); } catch { continue; }
+
     const ported = /^var [A-Z][A-Z0-9_]*CLASS\s*=/m.test(src) || /"[^"]*\b(?:data|group-data|aria)-\[/.test(src);
-    if (ported && !migrated.includes(`../plugins/${dir}/app.js`)) missing.push(`../plugins/${dir}/app.js`);
+
+    if (ported && !migrated.includes(`../plugins/${dir}/app.js`)) { missing.push(`../plugins/${dir}/app.js`); }
   }
+
   assert.deepEqual(missing, [], `these files carry the port's shape but are not on the ledger: ${missing.join(", ")}`);
 });
 
@@ -199,12 +231,16 @@ test("every token the theme reads is declared by a shipped sheet", function () {
   // A theme value is `var(--token)`, never a copy, so a misspelled name is a
   // silently dead utility rather than a visible difference.
   const declared = new Set();
-  for (const m of (appCss + source).matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+
+  for (const m of (appCss + source).matchAll(/(--[a-z0-9-]+)\s*:/g)) { declared.add(m[1]); }
+
   const missing = [];
   const theme = source.slice(source.indexOf("@theme"));
+
   for (const m of theme.matchAll(/var\((--[a-z0-9-]+)\)/g)) {
-    if (!declared.has(m[1])) missing.push(m[1]);
+    if (!declared.has(m[1])) { missing.push(m[1]); }
   }
+
   assert.deepEqual(missing, [], `tailwind.src.css reads tokens nothing declares: ${missing.join(", ")}`);
 });
 
@@ -213,22 +249,28 @@ test("every class a migrated file uses resolves in a shipped sheet", function ()
   // and never rebuilt emits no rule at all, and the element silently inherits.
   // A chrome class resolves in the sheet's component layer or in a utility.
   const missing = [];
+
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
+
     for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
         // `group` and `peer` are markers a variant names, never rules of their
         // own: Tailwind emits nothing for either.
-        if (token === "group" || token === "peer") continue;
+        if (token === "group" || token === "peer") { continue; }
+
         // A token ending in `-` is the front half of a composed name —
         // `"language-" + lang` is highlight.js's own convention, not a class
         // any sheet could style.
-        if (token.endsWith("-")) continue;
-        if (hasSelector(plain, token) || inCabinet(token)) continue;
+        if (token.endsWith("-")) { continue; }
+
+        if (hasSelector(plain, token) || inCabinet(token)) { continue; }
+
         missing.push(`${rel}: ${token}`);
       }
     }
   }
+
   assert.deepEqual(missing, [],
     `classes with no rule in any shipped sheet (rebuild with \`bun run css:build\`):\n${missing.join("\n")}`);
 });
@@ -240,19 +282,25 @@ test("migrated files keep padding, margin and gap on a cabinet rung", function (
   // otherwise reintroduce one `gap-2.5` at a time.
   const rung = /^-?(?:p|m|gap|gap-[xy]|space-[xy]|px|py|pt|pb|pl|pr|mx|my|mt|mb|ml|mr)-(?:(\d+)|(px|auto))$/;
   const offenders = [];
+
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
+
     for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const raw of classes.split(/\s+/).filter(Boolean)) {
         const token = raw.replace(/^[a-z-]+:/, ""); // drop a variant prefix
         const m = rung.exec(token);
-        if (!m || m[2]) continue; // px/auto/size utilities are not rungs
+
+        if (!m || m[2]) { continue; } // px/auto/size utilities are not rungs
+
         const n = Number(m[1]);
+
         // 0 is a reset (`margin: 0`), not a rung of the scale.
-        if (n !== 0 && (n < 1 || n > 7)) offenders.push(`${rel}: ${raw}`);
+        if (n !== 0 && (n < 1 || n > 7)) { offenders.push(`${rel}: ${raw}`); }
       }
     }
   }
+
   assert.deepEqual(offenders, [], `off-scale spacing: ${offenders.join(", ")}`);
 });
 
@@ -263,8 +311,10 @@ test("migrated files use scale utilities, not arbitrary values", function () {
   // any value that derives itself from the tokens with `var(--…)`. A literal
   // colour is refused wherever it appears.
   const offenders = [];
+
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
+
     for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
         // A variant may name a breakpoint or an element state in brackets;
@@ -272,28 +322,41 @@ test("migrated files use scale utilities, not arbitrary values", function () {
         // itself does, so only the last segment counts — and an unknown
         // bracketed variant is one more thing this list has not seen.
         const parts = splitVariants(token);
+
         for (const part of parts.slice(0, -1)) {
-          if (!part.includes("[")) continue;
-          if (variant_bracket_ok.test(part)) continue;
+          if (!part.includes("[")) { continue; }
+
+          if (variant_bracket_ok.test(part)) { continue; }
+
           offenders.push(`${rel}: ${token}`);
         }
+
         // Both lists are checked against the utility, not the whole token:
         // a bracketed variant is the previous loop's business.
         const utility = parts[parts.length - 1];
-        if (!utility.includes("[")) continue;
+
+        if (!utility.includes("[")) { continue; }
+
         if (colour_literal.test(utility)) {
           offenders.push(`${rel}: ${token} (colour literal)`);
           continue;
         }
-        if (content_ok.test(utility)) continue;
-        if (property_ok.test(utility)) continue;
-        if (token_value_ok.test(utility)) continue;
-        if (paint_ok.test(utility)) continue;
-        if (arbitrary_ok.some((re) => re.test(utility))) continue;
+
+        if (content_ok.test(utility)) { continue; }
+
+        if (property_ok.test(utility)) { continue; }
+
+        if (token_value_ok.test(utility)) { continue; }
+
+        if (paint_ok.test(utility)) { continue; }
+
+        if (arbitrary_ok.some((re) => re.test(utility))) { continue; }
+
         offenders.push(`${rel}: ${token}`);
       }
     }
   }
+
   assert.deepEqual(offenders, [], `arbitrary values: ${offenders.join(", ")}`);
 });
 
@@ -308,33 +371,45 @@ test("every shipped sheet is brace-balanced and has no dangling selector list", 
     let depth = 0;
     let line = 1;
     let firstNegative = 0;
+
     for (const ch of src) {
-      if (ch === "\n") line += 1;
-      else if (ch === "{") depth += 1;
+      if (ch === "\n") { line += 1; }
+      else if (ch === "{") { depth += 1; }
       else if (ch === "}") {
         depth -= 1;
-        if (depth < 0 && !firstNegative) firstNegative = line;
+
+        if (depth < 0 && !firstNegative) { firstNegative = line; }
       }
     }
+
     assert.equal(firstNegative, 0, `${name}: a closing brace with nothing open, at line ${firstNegative}`);
     assert.equal(depth, 0, `${name}: ${depth} block(s) left unclosed`);
+
     // A selector list that ends in a comma: a comma followed (through
     // whitespace and complete comments) by `{`. Scanned rather than matched:
     // the same regex over a 120 KB sheet backtracks for twelve seconds.
     for (let at = src.indexOf(","); at !== -1; at = src.indexOf(",", at + 1)) {
       let j = at + 1;
+
       for (;;) {
-        if (j >= src.length) break;
+        if (j >= src.length) { break; }
+
         const ch = src[j];
+
         if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") { j += 1; continue; }
+
         if (src.startsWith("/*", j)) {
           const end = src.indexOf("*/", j + 2);
-          if (end === -1) break;
+
+          if (end === -1) { break; }
+
           j = end + 2;
           continue;
         }
+
         break;
       }
+
       if (src[j] === "{") {
         const line = src.slice(0, at).split("\n").length;
         assert.fail(`${name}: a selector list ends in a comma at line ${line}`);

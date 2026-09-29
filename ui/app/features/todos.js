@@ -22,41 +22,57 @@ import { T, state, bind } from "../core/ui.js";
    own. `todo-box` is the one component rule: its tick is an `::after` and its
    square is em-sized to the item's text. */
 var PANEL_CLASS = "mb-3 max-w-measure rounded-plate-lg border border-rule bg-surface-2 px-3 py-2 empty:hidden";
+
 var LIST_CLASS = "mx-0 mb-0 mt-1 flex list-none flex-col gap-0.5 p-0";
+
 // `group` so the box, the title and the state word all read the item's status.
 var ITEM_CLASS = "group flex items-baseline gap-2 font-sans text-sm wrap-anywhere";
+
 var BOX_CLASS = "todo-box";
+
 var TITLE_CLASS = "grow shrink basis-auto group-data-[status=closed]:text-fg-muted group-data-[status=closed]:line-through";
+
 var STATE_CLASS = "flex-none font-mono text-xs text-fg-muted group-data-[status=closed]:text-ok";
 
 // A title is capped at 512 chars server-side and the list at 100 items; both
 // are honest numbers to render, but a pathological run should not be able to
 // push 50 KB of text into one turn card either. Clip for display only.
 export var max_title_chars = 240;
+
 export var max_items = 100;
 
 /// Normalizes whatever came down the stream into the shape the panel renders.
 /// Pure, and defensive: a malformed event must not take the turn down.
 export function normalizeTodos(raw) {
-  if (!raw || !raw.length) return [];
+  if (!raw || !raw.length) { return []; }
+
   var out = [];
+
   for (var i = 0; i < raw.length && out.length < max_items; i++) {
     var it = raw[i];
-    if (!it || typeof it !== "object") continue;
+
+    if (!it || typeof it !== "object") { continue; }
+
     var title = it.title == null ? "" : String(it.title);
-    if (title.length > max_title_chars) title = title.slice(0, max_title_chars) + "…";
+
+    if (title.length > max_title_chars) { title = title.slice(0, max_title_chars) + "…"; }
+
     var status = it.status === "closed" || it.status === "claimed" ? it.status : "open";
-    out.push({ id: it.todo == null ? "" : String(it.todo), title: title, status: status });
+    out.push({ id: it.todo == null ? "" : String(it.todo), title, status });
   }
+
   return out;
 }
 
 /// "2/5 done", or "" for an empty list. Pure, so the count shown and the count
 /// tested are the same function.
 export function todoSummary(todos) {
-  if (!todos || !todos.length) return "";
+  if (!todos || !todos.length) { return ""; }
+
   var closed = 0;
-  for (var i = 0; i < todos.length; i++) if (todos[i].status === "closed") closed++;
+
+  for (var i = 0; i < todos.length; i++) { if (todos[i].status === "closed") { closed++; } }
+
   return closed + "/" + todos.length + " done";
 }
 
@@ -73,7 +89,8 @@ function todoRow(item) {
 }
 
 function panelContent(todos) {
-  if (!todos || !todos.length) return null;
+  if (!todos || !todos.length) { return null; }
+
   return [
     T.div(
       { class: "flex items-baseline gap-2 font-sans text-sm" },
@@ -88,16 +105,20 @@ function panelContent(todos) {
 /// control event on the run's stream; the panel is created once and the signal
 /// carries every later revision, so a 20-step plan does not rebuild the turn.
 export function renderTurnTodos(turn, rawTodos) {
-  if (!turn || !turn.answer) return null;
+  if (!turn || !turn.answer) { return null; }
+
   if (!turn.todosPanel) {
     turn.todosState = state([]);
     var panel = T.div({ class: PANEL_CLASS, "aria-live": "polite" });
     bind(panel, turn.todosState, panelContent);
     turn.todosPanel = panel;
+
     // Above the answer, below the tool chips: the checklist is context for
     // the answer being written, not part of it.
-    if (turn.answer.parentNode) turn.answer.parentNode.insertBefore(panel, turn.answer);
+    if (turn.answer.parentNode) { turn.answer.parentNode.insertBefore(panel, turn.answer); }
   }
+
   turn.todosState.val = normalizeTodos(rawTodos);
+
   return turn.todosPanel;
 }

@@ -58,7 +58,7 @@ test("music boot calls ensure only after Music exists", () => {
 test("music plugin registers a view and a dock", () => {
   assert.equal(manifest.name, "music");
   assert.match(js, /clanker\.registerView/);
-  assert.match(js, /boot:\s*function/);
+  assert.match(js, /boot(?::\s*function|\s*\()/);
   assert.match(js, /music-dock/);
   assert.doesNotMatch(js, /innerHTML/);
   assert.doesNotMatch(js, /eval\(/);
@@ -106,7 +106,7 @@ test("every glyph name music asks for exists in the host's icon grid", () => {
   const known = new Set();
   for (const m of table.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*):\s*\[/gm)) known.add(m[1]);
   assert.ok(known.size > 20, "read the icon grid, not an empty slice");
-  assert.match(icons, /if \(!paths\) return document\.createElement\("span"\)/,
+  assert.match(icons, /if \(!paths\) (?:\{ )?return document\.createElement\("span"\)/,
     "an unknown name still renders as an empty span, so the check below still matters");
 
   const asked = new Set();

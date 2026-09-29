@@ -29,16 +29,16 @@ function node(tag) {
     value: "",
     parentNode: null,
     textContent: "",
-    appendChild: function (c) {
+    appendChild (c) {
       this.childNodes.push(c);
       c.parentNode = this;
       return c;
     },
-    setAttribute: function (k, v) { this.attributes[k] = String(v); },
-    getAttribute: function (k) { return this.attributes[k]; },
-    removeAttribute: function (k) { delete this.attributes[k]; },
+    setAttribute (k, v) { this.attributes[k] = String(v); },
+    getAttribute (k) { return this.attributes[k]; },
+    removeAttribute (k) { delete this.attributes[k]; },
     focus: noop,
-    addEventListener: function (type, fn) {
+    addEventListener (type, fn) {
       (this.listeners[type] = this.listeners[type] || []).push(fn);
     }
   };
@@ -59,21 +59,21 @@ function syncText(el) {
 }
 
 const document = {
-  createElement: function (tag) {
+  createElement (tag) {
     var el = node(tag);
     Object.defineProperty(el, "textContent", {
-      get: function () { return syncText(this); },
-      set: function (v) { this.childNodes = []; if (v) this.childNodes.push(document.createTextNode(v)); }
+      get () { return syncText(this); },
+      set (v) { this.childNodes = []; if (v) this.childNodes.push(document.createTextNode(v)); }
     });
     return el;
   },
-  createTextNode: function (text) {
+  createTextNode (text) {
     var el = node(null);
     el.nodeType = 3;
     el.textContent = String(text);
     return el;
   },
-  createDocumentFragment: function () {
+  createDocumentFragment () {
     return document.createElement("#fragment");
   }
 };

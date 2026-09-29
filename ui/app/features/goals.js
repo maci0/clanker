@@ -20,18 +20,31 @@ import { readJson } from "../core/utils.js";
    from its parent's attribute, so the card carries `group` and the status word
    and run status ask about it. */
 var OBJECTIVE_CLASS = "min-w-0 max-w-measure font-sans text-base font-semibold leading-normal text-fg wrap-anywhere";
+
 var BADGE_CLASS = "mt-px inline-flex h-[1.7rem] w-[1.7rem] flex-none items-center justify-center rounded-plate-sm border border-accent bg-surface-raised text-accent-text";
+
 var META_CLASS = "mt-1.5 flex flex-wrap gap-x-3 gap-y-1.5 font-mono text-xs text-fg-muted tracking-wide";
+
 var STATUS_CLASS = "group-data-[status=active]:font-bold group-data-[status=active]:text-ok group-data-[status=blocked]:text-danger group-data-[status=review]:font-bold group-data-[status=review]:text-warn-text group-data-[status=running]:font-bold group-data-[status=running]:text-accent-text";
+
 var TASK_LIST_CLASS = "mt-2 flex flex-col gap-1";
+
 var TASK_CLASS = "group flex items-baseline gap-2 text-fg-muted wrap-anywhere";
+
 var TASK_TEXT_CLASS = "group-data-[done=1]:text-fg-muted group-data-[done=1]:line-through";
+
 var RUN_CONTROLS_CLASS = "flex items-center gap-3";
+
 var BUDGET_CLASS = "min-w-0 flex-none basis-36 tabular-nums";
+
 var RUN_CLASS = "group mt-4 overflow-hidden rounded-plate border border-rule bg-surface";
+
 var RUN_STATUS_CLASS = "font-mono text-sm text-fg-muted group-data-[status=failed]:font-bold group-data-[status=failed]:text-danger group-data-[status=finished]:font-bold group-data-[status=finished]:text-ok group-data-[status=running]:font-bold group-data-[status=running]:text-accent-text";
+
 var RUN_OUTPUT_CLASS = "m-0 max-h-72 overflow-auto px-4 py-3 font-mono text-sm leading-normal text-fg whitespace-pre-wrap wrap-anywhere empty:before:content-['…'] empty:before:text-fg-muted";
+
 var ACTIONS_CLASS = "mt-3 flex flex-wrap gap-3 empty:hidden";
+
 import { T, bind, UI, state, uiConfirm, uiPrompt, showLoadError, requireText } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
 import { icon } from "../core/icons.js";
@@ -39,8 +52,11 @@ import { makeLineSplitter, pumpInto } from "../core/stream.js";
 import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 
 var el = null;
+
 var _showView = null;
+
 var _getSessionId = null;
+
 var _switchSession = null;
 
 // ---- goals: what runs are being steered toward -------------------------
@@ -67,8 +83,10 @@ export function renderGoals(goals) {
 /* Whether anything is working this goal right now: a run streaming into this
    page, or one the server registry attributes to another client. */
 export function isGoalRunning(gid) {
-  if (Object.prototype.hasOwnProperty.call(runningIds, gid)) return true;
+  if (Object.prototype.hasOwnProperty.call(runningIds, gid)) { return true; }
+
   var run = goalRuns[gid];
+
   return !!(run && run.status === "running");
 }
 
@@ -77,19 +95,23 @@ export function isGoalRunning(gid) {
    (and only unlinked ones, so a same-titled card of another goal is safe). */
 function cardOfGoal(g) {
   var cardsArr = board.cards || [];
+
   for (var i = 0; i < cardsArr.length; i++) {
-    if (cardsArr[i].goal === g.id) return cardsArr[i];
+    if (cardsArr[i].goal === g.id) { return cardsArr[i]; }
   }
+
   for (var j = 0; j < cardsArr.length; j++) {
-    if (!cardsArr[j].goal && cardsArr[j].title === g.objective) return cardsArr[j];
+    if (!cardsArr[j].goal && cardsArr[j].title === g.objective) { return cardsArr[j]; }
   }
+
   return null;
 }
 
 function findGoal(goals, gid) {
   for (var i = 0; i < (goals || []).length; i++) {
-    if (goals[i].id === gid) return goals[i];
+    if (goals[i].id === gid) { return goals[i]; }
   }
+
   return null;
 }
 
@@ -98,11 +120,15 @@ function findGoal(goals, gid) {
 function publicTasksOf(g) {
   var tasks = g.tasks || [];
   var out = [];
+
   for (var i = 0; i < tasks.length; i++) {
     var t = tasks[i];
-    if (!t || !t.id || !t.text) continue;
-    if ((t.visible_to || []).length === 0) out.push(t);
+
+    if (!t || !t.id || !t.text) { continue; }
+
+    if ((t.visible_to || []).length === 0) { out.push(t); }
   }
+
   return out;
 }
 
@@ -113,12 +139,15 @@ function publicTasksOf(g) {
 function syncGoalPublicTasks(g, card) {
   var tasks = publicTasksOf(g);
   var subs = card.subtasks || [];
+
   for (var i = 0; i < tasks.length; i++) {
     var t = tasks[i];
     var sub = null;
+
     for (var j = 0; j < subs.length; j++) {
       if (subs[j].id === t.id) { sub = subs[j]; break; }
     }
+
     if (!sub) {
       postBoard({ op: "subtask_add", id: card.id, subtask_id: t.id, text: t.text, goal_sync: false }, null);
     } else if (!!sub.done !== !!t.done) {
@@ -132,7 +161,9 @@ function syncGoalPublicTasks(g, card) {
    here too. Private tasks never render in this shared card. */
 function goalPublicTasksBlock(g) {
   var tasks = publicTasksOf(g);
-  if (!tasks.length) return null;
+
+  if (!tasks.length) { return null; }
+
   return T.details(null,
     T.summary("Tasks (" + tasks.length + ")"),
     T.div({ class: TASK_LIST_CLASS }, tasks.map(function (t) {
@@ -153,22 +184,31 @@ function goalPublicTasksBlock(g) {
 function mirrorGoalsToBoard(goals) {
   var work = function () {
     (goals || []).forEach(function (g) {
-      if (!g || !g.id || !g.objective) return;
+      if (!g || !g.id || !g.objective) { return; }
+
       var status = g.status || "active";
       var card = cardOfGoal(g);
+
       if (card) {
         // Adopt a pre-goal-field card: persist the link on the card itself
         // so it survives reloads and reaches other browsers.
-        if (!card.goal) postBoard({ op: "update", id: card.id, goal: g.id, goal_sync: false }, null);
+        if (!card.goal) { postBoard({ op: "update", id: card.id, goal: g.id, goal_sync: false }, null); }
+
         var pinned = goalPinnedColumn(g, isGoalRunning(g.id));
+
         if (pinned && card.column !== pinned) {
           postBoard({ op: "move", id: card.id, column: pinned, goal_sync: false }, null);
         }
+
         syncGoalPublicTasks(g, card);
+
         return;
       }
-      if (status === "abandoned") return;
-      if (goalMirrorRequested[g.id]) return;
+
+      if (status === "abandoned") { return; }
+
+      if (goalMirrorRequested[g.id]) { return; }
+
       goalMirrorRequested[g.id] = true;
       // A board card title is capped at 512 characters but a goal objective
       // is not, so an over-long objective used to make the mirror fail with
@@ -178,10 +218,12 @@ function mirrorGoalsToBoard(goals) {
       // The durable card<->goal link is the card's `goal` field, so a shorter
       // title does not orphan it.
       var title = g.objective;
-      if (title.length > 512) title = title.slice(0, 512);
+
+      if (title.length > 512) { title = title.slice(0, 512); }
+
       postBoard({
         op: "create",
-        title: title,
+        title,
         body: g.completion_criterion || "",
         column: goalPinnedColumn(g, isGoalRunning(g.id)) || "ready",
         goal: g.id,
@@ -196,14 +238,17 @@ function mirrorGoalsToBoard(goals) {
         // is dropped so the next loadGoals retries; otherwise a transient
         // error (or a too-long objective that was later shortened) would keep
         // the goal off the board forever.
-        if (!ok) delete goalMirrorRequested[g.id];
+        if (!ok) { delete goalMirrorRequested[g.id]; }
       });
     });
   };
+
   if (boardIsLoaded()) {
     work();
+
     return Promise.resolve();
   }
+
   return loadBoard().then(work);
 }
 
@@ -212,6 +257,7 @@ function goalCard(g) {
   var running = isGoalRunning(g.id);
 
   var actions = [];
+
   if (g.id) {
     /* Active goals are meant to be worked: without this, adding a goal only
        wrote state/goals.json and never started a run. The per-run budget box
@@ -229,23 +275,29 @@ function goalCard(g) {
         UI.button("Work on this", function () { workOnGoal(g); },
           { label: "Work on goal: " + (g.objective || g.id) })));
     }
+
     if ((g.status || "active") !== "done") {
       var mirror = cardOfGoal(g);
       var pendingChecklist = mirror && (mirror.subtasks || []).some(function (s) { return !s.done; });
+
       var doneAction = UI.button("Mark done", function () {
         // The board tool owns the checklist invariant. Move the mirror first
         // so an incomplete tree is refused before goal state can say "done";
         // postBoard then synchronizes the accepted move back to this goal.
         var card = cardOfGoal(g);
-        if (card) postBoard({ op: "move", id: card.id, column: "done" }, "Goal marked done.");
-        else postGoal({ id: g.id, status: "done" }, "Goal marked done.");
+
+        if (card) { postBoard({ op: "move", id: card.id, column: "done" }, "Goal marked done."); }
+        else { postGoal({ id: g.id, status: "done" }, "Goal marked done."); }
       });
+
       if (pendingChecklist) {
         doneAction.disabled = true;
         doneAction.title = "Finish every checklist item before marking this goal done.";
       }
+
       actions.push(doneAction);
     }
+
     /* Iterate: ask what to refine, then reactivate the goal (if it is not
        already active) and start a run steered by that instruction. Works for
        finished, reviewing, archived or idle-active goals alike. */
@@ -253,14 +305,16 @@ function goalCard(g) {
       actions.push(UI.button("Iterate", function () { iterateGoal(g); },
         { label: "Iterate on this goal's implementation" }));
     }
+
     [["Archive", "archived", "Goal archived and retained for future learning."],
      ["Reactivate", "active", "Goal reactivated."]].forEach(function (pair) {
-      if ((g.status || "active") === pair[1]) return;
+      if ((g.status || "active") === pair[1]) { return; }
+
       actions.push(UI.button(pair[0], function () { postGoal({ id: g.id, status: pair[1] }, pair[2]); }));
     });
     actions.push(UI.button("Delete", function () {
       uiConfirm("Delete this goal? Runs that carried it are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
-        if (yes) postGoal({ id: g.id, remove: true }, "Goal deleted.");
+        if (yes) { postGoal({ id: g.id, remove: true }, "Goal deleted."); }
       });
     }, { kind: "danger", label: "Delete goal: " + (g.objective || g.id) }));
   }
@@ -271,6 +325,7 @@ function goalCard(g) {
   var shown = goalStatusLabel(g, running);
   var shownKey = (g.status || "active") === "active" && running ? "running" : (g.status || "");
   var worktreeTitle = goalWorktreeTitle(g);
+
   return T.div({ class: "group", "data-status": shownKey },
     T.div({ class: "flex items-start gap-2" },
       T.div({ class: OBJECTIVE_CLASS }, g.objective || "(no objective recorded)"),
@@ -302,6 +357,7 @@ export function loadGoals() {
       runningIds = {};
       (data.running || []).forEach(function (r) { runningIds[r.id] = r.session || ""; });
       renderGoals(data.goals || []);
+
       return mirrorGoalsToBoard(data.goals || []);
     })
     .catch(function (err) {
@@ -320,9 +376,12 @@ export function loadGoals() {
 var goalRuns = {};  // goal id -> { controller, status, text }
 
 function goalRunStatusLabel(status) {
-  if (status === "running") return "running…";
-  if (status === "stopped") return "stopped";
-  if (status === "failed") return "failed";
+  if (status === "running") { return "running…"; }
+
+  if (status === "stopped") { return "stopped"; }
+
+  if (status === "failed") { return "failed"; }
+
   return "finished";
 }
 
@@ -331,10 +390,13 @@ function goalRunStatusLabel(status) {
    the whole goals list on every chunk. */
 function appendGoalText(gid, text) {
   var run = goalRuns[gid];
-  if (!run) return;
+
+  if (!run) { return; }
+
   run.text += text;
   var node = el.goals.querySelector('.goal-run-output[data-goal-output="' + gid + '"]');
-  if (node) node.textContent = run.text;
+
+  if (node) { node.textContent = run.text; }
 }
 
 /* A run's status changed (finished / stopped / failed): update the stored
@@ -342,14 +404,17 @@ function appendGoalText(gid, text) {
    stored text survives, so the rebuild shows everything streamed so far. */
 function setGoalStatus(gid, status) {
   var run = goalRuns[gid];
-  if (!run) return;
+
+  if (!run) { return; }
+
   run.status = status;
   renderGoals(goalState.val);
 }
 
 function abortGoalRun(gid) {
   var run = goalRuns[gid];
-  if (run && run.controller) run.controller.abort();
+
+  if (run && run.controller) { run.controller.abort(); }
 }
 
 /* Sends a mid-run message to the agent working this goal (POST /api/steer).
@@ -359,9 +424,13 @@ function abortGoalRun(gid) {
    applied" status line when the loop actually consumes it. */
 function sendSteer(gid) {
   var box = el.goals.querySelector('textarea[data-goal-steer="' + gid + '"]');
-  if (!box) return;
+
+  if (!box) { return; }
+
   var msg = box.value.trim();
-  if (!msg) return;
+
+  if (!msg) { return; }
+
   box.disabled = true;
   fetch("/api/steer", {
     method: "POST",
@@ -395,9 +464,12 @@ function renderGoalRunPanel(g) {
   // truthiness, or a sessionless remote run would read as not running.
   var remote = !run && Object.prototype.hasOwnProperty.call(runningIds, gid);
   var remoteSession = remote ? runningIds[gid] : "";
-  if (!run && !remote) return null;
+
+  if (!run && !remote) { return null; }
+
   var status = run ? run.status : "running";
   var steerable = status === "running";
+
   return T.div({ class: RUN_CLASS, "data-status": status, "data-goal-run": gid },
     T.div({ class: "flex items-center justify-between gap-3 border-b border-rule px-3 py-2" },
       T.span({ class: RUN_STATUS_CLASS }, remote ? "running (in another session)…" : goalRunStatusLabel(status)),
@@ -420,7 +492,7 @@ function renderGoalRunPanel(g) {
         wrap: "soft",
         placeholder: "Steer this run: tell the agent something mid-flight…",
         maxlength: "8000",
-        onkeydown: function (e) {
+        onkeydown (e) {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSteer(gid); }
         }
       }),
@@ -434,8 +506,10 @@ function renderGoalRunPanel(g) {
    only re-post what is already true. */
 function moveGoalCard(g, column) {
   var card = cardOfGoal(g);
-  if (!card || card.column === column) return;
-  postBoard({ op: "move", id: card.id, column: column, goal_sync: false }, null);
+
+  if (!card || card.column === column) { return; }
+
+  postBoard({ op: "move", id: card.id, column, goal_sync: false }, null);
 }
 
 /* Records a run lifecycle note on the goal's mirror card, so a board reader
@@ -443,7 +517,9 @@ function moveGoalCard(g, column) {
    goal panel. */
 function logGoalRun(g, what) {
   var card = cardOfGoal(g);
-  if (!card) return;
+
+  if (!card) { return; }
+
   postBoard({ op: "log", id: card.id, what: "goal run " + what, goal_sync: false }, null);
 }
 
@@ -454,29 +530,37 @@ function logGoalRun(g, what) {
    it works, review when it finishes (the server flips the goal itself to
    review at the same moment), back to ready when it is stopped or fails. */
 function runGoal(g, opts) {
-  if (!g || !g.id) return;
+  if (!g || !g.id) { return; }
+
   opts = opts || {};
   var existing = goalRuns[g.id];
+
   if (existing && existing.status === "running") {
     el.goalsStatus.textContent = "A run for this goal is already in progress; wait for it to finish.";
+
     return;
   }
+
   var task = opts.task || ("Work on this goal until the completion criterion is met. When the work is done, land it in the repository so the goal is genuinely complete: create a branch, commit your changes to it, push the branch, open a pull request, and merge it. Do not leave the finished work uncommitted.\n\nObjective: " +
     (g.objective || "") + "\nDone when: " + (g.completion_criterion || ""));
+
   var controller = new AbortController();
-  goalRuns[g.id] = { controller: controller, status: "running", text: "" };
+  goalRuns[g.id] = { controller, status: "running", text: "" };
   _showView("kanban", true);
   renderGoals(goalState.val);
   el.goalsStatus.textContent = opts.task ? "Re-evaluating goal…" : "Starting work on goal…";
   moveGoalCard(g, "doing");
   logGoalRun(g, "started");
-  if (opts.onStart) opts.onStart();
+
+  if (opts.onStart) { opts.onStart(); }
 
   var splitter = makeLineSplitter(function (line) {
     if (line.charCodeAt(0) === 1) {
       var evt;
+
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
-      if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
+
+      if (evt.type === "error") { appendGoalText(g.id, "\n[" + evt.message + "]\n"); }
       else if (evt.type === "goal" && evt.status) {
         appendGoalText(g.id, "[ goal loop turn " + (evt.turn || "?") + ": " + evt.status +
           (evt.reason ? ", " + evt.reason : "") + " ]\n");
@@ -485,9 +569,11 @@ function runGoal(g, opts) {
       // processing, a steering message being applied) rather than answer
       // text: show it as a bracketed log line so a run that has just started
       // is not an empty panel labelled "running…".
-      else if (evt.type === "status") appendGoalText(g.id, "[ " + evt.message + " ]\n");
+      else if (evt.type === "status") { appendGoalText(g.id, "[ " + evt.message + " ]\n"); }
+
       return;
     }
+
     appendGoalText(g.id, line + "\n");
   });
 
@@ -495,7 +581,7 @@ function runGoal(g, opts) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      task: task,
+      task,
       goal: g.id,
       stream: true,
       session: _getSessionId(),
@@ -507,10 +593,12 @@ function runGoal(g, opts) {
     }),
     signal: controller.signal
   }).then(function (resp) {
-    if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
+    if (!resp.ok || !resp.body) { throw new Error("server responded HTTP " + resp.status); }
+
     return pumpInto(resp.body, splitter);
   }).then(function () {
     splitter.flush();
+
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
       el.goalsStatus.textContent = "Goal run finished, waiting for review.";
@@ -519,11 +607,14 @@ function runGoal(g, opts) {
       // The server records the loop's achieved/review or blocked result; re-fetch
       // so the card and its status pill show that durable verdict.
       loadGoals();
-      if (opts.onDone) opts.onDone("finished");
+
+      if (opts.onDone) { opts.onDone("finished"); }
     }
   }).catch(function (err) {
     splitter.flush();
-    if (!goalRuns[g.id]) return;
+
+    if (!goalRuns[g.id]) { return; }
+
     if (err && err.name === "AbortError") {
       setGoalStatus(g.id, "stopped");
       el.goalsStatus.textContent = "Goal run stopped.";
@@ -533,7 +624,8 @@ function runGoal(g, opts) {
       // flag so `clanker serve` does not auto-resume it on restart.
       postGoal({ id: g.id, running: false }, "Goal run stopped.");
       loadGoals();
-      if (opts.onDone) opts.onDone("stopped");
+
+      if (opts.onDone) { opts.onDone("stopped"); }
     } else {
       appendGoalText(g.id, "\n[goal run failed: " + err.message + "]\n");
       setGoalStatus(g.id, "failed");
@@ -541,7 +633,8 @@ function runGoal(g, opts) {
       moveGoalCard(g, "ready");
       logGoalRun(g, "failed");
       loadGoals();
-      if (opts.onDone) opts.onDone("failed");
+
+      if (opts.onDone) { opts.onDone("failed"); }
     }
   });
 }
@@ -568,17 +661,22 @@ function iterateGoal(g) {
     { placeholder: "e.g. the retry path, the board sync edge case, tighten the criterion…", maxlength: 8000, multiline: true, rows: 5, confirmLabel: "Iterate" }
   ).then(function (raw) {
     var msg = (raw || "").trim();
-    if (!msg) return;
+
+    if (!msg) { return; }
+
     // Re-read the goal from live state: the user may have taken another
     // action while the prompt was open, and its status decides reactivation.
     var cur = findGoal(goalState.val, g.id) || g;
+
     var act = function () {
-      if ((cur.status || "active") === "active") return Promise.resolve(cur);
+      if ((cur.status || "active") === "active") { return Promise.resolve(cur); }
+
       return postGoal({ id: cur.id, status: "active" }, "Goal reactivated for iteration.")
         .then(function (d) {
           return findGoal(d.goals, cur.id) || cur;
         });
     };
+
     act().then(function (goal) {
       runGoal(goal, {
         task: "Iterate on the previous work already done toward this goal. The user wants the implementation refined in this specific way. Focus on this and this alone:\n\n" +
@@ -596,13 +694,17 @@ function iterateGoal(g) {
    adopts this card by title, so the link is persisted without a second
    write. */
 export function workCardAsGoal(c, opts) {
-  if (!c || !c.id) return;
+  if (!c || !c.id) { return; }
+
   opts = opts || {};
   var objective = (c.title || "").trim();
+
   if (!objective) {
     el.boardStatus.textContent = "That card has no title to turn into a goal.";
+
     return;
   }
+
   // A per-run iteration budget chosen on the card detail modal, same rule as
   // the Goals view's budget box: a positive number is a per-run override,
   // anything else sends null so the server falls back to the goal's stored
@@ -610,36 +712,45 @@ export function workCardAsGoal(c, opts) {
   var maxIterations = opts.maxIterations || null;
   var existingId = c.goal || bestGoalIdFor(objective);
   var existing = findGoal(goalState.val, existingId);
+
   if (existing) {
     if ((existing.status || "active") !== "active") {
       postGoal({ id: existing.id, status: "active" }, "Goal reactivated from the board.")
         .then(function (d) {
-          if (!d) return;
-          runGoal(findGoal(d.goals, existing.id) || existing, { maxIterations: maxIterations });
+          if (!d) { return; }
+
+          runGoal(findGoal(d.goals, existing.id) || existing, { maxIterations });
         });
     } else {
-      runGoal(existing, { maxIterations: maxIterations });
+      runGoal(existing, { maxIterations });
     }
+
     return;
   }
+
   var criterion = (c.body || "").trim() ||
     "Complete the work described on the board card \"" + objective + "\".";
-  postGoal({ objective: objective, completion_criterion: criterion }, "Goal saved from the board; starting it now.")
+
+  postGoal({ objective, completion_criterion: criterion }, "Goal saved from the board; starting it now.")
     .then(function (d) {
-      if (!d) return;
+      if (!d) { return; }
+
       // The card's objective is the newest goal carrying that text: matching
       // by it and taking the largest `updated` picks the one just created even
       // when an older goal already used the same wording.
       var created = null, createdUp = -1;
       var goals = d.goals || [];
+
       for (var i = 0; i < goals.length; i++) {
         if (goals[i].objective === objective && (goals[i].updated || 0) > createdUp) {
           created = goals[i];
           createdUp = goals[i].updated || 0;
         }
       }
-      if (!created) return;
-      runGoal(created, { maxIterations: maxIterations });
+
+      if (!created) { return; }
+
+      runGoal(created, { maxIterations });
     });
 }
 
@@ -653,12 +764,14 @@ export function postGoal(payload, status) {
     .then(function (d) {
       renderGoals(d.goals || []);
       el.goalsStatus.textContent = status;
+
       // A status change carries the mirror card along: done -> the done
       // column, review -> the review column, and a reactivation pulls the
       // card back out of done/review so the board stops claiming finished
       // work. Abandoning leaves the card where it lies.
       if (payload && payload.id && payload.status) {
         var changed = findGoal(d.goals, payload.id);
+
         if (changed) {
           if (payload.status === "done") {
             moveGoalCard(changed, "done");
@@ -668,12 +781,14 @@ export function postGoal(payload, status) {
             moveGoalCard(changed, "archive");
           } else if (payload.status === "active") {
             var card = cardOfGoal(changed);
+
             if (card && (card.column === "done" || card.column === "review" || card.column === "archive")) {
               postBoard({ op: "move", id: card.id, column: "ready", goal_sync: false }, null);
             }
           }
         }
       }
+
       // A deleted goal's card stays (it is still work someone wrote down),
       // but stops claiming to mirror the goal.
       if (payload && payload.remove && payload.id) {
@@ -684,24 +799,29 @@ export function postGoal(payload, status) {
           }
         }
       }
+
       // A goal created here (objective present, no id) is mirrored onto the
       // board: either an existing unlinked card with this title is adopted,
       // or a card is created in the column the goal's state asks for.
       if (payload && payload.objective && payload.id === undefined) {
         var created = null, createdUp = -1;
         var goals = d.goals || [];
+
         for (var i = 0; i < goals.length; i++) {
           if (goals[i].objective === payload.objective && (goals[i].updated || 0) > createdUp) {
             created = goals[i];
             createdUp = goals[i].updated || 0;
           }
         }
-        if (created) mirrorGoalsToBoard([created]);
+
+        if (created) { mirrorGoalsToBoard([created]); }
       }
+
       return d;
     })
     .catch(function (err) {
       el.goalsStatus.textContent = "Goal failed: " + err.message;
+
       return null;
     });
 }
@@ -710,12 +830,14 @@ export function postGoal(payload, status) {
 function bestGoalIdFor(objective) {
   var goalId = null, best = -1;
   var goals = goalState.val || [];
+
   for (var i = 0; i < goals.length; i++) {
     if (goals[i].objective === objective && (goals[i].created || 0) > best) {
       goalId = goals[i].id;
       best = goals[i].created || 0;
     }
   }
+
   return goalId;
 }
 
@@ -725,11 +847,15 @@ function bestGoalIdFor(objective) {
    and the lane the user clicked is applied afterwards. */
 export function mirrorCardForObjective(objective) {
   var gid = bestGoalIdFor(objective);
-  if (!gid) return null;
+
+  if (!gid) { return null; }
+
   var goals = goalState.val || [];
+
   for (var i = 0; i < goals.length; i++) {
-    if (goals[i].id === gid) return cardOfGoal(goals[i]);
+    if (goals[i].id === gid) { return cardOfGoal(goals[i]); }
   }
+
   return null;
 }
 
@@ -738,11 +864,15 @@ export function mirrorCardForObjective(objective) {
    sync when a card is moved. */
 export function goalIdForCard(cardId) {
   var c = null;
+
   for (var i = 0; i < (board.cards || []).length; i++) {
     if (board.cards[i].id === cardId) { c = board.cards[i]; break; }
   }
-  if (!c) return null;
-  if (c.goal) return c.goal;
+
+  if (!c) { return null; }
+
+  if (c.goal) { return c.goal; }
+
   return bestGoalIdFor(c.title);
 }
 
@@ -754,19 +884,25 @@ export function goalIdForCard(cardId) {
 export function syncCardsFromGoals() {
   var moved = 0;
   (goalState.val || []).forEach(function (g) {
-    if (!g || !g.id) return;
+    if (!g || !g.id) { return; }
+
     var card = cardOfGoal(g);
-    if (!card) return;
+
+    if (!card) { return; }
+
     var target = goalPinnedColumn(g, isGoalRunning(g.id));
+
     if (!target && (g.status || "active") === "active" &&
         (card.column === "doing" || card.column === "review" || card.column === "done" || card.column === "archive")) {
       target = "ready";
     }
+
     if (target && card.column !== target) {
       postBoard({ op: "move", id: card.id, column: target, goal_sync: false }, null);
       moved += 1;
     }
   });
+
   return moved;
 }
 
@@ -784,6 +920,7 @@ export function bindGoals(deps) {
     if (!goals.length) {
       return UI.empty("No goals set. Add one above, or run `clanker goal \"<intent>\"`.");
     }
+
     return goals.map(goalCard);
   });
 
@@ -793,28 +930,39 @@ export function bindGoals(deps) {
     // The criterion field is gone in the one-input form; it is optional and
     // drafted by the goal loop's first turn (PRD 0035 Goal 5).
     var criterion = el.goalCriterion ? el.goalCriterion.value.trim() : "";
+
     // A box of spaces satisfies `required`, so a bare return here left the
     // button looking broken: the press did nothing and said nothing.
-    if (!requireText(el.goalObjective, "Write the goal you want worked on.")) return;
+    if (!requireText(el.goalObjective, "Write the goal you want worked on.")) { return; }
+
     var budgetRaw = el.goalMaxIterations.value.trim();
     var budget = budgetRaw ? parseInt(budgetRaw, 10) : 0;
-    var payload = { objective: objective, completion_criterion: criterion };
-    if (Number.isFinite(budget) && budget > 0) payload.max_iterations = budget;
+    var payload = { objective, completion_criterion: criterion };
+
+    if (Number.isFinite(budget) && budget > 0) { payload.max_iterations = budget; }
+
     /* Sent only when ticked. Leaving the key out records nothing, which is what
        an untouched checkbox means and what keeps goals made here identical to
        every goal made before this control existed. The server turns the boolean
        into the stored string. */
-    if (el.goalWorktree && el.goalWorktree.checked) payload.worktree = true;
+    if (el.goalWorktree && el.goalWorktree.checked) { payload.worktree = true; }
+
     el.goalAdd.disabled = true;
     postGoal(payload, "Goal saved. It has not started.").then(function (d) {
       el.goalAdd.disabled = false;
+
       // A refused goal keeps what was typed: the criterion is the field most
       // likely to be refused, and retyping the objective to fix it is a tax.
-      if (!d) return;
+      if (!d) { return; }
+
       el.goalObjective.value = "";
-      if (el.goalCriterion) el.goalCriterion.value = "";
+
+      if (el.goalCriterion) { el.goalCriterion.value = ""; }
+
       el.goalMaxIterations.value = "";
-      if (el.goalWorktree) el.goalWorktree.checked = !!window.clankerWorktreeDefault;
+
+      if (el.goalWorktree) { el.goalWorktree.checked = !!window.clankerWorktreeDefault; }
+
       el.goalsStatus.textContent = "Goal saved in Backlog. Start it when ready.";
     });
   });

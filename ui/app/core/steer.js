@@ -22,6 +22,7 @@ export function makeSteerLedger() { return { entries: [] }; }
 export function steerAdd(ledger, text) {
   var e = { text: String(text), state: "sending", detail: "" };
   ledger.entries.push(e);
+
   return e;
 }
 
@@ -40,11 +41,14 @@ export function steerMark(entry, state, detail) {
 export function steerApplyOldest(ledger) {
   for (var i = 0; i < ledger.entries.length; i++) {
     var e = ledger.entries[i];
+
     if (e.state === "queued" || e.state === "sending") {
       e.state = "applied";
+
       return e;
     }
   }
+
   return null;
 }
 
@@ -63,14 +67,19 @@ export var steer_preview_max = 72;
 
 export function steerPreview(text) {
   var t = String(text).replace(/\s+/g, " ").trim();
-  if (t.length <= steer_preview_max) return t;
+
+  if (t.length <= steer_preview_max) { return t; }
+
   return t.slice(0, steer_preview_max - 1) + "…";
 }
 
 export function steerStateLabel(entry) {
-  if (entry.state === "sending") return "sending…";
-  if (entry.state === "queued") return "queued";
-  if (entry.state === "applied") return "applied";
+  if (entry.state === "sending") { return "sending…"; }
+
+  if (entry.state === "queued") { return "queued"; }
+
+  if (entry.state === "applied") { return "applied"; }
+
   return "failed" + (entry.detail ? ": " + entry.detail : "");
 }
 
@@ -85,7 +94,9 @@ export var steer_frame_sentence = "[The user interjected while this run was in p
    user's own text with the framing stripped. */
 export function steerFramedText(content) {
   var c = String(content);
-  if (c.slice(0, steer_frame_sentence.length) !== steer_frame_sentence) return null;
+
+  if (c.slice(0, steer_frame_sentence.length) !== steer_frame_sentence) { return null; }
+
   return c.slice(steer_frame_sentence.length).replace(/^\s+/, "");
 }
 
@@ -98,8 +109,10 @@ export function steerFramedText(content) {
    fallback reads -- so an old conversation keeps rendering its interjections
    as interjections. */
 export function steeredText(message) {
-  if (!message) return null;
-  if (message.steered) return String(message.content == null ? "" : message.content);
+  if (!message) { return null; }
+
+  if (message.steered) { return String(message.content == null ? "" : message.content); }
+
   return steerFramedText(message.content == null ? "" : message.content);
 }
 
@@ -107,8 +120,11 @@ export function steeredText(message) {
    queue at 16 messages per run, so there is nothing worth diffing. */
 export function renderSteerList(ledger, listEl, doc) {
   var d = doc || (typeof document !== "undefined" ? document : null);
-  if (!listEl || !d) return;
+
+  if (!listEl || !d) { return; }
+
   listEl.textContent = "";
+
   for (var i = 0; i < ledger.entries.length; i++) {
     var e = ledger.entries[i];
     var li = d.createElement("li");

@@ -162,7 +162,7 @@ function runFolderSync(){
   var go = function(){
     fetch("/api/knowledge/"+encodeURIComponent(syncOpenId)+"/sync", {
       method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ path: path, prune: !!(prune && prune.checked) })
+      body: JSON.stringify({ path, prune: !!(prune && prune.checked) })
     }).then(readJson)
       .then(function(d){
         if(status) status.textContent = "Synced " + plural(d.synced, {one:"document", other:"documents"}) + (d.removed ? ", removed " + plural(d.removed, {one:"document", other:"documents"}) : "") + (d.skipped ? ", skipped " + d.skipped : "") + "." + (d.prune_skipped ? " Prune was skipped: the folder listing was incomplete, so a missing document may just be an unread file." : "");
@@ -271,7 +271,7 @@ function openCollection(id, docId){
       if(!requireText(cInput, "Give the document its content.")) return;
       var name=nInput.value.trim(); var content=cInput.value;
       submit.disabled=true;
-      fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name,content:content})})
+      fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,content})})
         .then(readJson)
         .then(function(){ openCollection(id); loadKnowledge(); }).catch(function(err){ toast(err.message); }).finally(function(){ submit.disabled=false; });
     });
@@ -328,7 +328,7 @@ export function bindKnowledge(){
     }
     if(createBtn) createBtn.disabled=true;
     var savedTitle=titleInput.value, savedDesc=descInput?descInput.value:"";
-    fetch("/api/knowledge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,description:desc})})
+    fetch("/api/knowledge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,description:desc})})
       .then(readJson)
       .then(function(){
         if(titleInput.value===savedTitle && (!descInput || descInput.value===savedDesc)){

@@ -6,7 +6,9 @@ import test from "node:test";
 import { configSnippet, modelsStatusId, liveSnippetModel } from "./models.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
+
 const js = readFileSync(join(here, "models.js"), "utf8");
 
 test("Models Discover has a catalog refresh control", function () {
@@ -25,6 +27,7 @@ test("configSnippet writes a provider table from the catalog mapping", function 
     context: 65536,
     output: 8192,
   }, [], true);
+
   assert.match(text, /\[providers\.deepseek\]/);
   assert.match(text, /kind = "openai_compat"/);
   assert.match(text, /base_url = "https:\/\/api\.deepseek\.com"/);

@@ -116,5 +116,5 @@ test("an event during an in-flight load is not doubled", async function () {
   // reads the same flag the button does.
   const m = mountActivity();
   await m.done;
-  assert.match(js, /if \(!ev \|\| viewHidden\(\) \|\| refresh\.disabled\) return;/);
+  assert.match(js, /if \(!ev \|\| viewHidden\(\) \|\| refresh\.disabled\) (?:\{ )?return;/);
 });

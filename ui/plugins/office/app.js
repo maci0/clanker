@@ -23,7 +23,7 @@ clanker.registerView({
   id: "office",
   title: "Office",
   group: "Watch",
-  mount: function (container, api) {
+  mount (container, api) {
     var van = api.van;
     var T = van.tags;
 
@@ -75,7 +75,7 @@ clanker.registerView({
         T.input({
           type: "checkbox",
           checked: alarmOn.val ? "" : null,
-          onchange: function (e) {
+          onchange (e) {
             alarmOn.val = !!e.target.checked;
             api.storage.set("alarm", alarmOn.val ? "on" : "off");
             dirty = true;
@@ -134,9 +134,9 @@ clanker.registerView({
       var doorX = 2 + Math.floor(rand() * (w - 5));
       var binX = doorX + 2 <= w - 3 ? doorX + 2 : doorX - 2;
       return {
-        room: room,
-        w: w,
-        h: h,
+        room,
+        w,
+        h,
         plants: [
           { x: w - 2, y: h - 2 },
           { x: 1, y: h - 2 }
@@ -152,7 +152,7 @@ clanker.registerView({
         door: { x: doorX, y: h - 1 },
         board: { x: 1, y: 1, w: w - 6, h: 3 },
         whiteboard: { x: w - 5, y: 1, w: 4, h: 3 },
-        desks: desks
+        desks
       };
     }
 
@@ -849,7 +849,7 @@ clanker.registerView({
         var w = o.layout.w * TILE;
         var h = o.layout.h * TILE;
         if (x + w > avail && x > pad) { x = pad; y += rowH + pad + 20; rowH = 0; }
-        placements.push({ o: o, x: x, y: y });
+        placements.push({ o, x, y });
         x += w + pad;
         rowH = Math.max(rowH, h);
         maxW = Math.max(maxW, x);
@@ -906,8 +906,8 @@ clanker.registerView({
             // the cursor already advanced past them.
             var L = layoutFor(room, agents.length);
             var o = {
-              layout: L, cards: cards, agents: agents, props: buildProps(L),
-              cursor: cursor, room: room, ringAt: 0, ringUntil: 0, piles: [], index: 0
+              layout: L, cards, agents, props: buildProps(L),
+              cursor, room, ringAt: 0, ringUntil: 0, piles: [], index: 0
             };
             seatAgents(o);
             return o;
@@ -982,7 +982,7 @@ clanker.registerView({
       // A clanker mid-toy-interaction owns its own position; the board still
       // gets its state refresh via onArrive, just without the walk.
       if (reduced || agent.dragging || agent.ragdoll) { onArrive(); return; }
-      agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive: onArrive };
+      agent.walk = { to: target, home: { x: agent.x, y: agent.y }, phase: "out", onArrive };
     }
 
     /* ---------- janitor navigation ----------
@@ -1021,7 +1021,7 @@ clanker.registerView({
       // Snap endpoints to the nearest free tile so a pile beside a desk or a
       // janitor mid-stride still resolves.
       function snap(x, y) {
-        if (free(x, y)) return { x: x, y: y };
+        if (free(x, y)) return { x, y };
         for (var r = 1; r <= 4; r++) {
           for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
             if (free(x + dx, y + dy)) return { x: x + dx, y: y + dy };
@@ -1289,7 +1289,7 @@ clanker.registerView({
         var cx = place.x + (thing.x + (w || 1) / 2) * TILE;
         var cy = place.y + (thing.y + 0.5) * TILE;
         var d = Math.hypot(pt.x - cx, pt.y - cy);
-        if (d < bestDist) { bestDist = d; best = { office: place, kind: kind, target: thing }; }
+        if (d < bestDist) { bestDist = d; best = { office: place, kind, target: thing }; }
       }
       lastPlacements.forEach(function (p) {
         p.o.agents.forEach(function (a) { consider(p, "agent", a); });
@@ -1337,7 +1337,7 @@ clanker.registerView({
       target.dragging = true;
       var place = hit.office;
       drag = {
-        office: place.o, kind: hit.kind, target: target,
+        office: place.o, kind: hit.kind, target,
         offsetX: pt.x - (place.x + target.x * TILE),
         offsetY: pt.y - (place.y + target.y * TILE),
         samples: [{ x: pt.x, y: pt.y, t: performance.now() }],
@@ -1424,7 +1424,7 @@ clanker.registerView({
           var scale = THROW_MAX_SPEED / speed;
           vx *= scale; vy *= scale;
         }
-        target.ragdoll = { vx: vx, vy: vy, angle: 0, spin: (Math.random() < 0.5 ? -1 : 1) * Math.min(3 + speed / 3, 14), startedAt: performance.now() };
+        target.ragdoll = { vx, vy, angle: 0, spin: (Math.random() < 0.5 ? -1 : 1) * Math.min(3 + speed / 3, 14), startedAt: performance.now() };
       } else if (!isProp && speed >= SLAP_MIN_SPEED) {
         // Fast but short: a slap in place, not a launch.
         sayQuip(target, pickQuip(SLAP_QUIPS, slapRef), SLAP_BUBBLE_MS);
@@ -1449,7 +1449,7 @@ clanker.registerView({
     function agentIn(o, name) {
       for (var i = 0; i < o.agents.length; i++) if (o.agents[i].name === name) return o.agents[i];
       // Somebody who has not spoken in this room before: seat them now.
-      var a = { name: name, x: 0, y: 0, bubble: null, lastSeen: 0 };
+      var a = { name, x: 0, y: 0, bubble: null, lastSeen: 0 };
       o.agents.push(a);
       seatAgents(o);
       return a;

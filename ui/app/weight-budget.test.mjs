@@ -19,6 +19,7 @@ import test from "node:test";
 // the check — the record of what the page used to weigh is the point.
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const KiB = 1024;
 
 function fileBytes(rel) {
@@ -32,12 +33,15 @@ function gzKib(bytes) {
 // Resolve a `/webui/...` src or preload to the file under ui/. Vendored files
 // live under ui/vendor/, everything else under ui/app/.
 function resolveAsset(webPath) {
-  if (webPath.startsWith("/webui/vendor/")) return join("..", "vendor", webPath.slice("/webui/vendor/".length));
+  if (webPath.startsWith("/webui/vendor/")) { return join("..", "vendor", webPath.slice("/webui/vendor/".length)); }
+
   return "." + webPath.slice("/webui".length);
 }
 
 const html = fileBytes("index.html").toString("utf8");
+
 const scriptSrcs = [...html.matchAll(/<script type="module" src="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
+
 const preloads = [...html.matchAll(/<link rel="modulepreload" href="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
 
 // The eager set is the *transitive static import closure* of the page's script
@@ -66,36 +70,46 @@ const preloads = [...html.matchAll(/<link rel="modulepreload" href="(\/webui\/[^
 const static_import_re = /^\s*import\s[^;]*?from\s+"([^"]+)"/gm;
 
 function resolveSpecifier(fromWebPath, spec) {
-  if (spec.startsWith("/webui/")) return posix.normalize(spec);
-  if (!spec.startsWith(".")) return null;
+  if (spec.startsWith("/webui/")) { return posix.normalize(spec); }
+
+  if (!spec.startsWith(".")) { return null; }
+
   return posix.resolve(posix.dirname(fromWebPath), spec);
 }
 
 function importClosure(roots) {
   const seen = new Set();
   const stack = [...roots];
+
   while (stack.length) {
     const webPath = stack.pop();
-    if (seen.has(webPath)) continue;
+
+    if (seen.has(webPath)) { continue; }
+
     seen.add(webPath);
     const src = fileBytes(resolveAsset(webPath)).toString("utf8");
+
     for (const m of src.matchAll(static_import_re)) {
       const resolved = resolveSpecifier(webPath, m[1]);
-      if (resolved) stack.push(resolved);
+
+      if (resolved) { stack.push(resolved); }
     }
   }
+
   return [...seen];
 }
 
 const eager = [...new Set([...importClosure(scriptSrcs), ...preloads])];
 
 const sizes = {};
+
 for (const src of eager) {
   const raw = fileBytes(resolveAsset(src));
   sizes[src] = { rawKib: raw.length / KiB, gzKib: gzKib(raw) };
 }
 
 const eagerJsGz = eager.reduce((sum, src) => sum + sizes[src].gzKib, 0);
+
 // tailwind.css is in the critical path by design: the utilities are the layer
 // that replaced the cabinet sheet, so they have to
 // arrive before the first draw. It costs its bytes every visit, which is why
@@ -103,11 +117,15 @@ const eagerJsGz = eager.reduce((sum, src) => sum + sizes[src].gzKib, 0);
 const firstPaintGz = gzKib(fileBytes("index.html")) + gzKib(fileBytes("tailwind.css"));
 
 console.log("-- web delivery weight (gzip level 9, what the wire carries) --");
+
 for (const src of eager.sort()) {
   console.log(`   ${sizes[src].rawKib.toFixed(1).padStart(7)}K raw ${sizes[src].gzKib.toFixed(1).padStart(6)}K gz  ${src}`);
 }
+
 console.log(`   eager JS (${eager.length} requests): ${eagerJsGz.toFixed(1)}K gz`);
+
 console.log(`   first paint (index.html + tailwind.css): ${firstPaintGz.toFixed(1)}K gz`);
+
 console.log(`   tailwind.css: ${(fileBytes("tailwind.css").length / KiB).toFixed(1)}K raw ${gzKib(fileBytes("tailwind.css")).toFixed(1)}K gz`);
 
 test("the head preloads the whole eager graph, heaviest first", function () {
@@ -132,6 +150,7 @@ test("the head preloads the whole eager graph, heaviest first", function () {
   // heaviest dependencies therefore have to come first: a light module ahead
   // of app.js delays the only module nothing else can run without.
   assert.equal(preloads[0], "/webui/app.js", "the entry must be the first hint, so it is fetched first");
+
   for (const heavy of ["/webui/core/ui.js", "/webui/core/utils.js", "/webui/core/modelpicker.js", "/webui/lib/markdown.js"]) {
     assert.ok(
       preloads.indexOf(heavy) <= 8,
@@ -154,9 +173,11 @@ test("the head hints and the import graph name the same modules", function () {
   // otherwise go uncounted, and a mismatch here names it.
   const closure = new Set(importClosure(scriptSrcs));
   const hinted = new Set(preloads);
+
   for (const src of closure) {
     assert.ok(hinted.has(src), `${src} is downloaded on every visit but has no modulepreload, so the scanner finds it a document-transfer late`);
   }
+
   for (const src of preloads) {
     assert.ok(closure.has(src), `${src} is preloaded but nothing imports it, so its bytes are fetched for a module no visit runs`);
   }
@@ -259,15 +280,21 @@ test("web UI plugins stay off the load path unless they opt in", function () {
   let eagerGz = 0;
   let deferredGz = 0;
   const eagerNames = [];
+
   for (const name of names) {
     let manifest;
+
     try { manifest = JSON.parse(readFileSync(join(dir, name, "plugin.json"), "utf8")); } catch { continue; }
+
     let gz = 0;
+
     for (const asset of ["app.js", "app.css"]) {
       try { gz += gzKib(readFileSync(join(dir, name, asset))); } catch { /* optional */ }
     }
-    if (manifest.eager) { eagerNames.push(name); eagerGz += gz; } else deferredGz += gz;
+
+    if (manifest.eager) { eagerNames.push(name); eagerGz += gz; } else { deferredGz += gz; }
   }
+
   console.log(`   plugins deferred to first open: ${deferredGz.toFixed(1)}K gz`);
   console.log(`   plugins loaded eagerly (${eagerNames.join(", ") || "none"}): ${eagerGz.toFixed(1)}K gz`);
   assert.ok(eagerNames.length <= 1, `${eagerNames.length} plugins load on every visit (${eagerNames.join(", ")}); each one needs a reason to run outside its own view`);

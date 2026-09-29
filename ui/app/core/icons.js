@@ -129,7 +129,9 @@ export var ICON_PATHS = {
 
 export function icon(name, size) {
   var paths = ICON_PATHS[name];
-  if (!paths) return document.createElement("span");
+
+  if (!paths) { return document.createElement("span"); }
+
   var ns = "http://www.w3.org/2000/svg";
   var svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -150,6 +152,7 @@ export function icon(name, size) {
     path.setAttribute("d", d);
     svg.appendChild(path);
   });
+
   return svg;
 }
 

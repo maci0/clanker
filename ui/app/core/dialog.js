@@ -18,8 +18,11 @@ export var SHORTCUTS = [
 ];
 
 var _els = null;
+
 var _open = null;
+
 var _close = null;
+
 var _resolve = null;
 
 /* A styled replacement for window.prompt(): resolves to the entered text, or
@@ -27,7 +30,8 @@ var _resolve = null;
    datalist so a value that already exists (a workspace name, say) can be
    picked rather than retyped. Must call bindDialog first. */
 export function textPrompt(opts) {
-  if (!_els || !_open) return Promise.resolve(null);
+  if (!_els || !_open) { return Promise.resolve(null); }
+
   opts = opts || {};
   _els.textPromptTitle.textContent = opts.title || "Enter a value";
   _els.textPromptLabel.textContent = opts.label || "Value";
@@ -45,21 +49,25 @@ export function textPrompt(opts) {
   });
   _open(_els.textPrompt, _els.textPromptInput);
   _els.textPromptInput.select();
+
   return new Promise(function (resolve) { _resolve = resolve; });
 }
 
 export function finishTextPrompt(value) {
-  if (!_els || !_close || _els.textPrompt.hidden) return;
+  if (!_els || !_close || _els.textPrompt.hidden) { return; }
+
   _close(_els.textPrompt);
   var resolve = _resolve;
   _resolve = null;
-  if (resolve) resolve(value);
+
+  if (resolve) { resolve(value); }
 }
 
 export function bindDialog(els, openFn, closeFn) {
   _els = els;
   _open = openFn;
   _close = closeFn;
+
   // Populate shortcut table once — lives outside any view's lifecycle.
   if (els.shortcuts && !els.shortcuts._bound) {
     els.shortcuts._bound = true;
@@ -72,6 +80,7 @@ export function bindDialog(els, openFn, closeFn) {
       els.shortcuts.appendChild(dd);
     });
   }
+
   if (els.textPromptForm && !els.textPromptForm._bound) {
     els.textPromptForm._bound = true;
     els.textPromptForm.addEventListener("submit", function (e) {
@@ -79,14 +88,16 @@ export function bindDialog(els, openFn, closeFn) {
       finishTextPrompt(els.textPromptInput.value);
     });
   }
+
   if (els.textPromptCancel && !els.textPromptCancel._bound) {
     els.textPromptCancel._bound = true;
     els.textPromptCancel.addEventListener("click", function () { finishTextPrompt(null); });
   }
+
   if (els.textPrompt && !els.textPrompt._bound) {
     els.textPrompt._bound = true;
     els.textPrompt.addEventListener("mousedown", function (e) {
-      if (e.target === els.textPrompt) finishTextPrompt(null);
+      if (e.target === els.textPrompt) { finishTextPrompt(null); }
     });
   }
 }

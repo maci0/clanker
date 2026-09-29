@@ -13,7 +13,9 @@ import {
 } from "./steer.js";
 
 let restoreDom;
+
 before(function () { restoreDom = installDom(); });
+
 after(function () { restoreDom(); });
 
 test("two sends are two entries, in order — nothing overwrites", function () {

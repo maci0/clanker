@@ -17,20 +17,26 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const appRoot = join(here, "..");
+
 const html = readFileSync(join(appRoot, "index.html"), "utf8");
 
 function jsFiles(dir) {
   const out = [];
+
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...jsFiles(full));
-    else if (name.endsWith(".js")) out.push(full);
+
+    if (statSync(full).isDirectory()) { out.push(...jsFiles(full)); }
+    else if (name.endsWith(".js")) { out.push(full); }
   }
+
   return out;
 }
 
 const files = jsFiles(appRoot).map((f) => ({ path: f, text: readFileSync(f, "utf8") }));
+
 const sources = files.map((f) => f.text).join("\n");
 
 // Buttons whose label starts with "Refresh". `Refresh catalog` posts rather
@@ -39,9 +45,11 @@ function refreshButtonIds() {
   const ids = [];
   const re = /<button[^>]*id="([a-z0-9-]+)"[^>]*>([^<]*)<\/button>/g;
   let m;
+
   while ((m = re.exec(html))) {
-    if (/^Refresh\b/.test(m[2].trim())) ids.push(m[1]);
+    if (/^Refresh\b/.test(m[2].trim())) { ids.push(m[1]); }
   }
+
   return ids;
 }
 
@@ -52,16 +60,23 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // bind, and a key in app.js's `el` map.
 function bindings(id) {
   const found = [];
+
   const local = new RegExp(
     "(?:var|let|const)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:byId|f|document\\.getElementById)\\(\"" + esc(id) + "\"\\)"
   );
+
   const mapped = new RegExp("([A-Za-z_$][\\w$]*)\\s*:\\s*document\\.getElementById\\(\"" + esc(id) + "\"\\)");
+
   for (const f of files) {
     const a = f.text.match(local);
-    if (a) found.push({ path: f.path, name: a[1], scope: f.text });
+
+    if (a) { found.push({ path: f.path, name: a[1], scope: f.text }); }
+
     const b = f.text.match(mapped);
-    if (b) found.push({ path: f.path, name: b[1], scope: sources, mapped: true });
+
+    if (b) { found.push({ path: f.path, name: b[1], scope: sources, mapped: true }); }
   }
+
   return found;
 }
 
@@ -79,6 +94,7 @@ const SCAN_TIMEOUT = 30_000;
 test("every Refresh button in the page is picked up by a script", { timeout: SCAN_TIMEOUT }, function () {
   const ids = refreshButtonIds();
   assert.ok(ids.length >= 15, "expected the page's Refresh buttons, found " + ids.length);
+
   for (const id of ids) {
     assert.ok(bindings(id).length, "Refresh button #" + id + " is never read by any script");
   }
@@ -86,15 +102,19 @@ test("every Refresh button in the page is picked up by a script", { timeout: SCA
 
 test("every Refresh button has a handler that gives busy feedback", { timeout: SCAN_TIMEOUT }, function () {
   for (const id of refreshButtonIds()) {
-    if (HAND_ROLLED.has(id)) continue;
+    if (HAND_ROLLED.has(id)) { continue; }
+
     const where = bindings(id);
     assert.ok(where.length, "Refresh button #" + id + " is never read by any script");
+
     const ok = where.some((b) => {
       const n = esc(b.name);
       const prefix = b.mapped ? "(?:el|_el)\\." : "";
+
       return new RegExp("wireRefresh\\(\\s*" + prefix + n + "\\b").test(b.scope) ||
         new RegExp(prefix + n + "\\.disabled\\s*=").test(b.scope);
     });
+
     assert.ok(ok, "Refresh button #" + id + " has no wireRefresh and no disable: press it and nothing says it worked");
   }
 });
@@ -102,8 +122,10 @@ test("every Refresh button has a handler that gives busy feedback", { timeout: S
 test("wireRefresh re-enables the button whether the load resolves or rejects", { timeout: SCAN_TIMEOUT }, async function () {
   const { wireRefresh } = await import("./utils.js");
   const calls = [];
+
   function fakeButton() {
     let handler = null;
+
     return {
       disabled: false,
       addEventListener(_, fn) { handler = fn; },

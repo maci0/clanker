@@ -34,7 +34,7 @@ export function buildStages(nodes) {
     else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
     else if (n.kind === "final") final = n;
   });
-  return { stages: stages, final: final };
+  return { stages, final };
 }
 
 /* Where a run spent its time: the total of every step's own duration, and the
@@ -61,7 +61,7 @@ export function graphTotals(built) {
     stage.tools.forEach(function (t) { consider(t, "tool"); });
   });
   if (built.final) consider(built.final, "final answer");
-  return { total: total, slowest: slowest, slowestKind: slowestKind, timed: timed };
+  return { total, slowest, slowestKind, timed };
 }
 
 /* A step is worth pointing at only when there is another one to compare it

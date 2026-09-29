@@ -2,7 +2,8 @@
 import { selectHasValue } from "./utils.js";
 
 export function loadLog(name, els, readJson, fmtBytes) {
-  if (!name) return Promise.resolve();
+  if (!name) { return Promise.resolve(); }
+
   return fetch("/api/logs/" + encodeURIComponent(name))
     .then(readJson)
     .then(function (d) {
@@ -13,7 +14,8 @@ export function loadLog(name, els, readJson, fmtBytes) {
     .catch(function (err) {
       var msg = "Could not read log: " + err.message;
       els.logsStatus.textContent = msg;
-      if (els.logView) els.logView.textContent = msg;
+
+      if (els.logView) { els.logView.textContent = msg; }
     });
 }
 
@@ -30,6 +32,7 @@ export function loadLogList(els, readJson, fmtBytes) {
         opt.textContent = l.name + "  \u00b7  " + fmtBytes(l.bytes);
         els.logSelect.appendChild(opt);
       });
+
       if (!logs.length) {
         var none = document.createElement("option");
         none.value = "";
@@ -37,16 +40,21 @@ export function loadLogList(els, readJson, fmtBytes) {
         els.logSelect.appendChild(none);
         els.logSelect.disabled = true;
         els.logView.textContent = "No logs yet. clanker writes them under state/logs/.";
-        if (els.logsStatus) els.logsStatus.textContent = "No log files yet.";
+
+        if (els.logsStatus) { els.logsStatus.textContent = "No log files yet."; }
+
         return;
       }
+
       els.logSelect.disabled = false;
       els.logSelect.value = keep && selectHasValue(els.logSelect, keep) ? keep : logs[0].name;
+
       return loadLog(els.logSelect.value, els, readJson, fmtBytes);
     })
     .catch(function (err) {
       var msg = "Could not list logs: " + err.message;
       els.logsStatus.textContent = msg;
-      if (els.logView) els.logView.textContent = msg;
+
+      if (els.logView) { els.logView.textContent = msg; }
     });
 }

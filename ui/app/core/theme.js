@@ -11,14 +11,23 @@ import { PICKER_CLASS, PICKER_PANEL_CLASS, PICKER_LIST_CLASS, PICKER_OPTION_BASE
 export var THEMES = ["system"];
 
 var CATALOG = {};
+
 var _appliedKeys = [];
+
 var _current = "system";
+
 var _catalogPromise = null;
+
 var _picker = null;
+
 var _list = null;
+
 var _anchor = null;
+
 var _open = false;
+
 var _listeners = [];
+
 // Companion sheets already linked, keyed by their file name. The catalog can
 // be re-fetched, and a link must not be appended twice for one file.
 var _chromeSheets = {};
@@ -29,19 +38,22 @@ function themeAsset(file) {
 
 function loadCatalog() {
   return fetch(themeAsset("catalog.json")).then(function (r) {
-    if (!r.ok) throw new Error("themes catalog");
+    if (!r.ok) { throw new Error("themes catalog"); }
+
     return r.json();
   }).then(function (data) {
     var names = ["system"];
     var next = {};
     (data.themes || []).forEach(function (t) {
-      if (!t || !t.id) return;
+      if (!t || !t.id) { return; }
+
       next[t.id] = t;
       names.push(t.id);
     });
     CATALOG = next;
     THEMES = names;
     applyTheme(_current);
+
     return true;
   }).catch(function () {
     // Serve path missing (tests, a host without themes/): picker keeps
@@ -51,7 +63,8 @@ function loadCatalog() {
 }
 
 export function themesReady() {
-  if (_catalogPromise) return _catalogPromise;
+  if (_catalogPromise) { return _catalogPromise; }
+
   // Only a loaded catalog is memoized. loadCatalog swallows its own errors,
   // so memoizing the settled promise turned one failed fetch into a durable
   // "there are no themes": the picker stayed on "system", a stored named
@@ -59,8 +72,9 @@ export function themesReady() {
   // could not happen, because every later caller got this same promise back.
   // A failure is a miss, so drop the memo and let the next caller retry.
   _catalogPromise = loadCatalog().then(function (loaded) {
-    if (!loaded) _catalogPromise = null;
+    if (!loaded) { _catalogPromise = null; }
   });
+
   return _catalogPromise;
 }
 
@@ -68,10 +82,14 @@ themesReady();
 
 export function loadTheme() {
   var t = null;
+
   try { t = window.localStorage.getItem("clanker.theme"); } catch (e) {}
-  if (!t || t === "system") return "system";
+
+  if (!t || t === "system") { return "system"; }
+
   // Catalog not in yet: keep the stored name so the fetch can apply it.
-  if (THEMES.length === 1) return t;
+  if (THEMES.length === 1) { return t; }
+
   return THEMES.indexOf(t) === -1 ? "system" : t;
 }
 
@@ -80,7 +98,8 @@ export function loadTheme() {
 // for the theme being applied — a win2k visit is the only one that pays for the
 // win2k sheet — and never twice for the same file.
 function ensureChromeSheet(rec) {
-  if (!rec || !rec.css || _chromeSheets[rec.css]) return;
+  if (!rec || !rec.css || _chromeSheets[rec.css]) { return; }
+
   _chromeSheets[rec.css] = true;
   var link = document.createElement("link");
   link.rel = "stylesheet";
@@ -92,9 +111,13 @@ function ensureChromeSheet(rec) {
 function applyTokens(tokens) {
   var root = document.documentElement;
   var i;
-  for (i = 0; i < _appliedKeys.length; i++) root.style.removeProperty(_appliedKeys[i]);
+
+  for (i = 0; i < _appliedKeys.length; i++) { root.style.removeProperty(_appliedKeys[i]); }
+
   _appliedKeys = [];
-  if (!tokens) return;
+
+  if (!tokens) { return; }
+
   Object.keys(tokens).forEach(function (key) {
     root.style.setProperty(key, tokens[key]);
     _appliedKeys.push(key);
@@ -104,6 +127,7 @@ function applyTokens(tokens) {
 export function applyTheme(theme, opts) {
   var id = (opts && opts.toggleId) || "theme-toggle";
   _current = theme;
+
   if (theme === "system") {
     document.documentElement.removeAttribute("data-theme");
     applyTokens(null);
@@ -113,7 +137,9 @@ export function applyTheme(theme, opts) {
     ensureChromeSheet(rec);
     applyTokens(rec && rec.tokens ? rec.tokens : null);
   }
+
   var btn = document.getElementById(id);
+
   if (btn) {
     btn.textContent = String(theme);
     btn.setAttribute("aria-label", "Theme: " + theme);
@@ -125,10 +151,12 @@ export function applyTheme(theme, opts) {
 /* A theme row is the picker's option laid out across, with a colour dot: the
    same base class list, its own direction, and the swatch's size. */
 var THEME_OPTION_CLASS = PICKER_OPTION_BASE + " flex-row items-center gap-1";
+
 var THEME_SWATCH_CLASS = "h-2.5 w-2.5 flex-none rounded-full border border-rule bg-transparent";
 
 function ensurePicker() {
-  if (_picker) return;
+  if (_picker) { return; }
+
   _picker = document.createElement("div");
   _picker.id = "theme-picker";
   _picker.className = PICKER_CLASS;
@@ -142,31 +170,38 @@ function ensurePicker() {
   _list = _picker.querySelector("[data-picker-list]");
   _list.addEventListener("click", function (e) {
     var row = e.target.closest("[data-theme]");
-    if (!row) return;
+
+    if (!row) { return; }
+
     choose(row.getAttribute("data-theme"));
   });
   document.addEventListener("mousedown", function (e) {
-    if (!_open) return;
-    if (_picker.contains(e.target)) return;
-    if (_anchor && _anchor.contains(e.target)) return;
+    if (!_open) { return; }
+
+    if (_picker.contains(e.target)) { return; }
+
+    if (_anchor && _anchor.contains(e.target)) { return; }
+
     closePicker();
   });
   document.addEventListener("keydown", function (e) {
-    if (!_open) return;
+    if (!_open) { return; }
+
     if (e.key === "Escape") {
       e.preventDefault();
       closePicker();
     } else if (e.key === "Tab") {
       var anchor = _anchor;
       closePicker(false);
-      if (anchor && anchor.focus) anchor.focus();
+
+      if (anchor && anchor.focus) { anchor.focus(); }
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       moveFocus(e.key === "ArrowDown" ? 1 : -1);
     }
   });
   window.addEventListener("resize", function () {
-    if (_open && _anchor) positionPicker(_anchor);
+    if (_open && _anchor) { positionPicker(_anchor); }
   });
 }
 
@@ -175,16 +210,23 @@ function ensurePicker() {
 // core/modelpicker.js uses for its own list.
 function moveFocus(delta) {
   var opts = _list.querySelectorAll("button[data-theme]");
-  if (!opts.length) return;
+
+  if (!opts.length) { return; }
+
   var at = -1;
+
   for (var i = 0; i < opts.length; i++) {
     if (opts[i] === document.activeElement) { at = i; break; }
   }
+
   var next = at < 0 ? (delta > 0 ? 0 : opts.length - 1)
                     : (at + delta + opts.length) % opts.length;
+
   var row = opts[next];
-  if (row.focus) row.focus();
-  if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+
+  if (row.focus) { row.focus(); }
+
+  if (row.scrollIntoView) { row.scrollIntoView({ block: "nearest" }); }
 }
 
 function positionPicker(anchor) {
@@ -196,6 +238,7 @@ function positionPicker(anchor) {
   panel.style.left = left + "px";
   var gap = 6;
   var spaceBelow = window.innerHeight - rect.bottom - gap;
+
   if (spaceBelow >= 180 || spaceBelow >= rect.top) {
     panel.style.top = (rect.bottom + gap) + "px";
     panel.style.bottom = "auto";
@@ -216,7 +259,9 @@ function renderList(current) {
     row.setAttribute("role", "option");
     row.setAttribute("data-theme", name);
     row.setAttribute("aria-selected", name === current ? "true" : "false");
-    if (name === current) row.classList.add("is-current");
+
+    if (name === current) { row.classList.add("is-current"); }
+
     // The palette's own background, so a theme is recognisable before it is
     // applied. "system" has no file and no fixed colour: it keeps an empty
     // ring so every label still starts at the same x.
@@ -224,7 +269,9 @@ function renderList(current) {
     swatch.className = THEME_SWATCH_CLASS;
     swatch.setAttribute("aria-hidden", "true");
     var rec = CATALOG[name];
-    if (rec && rec.tokens && rec.tokens["--bg"]) swatch.style.background = rec.tokens["--bg"];
+
+    if (rec && rec.tokens && rec.tokens["--bg"]) { swatch.style.background = rec.tokens["--bg"]; }
+
     row.appendChild(swatch);
     var label = document.createElement("span");
     label.className = PICKER_OPTION_LABEL_CLASS;
@@ -236,19 +283,25 @@ function renderList(current) {
 
 function openPicker(anchor, current) {
   ensurePicker();
-  if (_anchor && _anchor !== anchor) _anchor.setAttribute("aria-expanded", "false");
+
+  if (_anchor && _anchor !== anchor) { _anchor.setAttribute("aria-expanded", "false"); }
+
   _anchor = anchor;
   _open = true;
   _picker.hidden = false;
-  if (anchor) anchor.setAttribute("aria-expanded", "true");
+
+  if (anchor) { anchor.setAttribute("aria-expanded", "true"); }
+
   renderList(current);
   positionPicker(anchor);
   var cur = _list.querySelector(".is-current");
-  if (cur && cur.focus) cur.focus();
+
+  if (cur && cur.focus) { cur.focus(); }
 }
 
 function closePicker(restoreFocus) {
-  if (!_open) return;
+  if (!_open) { return; }
+
   var anchor = _anchor;
   // A hidden element keeps the focus it holds, so without handing it back the
   // page falls to <body> and the next Tab restarts at the top of the
@@ -256,28 +309,39 @@ function closePicker(restoreFocus) {
   // the focus that click just moved.
   var restore = restoreFocus !== false && _picker && _picker.contains(document.activeElement);
   _open = false;
-  if (_picker) _picker.hidden = true;
-  if (anchor) anchor.setAttribute("aria-expanded", "false");
+
+  if (_picker) { _picker.hidden = true; }
+
+  if (anchor) { anchor.setAttribute("aria-expanded", "false"); }
+
   _anchor = null;
-  if (restore && anchor && anchor.focus) anchor.focus();
+
+  if (restore && anchor && anchor.focus) { anchor.focus(); }
 }
 
 function choose(name) {
-  if (name !== "system" && THEMES.indexOf(name) === -1) return;
+  if (name !== "system" && THEMES.indexOf(name) === -1) { return; }
+
   try { window.localStorage.setItem("clanker.theme", name); } catch (e) {}
+
   applyTheme(name);
-  for (var i = 0; i < _listeners.length; i++) _listeners[i](name);
+
+  for (var i = 0; i < _listeners.length; i++) { _listeners[i](name); }
+
   closePicker();
 }
 
 export function bindThemeToggle(btn, onChange) {
-  if (!btn) return;
-  if (typeof onChange === "function") _listeners.push(onChange);
+  if (!btn) { return; }
+
+  if (typeof onChange === "function") { _listeners.push(onChange); }
+
   btn.setAttribute("aria-haspopup", "listbox");
   btn.setAttribute("aria-expanded", "false");
   btn.addEventListener("click", function (e) {
     e.preventDefault();
-    if (_open && _anchor === btn) closePicker();
-    else openPicker(btn, loadTheme());
+
+    if (_open && _anchor === btn) { closePicker(); }
+    else { openPicker(btn, loadTheme()); }
   });
 }

@@ -26,7 +26,7 @@ clanker.registerView({
   id: "activity",
   title: "Activity",
   group: "Watch",
-  mount: function (container, api) {
+  mount (container, api) {
     var head = api.el("div", "section-head");
     var h = api.el("h2", null, "Activity");
     var refresh = api.el("button", "secondary", "Refresh");
@@ -141,7 +141,7 @@ clanker.registerView({
 
     return load();
   },
-  refresh: function () {
+  refresh () {
     if (this.reload) return this.reload();
     return null;
   }
