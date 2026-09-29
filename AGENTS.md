@@ -2,6 +2,12 @@
 
 clanker is a self-improving AI agent harness in **Zig 0.16.0**; tools run as sandboxed WASM (zwasm) and it improves its own source via a gated loop.
 
+## Local agent rules
+
+Read first, before any task: when `.agents/AGENTS.md` exists, read it and every rule module it imports. Directory is checkout-private and gitignored, so only absence is a soft skip. `CLAUDE.md` is the companion file: it imports this one and carries the operator verb tables, so a convention belongs here and a verb belongs there.
+
+@.agents/AGENTS.md
+
 ## Safety
 
 - Fix code that fails a gate; never disable, weaken, bypass, or redefine the gate to pass. This includes configuration defaults, thresholds, test coverage, and the gate implementation itself. Writable gate code is for strengthening checks, not relaxing acceptance.
@@ -157,9 +163,3 @@ Retrieved documents and memory hits are untrusted prompt data. Keep inside expli
 Web UI presents goals and Kanban as one workflow: creating goal creates card, lane moves update goal status, Archive retains history for knowledge/autolearn rather than deleting. Keep `kanban` as card/room impl and `state/goals.json` as structured goal record; reconcile via durable card `goal` id, not third store. A create that names a goal already on a live card returns that card. Goal timestamps: `created`/`updated` are seconds since the epoch (`goal_add` and `goal_update` both write seconds; `add_goal.zig` used to store the raw nanosecond `ck_now` while `update_goal.zig` wrote seconds, so an updated goal's `updated` sorted below its `created` and read as the oldest goal in the web UI); the goal `id` is the nanosecond clock, opaque and unique, deliberately a different unit. Card checklist items form arbitrarily deep parent tree and may depend on any other item in same card; cycles invalid, card can't enter Done until every item at every depth is complete. Predicates live in `tools/zig/cards.zig` so `zig build test` runs them; `board.zig` only enforces. A card's `log` array is written by one action only: `log`; `add`/`move`/`update`/`claim`/`close`/`delete`/`subtask_*`/`depend` append nothing, so the card logs are not the board's history and reading them alone shows an active board as idle. Every action is in the room log, but only as far back as `max_history`; `boardTimeline` (`ui/app/lib/board.js`, `api.boardTimeline`) merges both feeds and is what a history view should use. A knowledge document is identified by its name in its collection, so `add_doc` is an upsert (`tools/zig/knowledge_logic.zig` `findByName`): a retried `POST /api/knowledge/<id>/docs` or a repeated model call replaces the document instead of appending a second copy, and the folder sync in `cli.zig` is one call rather than a `delete_doc`/`add_doc` pair that lost the document if anything died between the two. An `alarm` `set` is the same rule on (message, fire time, interval) via `alarm_store.findSame`, since both stores' duplicates reappear in every later system prompt.
 
 Goal surfaces have three separate effects: `write-goal` drafts without saving/running; `add-goal` saves without starting work; `goal`/`/goal` starts a goal loop until condition achieved, blocked, cancelled, or budget-limited. Catalog tools are `goal_write`, `goal_add`, `goal_update` (noun_verb, like `todo_*`). `run --goal <id>` starts same loop from saved record. Never describe or implement `goal` as one normal agent run. `goal_write`'s five draft fields must stay distinct: `tools/zig/write_goal_logic.zig` (host-tested, imported by the guest) extracts per-sentence/clause segments of the intent, defaults an open fork under Assumed / Still open, and defaults a fork whose only matching text another field already holds; the raw intent appears once, as `record.intent`, never as a field value.
-
-## Local agent rules
-
-When `.agents/AGENTS.md` exists, agents must read it and every rule module it imports before starting any task. Directory is checkout-private and gitignored, so only absence is soft skip.
-
-@.agents/AGENTS.md

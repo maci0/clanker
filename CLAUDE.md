@@ -26,11 +26,9 @@ implementation that drifts from the first, skips the descriptor's path and
 command policy, and leaves no durable record. `clanker reports search` reads the
 same store the agent reads; a `grep` over `docs/` does not.
 
-**Check before you assert.** A verb's purpose is written down. Before
-describing what one does, read its record: `docs/README.md` for the
-documentation taxonomy, `docs/adrs/` for decisions already made, `docs/prds/`
-for what a feature is meant to be, `docs/manifest.md` for what a descriptor
-may grant. `--help` is the surface, not the design.
+**Check before you assert.** A verb's purpose is written down, and AGENTS.md
+owns the record taxonomy and the search-before-deciding rule. `--help` is the
+surface, not the design.
 
 ## The record stores, and which is which
 
@@ -56,21 +54,6 @@ authoritative schema and the code wins on any disagreement),
 `docs/manifest.md` (every field a descriptor honors), and
 `docs/prompts/*-review.md` (the review prompts, which AGENTS.md marks as
 living documents to fold caveats back into).
-
-Search before diagnosing, and search before deciding. A matching report has
-the reproduction already; a matching ADR means the question is settled.
-
-```bash
-clanker reports search "<symptom>"
-```
-
-```bash
-clanker rfc search "<decision>"
-```
-
-Gathering the evidence and making the decision are separate records with
-separate tools, and **neither requires the other**; never create one merely
-because the other exists.
 
 ### `clanker reports`
 
@@ -175,12 +158,10 @@ unrelated note-taking surface.
 clanker schedule [list|add|remove|enable|disable|run|run-due|log]
 ```
 
-**Nothing fires on its own.** `clanker schedule run-due` is the only way an
-entry fires unattended (`clanker schedule run <id>` fires one by hand, whatever
-its schedule says), and it is a short-lived command the system's cron or a
-systemd timer invokes, typically every minute. clanker ships no always-on
-loop and `clanker serve` gains no scheduling thread
-([ADR 0008](docs/adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md)).
+**Nothing fires on its own.** `run-due` is the only unattended path, and it
+is a short-lived command the system's cron or a systemd timer invokes
+(AGENTS.md § Architecture, `src/schedule/`, and
+[ADR 0008](docs/adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md)).
 `run-due` takes a non-blocking exclusive flock for its duration, so a
 minute-by-minute invocation cannot stack sweeps.
 
@@ -274,21 +255,17 @@ session's staged slice into your commit
 
 ### Working in a hand-made worktree
 
-The repository rules make every session create its own worktree with `git
-worktree add`, and that checks out **tracked** files only. `.env` and
-`config.local.toml` are gitignored, so a fresh worktree has neither and every
-verb there resolves the committed `config.toml` `default_provider` (moonshotai,
-which nobody has a key for). `clanker commit` then degrades to the one-commit
-fallback plan `--yes` refuses, and every other model-calling verb fails the same
-way. Prepare the worktree **before the first model-calling verb**, or you hit
-the bug you are working in:
+`git worktree add` checks out **tracked** files only, so `.env` and
+`config.local.toml` are absent and every verb resolves `config.toml`'s
+committed `default_provider` with no key: `clanker commit` degrades to the
+fallback plan `--yes` refuses. Prepare the worktree **before the first
+model-calling verb**:
 
 ```bash
 clanker worktree prepare
 ```
 
-Both at once: this fetches `origin`, branches from the remote tip and prepares
-the result, which is the whole flow the rules ask for:
+Both at once (fetch, branch from the remote tip, prepare):
 
 ```bash
 clanker worktree add .local/worktrees/<slug>
@@ -303,7 +280,8 @@ zig build tools
 ```
 
 `prepare` reports what it did to each name and whether `zig-out/tools` is
-built. `[agent] worktree_link_local_config = false` refuses the link
+built. AGENTS.md § Architecture carries the link mechanics and the
+`worktree_link_local_config = false` refusal
 ([ADR 0048](docs/adrs/0048-preparing-a-hand-made-worktree-is-an-explicit-verb-not-a.md),
 [runbook](docs/runbooks/hand-made-worktree-has-no-local-config.md)).
 
@@ -394,21 +372,14 @@ documents too, or the next reader learns the feature from source:
 - `AGENTS.md` and this file: when the change alters how an agent should
   work, not merely what exists.
 
-AGENTS.md is a living document: when a turn surfaces a caveat, quirk, or
-failure mode worth remembering, fold it back before the turn ends. One slice
-per turn, the smallest true addition. When fewer words say the same thing,
-tighten the stale sentence instead of stacking a new one beside it.
-
-Verify with the gate rather than by eye:
+AGENTS.md is a living document, and its § Living document states the fold-it-
+back rule. Verify with the gate rather than by eye:
 
 ```bash
 clanker gate
 ```
 
-It runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,
-js-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi,
-tools-ts-toolchain, release-contract, reports-inventory, skills-inventory and
-dep-patches.
+The gate list and what each one pins are in AGENTS.md § Build & test.
 `zig build e2e` is separate and is not part of it.
 
 For a fresh checkout or worktree, follow the bootstrap in AGENTS.md:
