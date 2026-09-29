@@ -5465,7 +5465,7 @@ test "tool latency buckets are cumulative and every call lands in one" {
     noteToolLatency(30_000);
     try std.testing.expectEqual(start_sum + 35_550, tool_latency_ms_sum.load(.monotonic));
     try std.testing.expectEqual(start_100 + 1, tool_latency_le_100ms.load(.monotonic));
-    try std.testing.expectEqual(start_1s + 3, tool_latency_le_1s.load(.monotonic));
+    try std.testing.expectEqual(start_1s + 2, tool_latency_le_1s.load(.monotonic));
     // Past the top bucket: counted in the sum, in no bucket, which is what
     // makes the "calls slower than le_10000" figure derivable.
     try std.testing.expectEqual(start_10s + 3, tool_latency_le_10s.load(.monotonic));
