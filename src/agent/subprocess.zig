@@ -5,26 +5,11 @@
 
 const std = @import("std");
 const session = @import("session.zig");
+const spin_mutex = @import("../util/spin_mutex.zig");
 
-/// Blocking lock around `std.atomic.Mutex` for structures that do not carry
-/// an `std.Io` handle (the process-global registry is touched at first use).
 /// Bounds each pipe read; the leftover assembly above handles arbitrary
 /// line lengths, so this only caps how much is read per syscall.
 const stdout_chunk_bytes: usize = 4096;
-
-const SpinMutex = struct {
-    raw: std.atomic.Mutex = .unlocked,
-
-    fn lock(self: *SpinMutex) void {
-        while (!self.raw.tryLock()) {
-            std.Thread.yield() catch {};
-        }
-    }
-
-    fn unlock(self: *SpinMutex) void {
-        self.raw.unlock();
-    }
-};
 
 pub const Handle = struct {
     session_id: []const u8,
@@ -414,7 +399,7 @@ fn waitChildWithin(io: std.Io, child: *std.process.Child, pid: std.posix.pid_t, 
     return true;
 }
 
-var process_mu: SpinMutex = .{};
+var process_mu: spin_mutex.SpinMutex = .{};
 var process_reg: ?Registry = null;
 var process_io: ?std.Io.Threaded = null;
 

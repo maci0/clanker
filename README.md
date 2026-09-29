@@ -74,8 +74,10 @@ builds and runs every tool. The test step drives its JS suites with
 `bun test`.
 
 From a fresh clone, one command checks the toolchain, extracts the pinned
-dependencies, applies the dependency patches and builds the binary and its
-WASM tools:
+dependencies, applies the dependency patches, builds the binary and its
+WASM tools, and installs the JavaScript dev dependencies (`bun install`, needed
+by `bun run lint`, `bun run css:build` and the pre-commit hook's JS check, but
+not by the build or the test suite):
 
 ```sh
 scripts/setup.sh
@@ -117,7 +119,8 @@ The edit loop has three speeds, slowest last:
 
 `zig build fmt-fix` rewrites the formatting `quick-check` reports. For a
 JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs`,
-or sweep them all with `bun test ui/app` (bun walks the directory itself).
+or sweep them all with `bun test ui` (bun walks the directory itself; that is
+`ui/app` plus the nine `ui/plugins` suites).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
 but CI also runs the end-to-end pty journeys (`zig build e2e`), shellcheck,

@@ -28,6 +28,7 @@
 //! the agent again, which is the pre-cache behaviour, never worse.
 
 const std = @import("std");
+const spin_mutex = @import("../util/spin_mutex.zig");
 
 /// How long a stored reply is replayed for. A peer retrying a delegation that
 /// ran for minutes comes back inside this window; one that comes back tomorrow
@@ -65,7 +66,7 @@ pub const Cache = struct {
     /// Connections are handled one thread each, so two retries of one id can
     /// arrive together and both reach `begin` before either has stored
     /// anything. The lock is what makes the second one see the first's claim.
-    mutex: std.Thread.Mutex = .{},
+    mutex: spin_mutex.SpinMutex = .{},
     entries: std.ArrayList(Entry) = .empty,
     bytes: usize = 0,
 

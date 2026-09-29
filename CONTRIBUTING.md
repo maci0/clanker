@@ -14,10 +14,14 @@ That is the whole bootstrap: it checks the toolchain, runs
 `zig build --fetch=all` and `scripts/apply-patches.sh` (re-applying
 `patches/*.patch` to the fetched dependencies; the SIGWINCH patch is
 load-bearing for `clanker repl` and the pty e2e journeys, and `build.zig`
-refuses to compile against an unpatched tree), then `zig build` and
-`zig build tools`. The order is the whole trap: `--fetch=all` extracts
-without compiling, and the patch script cannot patch a tree that is not on
-disk yet. It prints the remaining steps when it finishes: `zig build test`,
+refuses to compile against an unpatched tree), then `zig build`,
+`zig build tools` and `bun install --frozen-lockfile` (the last one only
+feeds the JavaScript half of the loop: `bun run lint`, `bun run css:build` and
+the pre-commit hook's JS check resolve packages out of `node_modules`, and
+without it each fails with a bare "Cannot find package"). The order is the
+whole trap: `--fetch=all` extracts without compiling, and the patch script
+cannot patch a tree that is not on disk yet. It prints the remaining steps
+when it finishes: `zig build test`,
 `./zig-out/bin/clanker init`, `./zig-out/bin/clanker gate`, and the
 repository hooks:
 
@@ -52,8 +56,9 @@ Three speeds, slowest last:
 
 - One JS suite: `bun test ui/app/core/scroll.test.mjs` (or whichever
   `.test.mjs` you changed).
-- Every JS suite, without the Zig half: `bun test ui/app` (bun walks the
-  directory itself).
+- Every JS suite, without the Zig half: `bun test ui` (bun walks the
+  directory itself; it covers `ui/app` and the nine `ui/plugins` suites the
+  test step also runs).
 - The e2e journeys (`zig build e2e`) spawn the real `clanker repl` on a pty,
   so they need the dependency patches applied: run `scripts/apply-patches.sh`
   once after `zig build --fetch=all` (idempotent; `scripts/verify.sh` does it
@@ -80,8 +85,8 @@ Three speeds, slowest last:
   `tools/ts/dist/*.wasm` matches a clean rebuild (`tools/ts/verify.sh`).
   `scripts/verify.sh` reproduces all of it locally.
 - The pre-commit hook (fast checks over staged files only). Its JavaScript
-  check needs `bun install` once per clone; without it the hook says it
-  skipped and CI still runs oxlint. Bypass for WIP
+  check needs the `bun install` `scripts/setup.sh` runs; without it the hook
+  says it skipped and CI still runs oxlint. Bypass for WIP
   with `git commit --no-verify`.
 
 ## Committing

@@ -82,6 +82,25 @@ echo "== build =="
 zig build
 zig build tools
 
+# The build and the test suite need none of these, but the JavaScript half of
+# the contributor loop does: `bun run lint`, `bun run css:build` and the
+# pre-commit hook's JS check all resolve packages out of node_modules, and a
+# fresh clone has none, so each of them fails with a bare "Cannot find package"
+# several steps into a loop nobody had been told was incomplete. A failure
+# here is reported rather than fatal: the build above is already usable, and a
+# machine without the registry should still end up with a working binary.
+echo
+echo "== JavaScript dev dependencies =="
+if command -v bun >/dev/null 2>&1; then
+    if ! bun install --frozen-lockfile; then
+        echo "setup: warning: bun install failed; 'bun run lint' and the pre-commit" >&2
+        echo "setup: hook's JS check need 'bun install --frozen-lockfile' to have run" >&2
+    fi
+else
+    echo "setup: bun not found; skipping. 'bun run lint', 'bun run css:build' and" >&2
+    echo "setup: the pre-commit hook's JS check need it (see CONTRIBUTING.md)" >&2
+fi
+
 cat <<'EOF'
 
 setup: a runnable build is in place.

@@ -7,6 +7,10 @@
 # `EXE` is deliberately absent: these scripts carry a shebang but are run as
 # `python3 scripts/sbom.py` and the `opencv` guest is exec'd by its tool
 # manifest, so a non-executable bit is not a defect here.
+# The version the selection below was verified against, in the one place CI and
+# `scripts/verify.sh` both read. Without it a contributor's local ruff and CI's
+# pinned ruff are two rule sets, and the divergence only shows up after a push.
+required-version = "==0.16.4"
 line-length = 100
 target-version = "py310"
 # The one place the ruff version is written down. CI reads it from here

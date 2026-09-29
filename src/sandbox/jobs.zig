@@ -14,6 +14,7 @@ const std = @import("std");
 const session = @import("../agent/session.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const log = @import("../util/log.zig");
+const spin_mutex = @import("../util/spin_mutex.zig");
 
 /// Process-local counters for background jobs. `ck_job` is start-and-forget,
 /// so without these a job that dies leaves no trace anywhere: nobody is
@@ -70,18 +71,6 @@ const Origin = struct {
     }
 };
 
-const SpinMutex = struct {
-    raw: std.atomic.Mutex = .unlocked,
-    fn lock(self: *SpinMutex) void {
-        while (!self.raw.tryLock()) {
-            std.Thread.yield() catch {};
-        }
-    }
-    fn unlock(self: *SpinMutex) void {
-        self.raw.unlock();
-    }
-};
-
 pub const SubJob = struct {
     id: []const u8,
     session_id: []const u8,
@@ -110,7 +99,7 @@ const ExecJob = struct {
     waiting: u32 = 0,
 };
 
-var mu: SpinMutex = .{};
+var mu: spin_mutex.SpinMutex = .{};
 var subs: std.ArrayList(*SubJob) = .empty;
 var execs: std.ArrayList(*ExecJob) = .empty;
 var gpa_ref: ?std.mem.Allocator = null;

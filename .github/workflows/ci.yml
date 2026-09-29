@@ -191,17 +191,21 @@ jobs:
       - name: Resolve Ruff version
         id: ruffpin
         run: |
-          version=$(sed -n 's/^[[:space:]]*required-version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' ruff.toml)
-          [ -n "$version" ] || { echo "ruff.toml has no required-version" >&2; exit 1; }
+          version=$(sed -n 's/^[[:space:]]*required-version[[:space:]]*=[[:space:]]*"==\(.*\)".*/\1/p' ruff.toml)
+          [ -n "$version" ] || { echo "ruff.toml has no required-version pin" >&2; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Python is a secondary language here (sbom.py, gen_frames.py, ...),
       # and nothing in CI executes most of it, so a defect would merge unseen.
       # ruff parses every tracked .py (a syntax error is a finding, so this
       # also covers what the ast.parse compile check used to) and enforces
-      # ruff.toml, which pins the selected rules and the line cap so a ruff
-      # upgrade cannot turn CI red on a tree nobody changed. A venv because
-      # ubuntu-24.04 marks the system python externally managed.
+      # ruff.toml, which pins the selected rules, the line cap and
+      # `required-version` so a ruff upgrade cannot turn CI red on a tree
+      # nobody changed. The release is read out of that same file above rather
+      # than restated: a pin in one file and an install of another is how the
+      # local `ruff` on a contributor's PATH and this job end up being two rule
+      # sets. A venv because ubuntu-24.04 marks the system python externally
+      # managed.
       - name: Lint Python
         run: |
           python3 -m venv "$RUNNER_TEMP/ruff-venv"

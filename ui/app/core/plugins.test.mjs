@@ -290,6 +290,8 @@ function loadHost(page, extras) {
     // The stripped imports.
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
+    showLoading: (el, msg) => { el.appendChild(makeText(msg)); return el; },
+    requireText: () => true,
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
     requireText: () => true, showLoading: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},

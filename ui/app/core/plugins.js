@@ -175,19 +175,19 @@ export function pluginApi(spec) {
     // The page's own chrome (`core/ui.js`), which a built-in view imports by
     // name: the empty/loading plate, the skeleton rows a list shows before its
     // first answer, the run and tool rows, the button upgrade, the refresh
-    // wiring, and `UI`, the small kit of element builders. Without these an
-    // addon view that showed a run list or a settings form could not be
-    // written, only approximated.
+    // wiring, the required-field refusal, and `UI`, the small kit of element
+    // builders. Without these an addon view that showed a run list or a
+    // settings form could not be written, only approximated.
     ui: {
       loadError: showLoadError,
+      loading: showLoading,
       skeletonRows: skeletonRows,
       toolRow: toolRow,
       runDetail: runDetail,
       button: stampButtonVariant,
       refresh: wireRefresh,
-      kit: UI,
       requireText: requireText,
-      loading: showLoading
+      kit: UI
     },
     // A modal dialog with focus handling (`core/overlay.js`). A view that
     // confirms a destructive action or edits a record needs one, and building

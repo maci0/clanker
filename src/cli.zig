@@ -40,6 +40,7 @@ const prompt_fence = @import("util/prompt_fence.zig");
 const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
 const json_util = @import("util/json.zig");
+const spin_mutex = @import("util/spin_mutex.zig");
 const commit_logic = @import("commit_logic");
 const preset_mod = @import("preset/preset.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
@@ -9466,9 +9467,20 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         nested.errors_total,
     }) catch return null;
     // The mesh group is rendered on its own and interpolated whole: one
-    // `bufPrint` is capped at 32 arguments, and a single flat call ran out
-    // as soon as the net counters joined the replication ones. Two renders
-    // also keep each group's fields next to the snapshot that fills them.
+    // Two groups are rendered on their own and interpolated whole. `bufPrint`
+    // is capped at 32 arguments and a single flat call ran out as soon as the
+    // net counters joined the replication ones, then again when the tool
+    // latency counters arrived. Separate renders also keep each group's fields
+    // next to the snapshot that fills them.
+    var tools_buf: [256]u8 = undefined;
+    const tools_group = std.fmt.bufPrint(&tools_buf, "{{\"requests_total\":{d},\"errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}}", .{
+        tools.requests_total,
+        tools.errors_total,
+        tools.latency_ms_sum,
+        tools.latency_le_100ms,
+        tools.latency_le_1s,
+        tools.latency_le_10s,
+    }) catch return null;
     var mesh_buf: [512]u8 = undefined;
     const mesh_group = std.fmt.bufPrint(&mesh_buf, "{{\"fanouts_total\":{d},\"fanout_failures_total\":{d},\"backfill_failures_total\":{d},\"rejected_frames_total\":{d},\"peer_read_errors_total\":{d},\"joins_refused_total\":{d},\"joins_pending_total\":{d},\"inbound_refused_total\":{d}}}", .{
         mesh_sync.fanouts_total,
@@ -9480,7 +9492,7 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         mesh_net_m.joins_pending_total,
         mesh_net_m.inbound_refused_total,
     }) catch return null;
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{s},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -9503,12 +9515,7 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         llm.latency_le_5s,
         llm.latency_le_15s,
         llm.latency_le_60s,
-        tools.requests_total,
-        tools.errors_total,
-        tools.latency_ms_sum,
-        tools.latency_le_100ms,
-        tools.latency_le_1s,
-        tools.latency_le_10s,
+        tools_group,
         schedule.fires_total,
         schedule.errors_total,
         job.starts_total,
@@ -9734,7 +9741,7 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
 /// process. `serve_gpa`-owned and never freed, like the steer table beside it:
 /// it is empty when the process exits.
 var a2a_cache: ?a2a_reply_cache.Cache = null;
-var a2a_cache_mutex: std.Thread.Mutex = .{};
+var a2a_cache_mutex: spin_mutex.SpinMutex = .{};
 
 /// The process-wide cache, created on first use. `serve_gpa` is installed at
 /// serve start, before any connection is accepted.
