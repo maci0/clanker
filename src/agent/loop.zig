@@ -5442,6 +5442,10 @@ test "ttsrStreamWrap uses the threadlocal guard and is a no-op without one" {
 test "tool metrics count invocations and error JSON" {
     const start_req = tool_requests_total.load(.monotonic);
     const start_err = tool_errors_total.load(.monotonic);
+    const start_sum = tool_latency_ms_sum.load(.monotonic);
+    const start_le_100 = tool_latency_le_100ms.load(.monotonic);
+    const start_le_1s = tool_latency_le_1s.load(.monotonic);
+    const start_le_10s = tool_latency_le_10s.load(.monotonic);
     noteToolRequest();
     noteToolRequest();
     noteToolError();
