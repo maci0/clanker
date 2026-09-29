@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const glob = @import("../util/glob.zig");
+const log = @import("../util/log.zig");
 const toml_bridge = @import("../util/toml_bridge.zig");
 
 pub const Preset = struct {
@@ -20,12 +21,41 @@ pub const Preset = struct {
     default_model: []const u8 = "",
 };
 
+/// Every key `parseString` reads. A preset is operator-authored TOML like
+/// config.toml, and a misspelled key there configures nothing: `tools_dny`
+/// loaded a preset with an empty deny list, which is the one way the
+/// read-only research preset stops being read-only.
+const known_keys = [_][]const u8{
+    "description",
+    "system_prompt_append",
+    "default_provider",
+    "default_model",
+    "tools_allow",
+    "tools_deny",
+};
+
+/// Top-level keys `parseString` does not read, in file order.
+pub fn unknownKeys(arena: std.mem.Allocator, toml_text: []const u8) ![][]const u8 {
+    const value = try toml_bridge.parseToJsonValue(arena, toml_text);
+    if (value != .object) return &.{};
+    var out: std.ArrayList([]const u8) = .empty;
+    var it = value.object.iterator();
+    while (it.next()) |kv| {
+        for (known_keys) |k| {
+            if (std.mem.eql(u8, kv.key_ptr.*, k)) break;
+        } else try out.append(arena, kv.key_ptr.*);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 pub fn parseString(alloc: std.mem.Allocator, toml_text: []const u8) !Preset {
     // Leaky: every slice is allocated from `alloc`, which must outlive the
     // returned Preset. Production callers pass a run/session arena.
     const value = toml_bridge.parseToJsonValue(alloc, toml_text) catch return error.PresetSyntax;
     if (value != .object) return error.PresetSyntax;
     const obj = value.object;
+    for (unknownKeys(alloc, toml_text) catch &.{}) |key|
+        log.log(.warn, "preset: unknown key '{s}' (ignored, check spelling)", .{key});
 
     var p = Preset{};
     p.description = try fieldString(alloc, obj, "description");
@@ -34,13 +64,27 @@ pub fn parseString(alloc: std.mem.Allocator, toml_text: []const u8) !Preset {
     p.default_model = try fieldString(alloc, obj, "default_model");
     p.tools_allow = try fieldStringArray(alloc, obj, "tools_allow");
     p.tools_deny = try fieldStringArray(alloc, obj, "tools_deny");
+    // PRD 0033 lists these two as preset keys, and the parser reads them, but
+    // no entry point consults them: the provider is resolved before the preset
+    // loads, in `clanker run` (src/cli.zig) and REPL session start
+    // (src/tui/repl.zig). A preset naming a model therefore loaded clean and
+    // ran on whatever the session was already on, so say so at load rather
+    // than let the key read as applied.
+    for ([_]struct { key: []const u8, value: []const u8 }{
+        .{ .key = "default_provider", .value = p.default_provider },
+        .{ .key = "default_model", .value = p.default_model },
+    }) |kv| if (kv.value.len > 0)
+        log.log(.warn, "preset: '{s}' = \"{s}\" is parsed but never applied; pick the model with --provider/--model", .{ kv.key, kv.value });
     return p;
 }
 
-/// Absent or non-string reads as "", matching how a preset omits a field.
+/// Absent reads as "", the legitimate way a preset omits a field. Present but
+/// not a string is refused, as the array fields are: `default_provider = 42`
+/// read as "" loads with no provider override and answers the run with the
+/// built-in default instead of naming the wrong one.
 fn fieldString(alloc: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ![]const u8 {
     const v = obj.get(key) orelse return "";
-    if (v != .string) return "";
+    if (v != .string) return error.PresetSchema;
     return alloc.dupe(u8, v.string);
 }
 
@@ -131,6 +175,44 @@ test "preset parse reads real TOML shapes the field-level read used to lose" {
     try std.testing.expectEqualStrings("", p.system_prompt_append);
 }
 
+test "a misspelled preset key is named, and the deny list it was meant to be still reads empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const typo =
+        \\tools_dny = ["edit_file", "patch_apply"]
+    ;
+    const unknown = try unknownKeys(alloc, typo);
+    try std.testing.expectEqual(@as(usize, 1), unknown.len);
+    try std.testing.expectEqualStrings("tools_dny", unknown[0]);
+
+    // The load itself still succeeds (an unknown key is a warning, as in
+    // config.toml), but the deny list it was meant to hold is gone, so
+    // `allowed` is all-true and only the warning stands between that and a
+    // writable session.
+    const p = try parseString(alloc, typo);
+    try std.testing.expectEqual(@as(usize, 0), p.tools_deny.len);
+    try std.testing.expect(allowed(p, "edit_file"));
+
+    const clean = try unknownKeys(alloc, "tools_deny = [\"edit_file\"]\ndescription = \"d\"\n");
+    try std.testing.expectEqual(@as(usize, 0), clean.len);
+}
+
+test "the two keys the parser reads but nothing applies still load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // They are not unknown keys (parseString reads both, and loadFromFile
+    // must not fail over a PRD 0033 key), they just warn: the provider is
+    // resolved before any preset loads.
+    const p = try parseString(alloc, "default_provider = \"openai\"\ndefault_model = \"gpt-5.6\"\n");
+    try std.testing.expectEqualStrings("openai", p.default_provider);
+    try std.testing.expectEqualStrings("gpt-5.6", p.default_model);
+    try std.testing.expectEqual(@as(usize, 0), (try unknownKeys(alloc, "default_model = \"gpt-5.6\"\n")).len);
+}
+
 test "preset wrong-shaped fields are refused or defaulted, never silently emptied" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -142,6 +224,9 @@ test "preset wrong-shaped fields are refused or defaulted, never silently emptie
     try std.testing.expectError(error.PresetSchema, parseString(alloc, "tools_deny = [1]\n"));
     // Broken TOML fails loudly rather than parsing as an all-allow preset.
     try std.testing.expectError(error.PresetSyntax, parseString(alloc, "description = \"unterminated\n"));
+    // A scalar where a string belongs, on the two fields that steer the run.
+    try std.testing.expectError(error.PresetSchema, parseString(alloc, "default_provider = 42\n"));
+    try std.testing.expectError(error.PresetSchema, parseString(alloc, "description = [\"a\"]\n"));
 
     // Absent arrays are the legitimate empty case.
     const p = try parseString(alloc, "description = \"x\"\n");

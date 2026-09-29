@@ -207,6 +207,10 @@ re-diagnose them from an older report.
 - [x] `preset.toml` carries `description`, `system_prompt_append`,
       `tools_allow`/`tools_deny`, and optional
       `default_provider`/`default_model` (Goal 1).
+      The two provider keys are parsed but never applied: the provider is
+      resolved before the preset loads (in `src/cli.zig` and
+      `src/tui/repl.zig`), so `preset.zig` warns when a preset names either.
+      `--provider`/`--model` are the way to pick one today.
 - [x] `--preset research` offers the model only read/search tools; a
       write-capable tool is neither offered nor callable.
 - [x] `--preset full` (or no `--preset`) is a no-op: identical tool set to

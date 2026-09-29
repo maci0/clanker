@@ -820,6 +820,41 @@ A second process on the same host uses another `id`, `listen_port`,
   via the sandboxed `peers` tool; each reachable peer records it in its own
   `state/notifications.jsonl` through `POST /api/notify`.
 
+## `presets/<name>.toml`
+
+Not part of `config.toml`: a preset is its own file, so several can exist and
+`--preset <name>` (or `/preset <name>`) picks one. `clanker preset new <name>`
+scaffolds it, `clanker preset show <name>` prints it. A preset filters the
+already-loaded tool registry, so it costs no rebuild.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `description` | string | `""` | one line, shown by `clanker preset list` |
+| `system_prompt_append` | string | `""` | appended after clanker's own system prompt, never replacing it |
+| `tools_allow` | array of glob | `[]` | empty means every tool; non-empty hides everything it does not name |
+| `tools_deny` | array of glob | `[]` | applied first, so a name in both lists is denied |
+| `default_provider` | string | `""` | parsed, **not applied** (warns at load); use `--provider` |
+| `default_model` | string | `""` | parsed, **not applied** (warns at load); use `--model` |
+
+`tools_allow` and `tools_deny` are glob patterns over tool names matched
+against the whole name (`edit_file`, `kanban_*`), not the manifest's unrelated
+`tool_allow` field. A preset that cannot be read is refused rather than
+dropped: running the turn unfiltered would widen a read-only preset to every
+tool without a word.
+
+An unknown key is ignored, as in `config.toml`, but it is named in a startup
+warning. That matters most for the deny list, whose whole job is to be
+complete: a `tools_dny` typo loads a preset that denies nothing and warns
+instead. A field of the wrong type fails the load (`PresetSchema`) rather than
+reading as absent, and broken TOML fails as `PresetSyntax`.
+
+```toml
+description = "Research-only: file reads and web search, no writes"
+system_prompt_append = "You are in research-only preset: read and search freely."
+tools_allow = []
+tools_deny = ["edit_file", "patch_apply", "exec", "kanban_*"]
+```
+
 ## Minimal working config
 
 The smallest useful `config.toml`: one keyless local model.

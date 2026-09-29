@@ -906,6 +906,11 @@ fn tuiGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decis
     self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
 }
 
+fn presetLoadFailure(arena: std.mem.Allocator, name: []const u8, err: anyerror) []const u8 {
+    return std.fmt.allocPrint(arena, "error: preset '{s}' did not load ({s}); refusing the turn rather than running without it", .{ name, @errorName(err) }) catch
+        "error: preset did not load; refusing the turn rather than running without it";
+}
+
 fn runThreadMain(args: RunThreadArgs) void {
     defer bridge_turn_done.store(true, .release);
     const self = args.model;
@@ -917,9 +922,20 @@ fn runThreadMain(args: RunThreadArgs) void {
     // assigned afterwards masked neither.
     const preset_obj: ?*const preset_mod.Preset = blk: {
         const pn = self.preset_name orelse break :blk null;
-        var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch break :blk null;
+        // A preset that cannot be read here is not a turn without one: the
+        // null below is "every tool allowed", so a presets/<name>.toml that
+        // stopped parsing (edited mid-session, moved, truncated) silently
+        // widened a read-only research session to full write access. Refuse
+        // the turn, the way session start refuses an unopenable --preset.
+        var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch |err| {
+            self.finishTurn(presetLoadFailure(self.arena, pn, err), null);
+            return;
+        };
         defer dir.close(self.io);
-        const loaded = preset_mod.loadFromFile(self.io, self.arena, dir, pn) catch break :blk null;
+        const loaded = preset_mod.loadFromFile(self.io, self.arena, dir, pn) catch |err| {
+            self.finishTurn(presetLoadFailure(self.arena, pn, err), null);
+            return;
+        };
         const stored = self.arena.create(preset_mod.Preset) catch break :blk null;
         // Names leak via parseString dupes; keep stored for gate predicate.
         stored.* = loaded;
