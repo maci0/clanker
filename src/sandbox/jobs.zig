@@ -288,11 +288,83 @@ fn takeThreadLocked(job: anytype) ?std.Thread {
 
 /// When two callers `wait` the same job, exactly one takes the thread handle.
 /// The other must not read the job's result yet: the owner is about to join
-/// the thread that sets it. Spinning on `done` (set after result/term) makes
-/// the second waiter observe the same completed job instead of a spurious
+/// the thread that sets it. Polling `done` (set after result/term) makes the
+/// second waiter observe the same completed job instead of a spurious
 /// "wait failed" / empty text.
-fn awaitJobDone(job: anytype) void {
-    while (!job.done.load(.acquire)) std.Thread.yield() catch {};
+///
+/// The poll backs off instead of spinning. A bare `yield` loop asks the
+/// scheduler for a timeslice and immediately asks again, so the second waiter
+/// runs flat out for the *whole* remaining runtime of the job: minutes of a
+/// full core for a background subagent, and a `--` job whose child ignores
+/// SIGTERM never ends at all. Bounded sleeps cost the same wall-clock wait and
+/// leave the core to the waiter thread that is actually reaping the child.
+fn awaitJobDone(io: std.Io, job: anytype) void {
+    var backoff_ns: i96 = wait_backoff_start_ns;
+    while (!job.done.load(.acquire)) {
+        // `.awake` twice over: this is a wait, not a stamp a human reads, and
+        // the caller's `Io` is the only clock a simulated one can drive.
+        // A cancelled sleep says the Io is shutting down, which says nothing
+        // about whether the job finished, so it yields rather than counting
+        // as the wake-up it failed to be.
+        if (std.Io.sleep(io, .{ .nanoseconds = backoff_ns }, .awake)) |_| {} else |_| std.Thread.yield() catch {};
+        backoff_ns = @min(backoff_ns * 2, wait_backoff_max_ns);
+    }
+}
+
+/// First `done` poll delay, doubling to `wait_backoff_max_ns`. Small enough
+/// that a job already finished by the time the second waiter looks costs
+/// nothing measurable, large enough that the common case is a couple of polls.
+/// `i96` to match `std.Io.Duration.nanoseconds`, so the backoff needs no cast.
+const wait_backoff_start_ns: i96 = 50 * std.time.ns_per_us;
+/// Poll ceiling. The wait itself is unbounded (a job's runtime is the job's
+/// runtime, and the thread that owns the handle is joining it either way), so
+/// this only governs how often the flag is read, not how long the caller waits.
+const wait_backoff_max_ns: i96 = 2 * std.time.ns_per_ms;
+
+/// How long a job under test takes to finish. Comfortably longer than
+/// `wait_backoff_max_ns`, so the waiter is guaranteed to run several polls
+/// rather than getting lucky on the first.
+const wait_test_job_ns: i96 = 60 * std.time.ns_per_ms;
+
+test "the second waiter blocks on done until the job finishes instead of answering early" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const gpa = std.testing.allocator;
+    const job = try gpa.create(ExecJob);
+    defer gpa.destroy(job);
+    job.* = .{
+        .id = try gpa.dupe(u8, "job-wait"),
+        .session_id = try gpa.dupe(u8, "sess-wait"),
+        .child = undefined,
+        .pid = 0,
+        // Unset until the worker's deadline passes, exactly as a real job's
+        // waiter thread leaves it: `term` is stored before `done`, never after.
+        .done = std.atomic.Value(bool).init(false),
+    };
+    defer gpa.free(job.id);
+    defer gpa.free(job.session_id);
+
+    const th = try std.Thread.spawn(.{}, struct {
+        fn run(j: *ExecJob, io2: std.Io) void {
+            std.Io.sleep(io2, .{ .nanoseconds = wait_test_job_ns }, .awake) catch {};
+            j.term = .{ .exited = 0 };
+            j.done.store(true, .release);
+        }
+    }.run, .{ job, io });
+    defer th.join();
+
+    const started = std.Io.Timestamp.now(io, .awake);
+    awaitJobDone(io, job);
+    const elapsed_ns = (std.Io.Timestamp.now(io, .awake).nanoseconds - started.nanoseconds);
+    try std.testing.expectEqual(@as(?std.process.Child.Term, .{ .exited = 0 }), job.term);
+    // It waited for the job rather than returning on the first look, and it
+    // came back promptly once `done` landed. The upper bound is generous on
+    // purpose: it is here to catch a waiter that never wakes at all, not to
+    // time anything.
+    try std.testing.expect(elapsed_ns >= wait_test_job_ns);
+    try std.testing.expect(elapsed_ns < wait_test_job_ns * 20);
 }
 
 /// Same-session rule for every per-job verb. `list` filters rows by the
@@ -434,7 +506,7 @@ fn termFields(term: std.process.Child.Term) struct { exit: ?u8, signaled: bool }
     };
 }
 
-pub fn waitExec(arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
+pub fn waitExec(io: std.Io, arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
     var found: ?*ExecJob = null;
     var thread: ?std.Thread = null;
     {
@@ -461,7 +533,7 @@ pub fn waitExec(arena: std.mem.Allocator, session_id: []const u8, id: []const u8
         mu.unlock();
     }
     if (thread) |th| th.join();
-    awaitJobDone(job);
+    awaitJobDone(io, job);
     if (job.term) |term| {
         const fields = termFields(term);
         if (fields.exit) |code| {
@@ -626,7 +698,7 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) boo
     return false;
 }
 
-pub fn waitSub(arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
+pub fn waitSub(io: std.Io, arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
     var found: ?*SubJob = null;
     var thread: ?std.Thread = null;
     {
@@ -650,7 +722,7 @@ pub fn waitSub(arena: std.mem.Allocator, session_id: []const u8, id: []const u8)
         mu.unlock();
     }
     if (thread) |th| th.join();
-    awaitJobDone(job);
+    awaitJobDone(io, job);
     if (job.err_name) |e| {
         return std.fmt.allocPrint(arena, "{{\"ok\":false,\"job\":{f},\"error\":{f}}}", .{
             std.json.fmt(id, .{}),
@@ -738,21 +810,38 @@ pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) 
     return false;
 }
 
-/// SIGTERM still-running exec children, join leftover waiter threads, and
-/// free the tables. Call once at process exit: completed rows stay
-/// retrievable until `max_retained_done`, and those copies plus the
-/// ArrayList backings would otherwise leak into the DebugAllocator report.
-pub fn deinit(gpa: std.mem.Allocator) void {
-    {
-        mu.lock();
-        defer mu.unlock();
-        for (execs.items) |j| {
-            if (!j.done.load(.acquire) and j.pid > 0) {
-                std.posix.kill(j.pid, std.posix.SIG.TERM) catch {};
-            }
+/// How long `deinit` gives a SIGTERM'd exec child to die before escalating to
+/// SIGKILL. The joins below are on threads parked in `child.wait`, so a child
+/// that ignores SIGTERM holds process exit open indefinitely; SIGKILL is not
+/// catchable, so the bound is the wait that follows it, not this grace.
+const deinit_term_grace_ns: i96 = 2 * std.time.ns_per_s;
+
+/// SIGTERM every running exec child, then SIGKILL whatever is still running
+/// after `deinit_term_grace_ns`, then join the waiter threads and free the
+/// tables. Call once at process exit: completed rows stay retrievable until
+/// `max_retained_done`, and those copies plus the ArrayList backings would
+/// otherwise leak into the DebugAllocator report.
+pub fn deinit(io: std.Io, gpa: std.mem.Allocator) void {
+    signalRunningExecs(std.posix.SIG.TERM);
+    std.Io.sleep(io, .{ .nanoseconds = deinit_term_grace_ns }, .awake) catch {};
+    signalRunningExecs(std.posix.SIG.KILL);
+    testingClear(gpa);
+}
+
+/// SIGTERM/SIGKILL every exec child whose waiter thread has not stored `done`
+/// yet. Two passes over the same table rather than one pass collecting pids:
+/// the grace sleep must not run under `mu`, and re-reading `done` at escalate
+/// time is what keeps the SIGKILL off a child that already exited (a recycled
+/// pid is somebody else's process).
+fn signalRunningExecs(sig: std.posix.SIG) void {
+    mu.lock();
+    defer mu.unlock();
+    for (execs.items) |j| {
+        if (!j.done.load(.acquire) and j.pid > 0) {
+            // Residual posix: signal delivery has no std.Io equivalent.
+            std.posix.kill(j.pid, sig) catch {};
         }
     }
-    testingClear(gpa);
 }
 
 /// Test-only: join leftover waiter threads and free the tables so a
@@ -786,8 +875,11 @@ pub fn testingClear(gpa: std.mem.Allocator) void {
 }
 
 test "deinit on empty job tables is a no-op" {
-    deinit(std.testing.allocator);
-    deinit(std.testing.allocator);
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    deinit(io, std.testing.allocator);
+    deinit(io, std.testing.allocator);
 }
 
 test "makeId is 16 hex and unique at the same timestamp" {
@@ -834,7 +926,7 @@ test "startExec reaps true and wait returns exit 0" {
     defer testingClear(std.testing.allocator);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const got = try waitExec(arena_state.allocator(), "sess-job", id);
+    const got = try waitExec(io, arena_state.allocator(), "sess-job", id);
     try std.testing.expect(std.mem.find(u8, got, "\"done\":true") != null);
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     try std.testing.expect(reg.get("sess-job", id) == null);
@@ -846,6 +938,9 @@ test "startExec reaps true and wait returns exit 0" {
 
 test "wait and kill answer only the session that owns the job" {
     const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -877,15 +972,15 @@ test "wait and kill answer only the session that owns the job" {
     // Another session's guest gets the same answer as for a job that does
     // not exist: no exit status, no result text, no kill -- and an empty
     // caller scope owns nothing either.
-    try std.testing.expectError(error.NotFound, waitExec(arena, "beta", "job-aaaa"));
-    try std.testing.expectError(error.NotFound, waitSub(arena, "beta", "sub-bbbb"));
+    try std.testing.expectError(error.NotFound, waitExec(io, arena, "beta", "job-aaaa"));
+    try std.testing.expectError(error.NotFound, waitSub(io, arena, "beta", "sub-bbbb"));
     try std.testing.expect(!kill(null, "beta", "job-aaaa"));
     try std.testing.expect(!kill(null, "", "job-aaaa"));
 
     // The owning session still waits and kills its own job.
-    const got = try waitExec(arena, "alpha", "job-aaaa");
+    const got = try waitExec(io, arena, "alpha", "job-aaaa");
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
-    const sub_text = try waitSub(arena, "alpha", "sub-bbbb");
+    const sub_text = try waitSub(io, arena, "alpha", "sub-bbbb");
     try std.testing.expect(std.mem.find(u8, sub_text, "parent-only answer") != null);
     try std.testing.expect(kill(null, "alpha", "job-aaaa"));
 }

@@ -6406,10 +6406,10 @@ pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             else => return Err.invalid,
         };
         if (std.mem.startsWith(u8, id, "job-")) {
-            const json_out = jobs_mod.waitExec(arena, sid, id) catch return Err.not_found;
+            const json_out = jobs_mod.waitExec(h.sandbox.io, arena, sid, id) catch return Err.not_found;
             return h.writeResult(bytes, json_out);
         }
-        const json_out = jobs_mod.waitSub(arena, sid, id) catch return Err.not_found;
+        const json_out = jobs_mod.waitSub(h.sandbox.io, arena, sid, id) catch return Err.not_found;
         return h.writeResult(bytes, json_out);
     }
     return Err.invalid;
@@ -8085,6 +8085,9 @@ fn fakeSubagentRunner(
 
 test "background subagent: the worker's copies outlive the caller's arena" {
     const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
     jobs_mod.testingClear(gpa);
     defer jobs_mod.testingClear(gpa);
     // The caller's arena: the guest's context/files slices live here and die
@@ -8137,7 +8140,7 @@ test "background subagent: the worker's copies outlive the caller's arena" {
 
     var wait_state = std.heap.ArenaAllocator.init(gpa);
     defer wait_state.deinit();
-    const wait = try jobs_mod.waitSub(wait_state.allocator(), "sess-bg", id);
+    const wait = try jobs_mod.waitSub(io, wait_state.allocator(), "sess-bg", id);
     try std.testing.expect(std.mem.find(u8, wait, "do the task") != null);
     try std.testing.expect(std.mem.find(u8, wait, "fact one") != null);
     try std.testing.expect(std.mem.find(u8, wait, "fact two") != null);

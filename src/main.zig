@@ -305,7 +305,7 @@ pub fn main(init: std.process.Init) !void {
     // known one.
     defer subprocess.deinitProcessRegistry();
     defer dap.deinitLive();
-    defer jobs.deinit(gpa);
+    defer jobs.deinit(init.io, gpa);
     defer vertex_token.deinit(init.io, gpa);
     defer rate_limit.deinit(init.io, gpa);
     // Residual posix: process rlimits have no std.Io equivalent; go lower.
