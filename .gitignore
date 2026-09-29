@@ -92,3 +92,7 @@ grammars/*.so
 # Mirrored by the agency_sync tool from an external repo (github.com/
 # msitarzewski/agency-agents); fetched data, not project source.
 /agency/
+
+# Python bytecode
+__pycache__/
+*.pyc
