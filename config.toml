@@ -485,7 +485,7 @@ max_history = 500
 
 # Hosts the research tools may reach. The sandbox denies a tool the network
 # unless its own descriptor names the host, so this is the config-side channel
-# for that: every name here is added to fetch_web's and web_search's allowlists
+# for that: every name here is added to web_fetch's and web_search's allowlists
 # at load, which makes granting a site a config edit rather than a manifest
 # edit. Hostnames only -- no scheme, no path. Entries are glob-matched, so
 # "*.ziglang.org" works and a bare "*" allows any host at all.
