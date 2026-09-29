@@ -7,8 +7,8 @@ adding a row in the same change.
 
 Two things are deliberately not claimed. clanker's own license is not declared
 in this repository, and the JS build toolchain (`assemblyscript`,
-`binaryen`, `long`, `oxlint`, `tailwindcss`, `@tailwindcss/cli`) is not
-vendored, so its licenses are not recorded in-tree either. Both are gaps a
+`binaryen`, `long`, `oxlint`, `tailwindcss`, `@tailwindcss/cli` and the lint
+packages listed below) is not vendored, so its licenses are not recorded in-tree either. Both are gaps a
 redistributor has to close, not facts this file can assert.
 
 ## Fetched at build time (`build.zig.zon`)
@@ -36,6 +36,7 @@ above.
 | highlight.js | 11.12.0 | BSD-3-Clause | `ui/vendor/hljs.min.js` | `ui/vendor/README.md` |
 | mermaid | 11.16.1 | MIT | `ui/vendor/mermaid.min.js` | `ui/vendor/README.md` |
 | three.js | r180 | MIT | `ui/vendor/three.module.min.js`, `ui/vendor/three.core.min.js` | `ui/vendor/README.md` |
+| anti-slop | commit `c44ef22c` | MIT | `tools/oxlint/anti-slop/` | `tools/oxlint/anti-slop/UPSTREAM.md` (source path, blob-hash check); its `vendor/eslint-stylistic/` carries its own MIT `LICENSE` and `UPSTREAM.md` |
 
 The `ui/vendor/` rows share one provenance and digest table, which names the
 upstream release each file came from and the sha256 of the committed bytes.
@@ -51,8 +52,9 @@ friends" line.
 ## Resolved at build time by the package manager (not vendored)
 
 `package.json` and `tools/ts/package.json` declare only `devDependencies`
-(`oxlint`, `tailwindcss`, `@tailwindcss/cli` in the root; `assemblyscript` in
-`tools/ts`), each pinned to an exact version, with `bun.lock` and
+(`oxlint`, `oxlint-tsgolint`, `@oxlint/plugins`, `@rikalabs/oxlint-standards`,
+`@shadcn/lint`, `zod`, `@types/bun`, `tailwindcss`, `@tailwindcss/cli` in the
+root, all MIT; `assemblyscript` in `tools/ts`), each pinned to an exact version, with `bun.lock` and
 `tools/ts/bun.lock` committed so `bun install --frozen-lockfile` resolves the
 same tree with the same integrity digests (CI, `scripts/verify.sh` and
 `tools/ts/verify.sh` all pass that flag). No package installs a post-install
