@@ -179,6 +179,10 @@ fn encodeBatch(arena: std.mem.Allocator, owner: []const u8, events: []const sess
     return arena.dupe(u8, w.written());
 }
 
+/// A peer answered a fan-out with a resync point at or behind the cursor the
+/// sender already holds, so following it would resend the same batch forever.
+pub const CursorError = error{CursorStalled};
+
 pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config, session_id: []const u8) void {
     if (session_id.len == 0) return;
     const peers = peersOf(cfg, arena);
@@ -238,6 +242,19 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
                     if (g == .bool and g.bool) {
                         if (parsed.object.get("have")) |h| {
                             if (h == .integer) {
+                                // A resync point the peer names. Refuse one
+                                // that does not move the cursor forward: the
+                                // loop re-reads the same tail and posts the
+                                // same batch every round, so a peer stuck at
+                                // (or behind) `have` turns one turn's fan-out
+                                // into an endless HTTP loop on the caller's
+                                // thread. The tail stays un-fanned, so the
+                                // next push retries it.
+                                if (h.integer <= cursor) {
+                                    fanoutFailed("resync point did not advance the cursor", owner, peer.name, session_id, CursorError.CursorStalled);
+                                    delivered = false;
+                                    break;
+                                }
                                 cursor = h.integer;
                                 continue;
                             }

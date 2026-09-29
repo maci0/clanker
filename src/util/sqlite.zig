@@ -134,7 +134,7 @@ pub const Connection = struct {
             self.setErr(cSpan(c.sqlite3_errmsg(db)));
             return Error.PrepareFailed;
         }
-        return .{ .stmt = out };
+        return .{ .stmt = out, .conn = self };
     }
 
     /// The row id of the last successful INSERT on this connection.
@@ -161,6 +161,9 @@ const sqlite_transient: usize = std.math.maxInt(usize);
 
 pub const Statement = struct {
     stmt: ?*c.sqlite3_stmt = null,
+    /// The connection that prepared it, so a failed `step` can copy the
+    /// driver's message out before the next call on that handle reclaims it.
+    conn: *Connection,
 
     pub fn finalize(self: *Statement) void {
         if (self.stmt) |s| {
@@ -183,13 +186,23 @@ pub const Statement = struct {
 
     /// Steps once. `.row` means columnText/columnInt are valid for this row;
     /// `.done` means the statement finished.
+    ///
+    /// A failure copies the driver's message into `conn.last_error`. A refused
+    /// write is the data layer refusing a row (a CHECK on `events.kind` or
+    /// `messages.role`, a NOT NULL, a foreign key, a busy database), and
+    /// `StepFailed` on its own said only that some statement failed: the
+    /// caller logging `@errorName` had no way to tell a rejected row from a
+    /// locked file. `openDb` already reads the text for the same reason.
     pub fn step(self: *Statement) Error!Step {
         const s = self.stmt orelse return Error.NotOpen;
         const rc = c.sqlite3_step(s);
         return switch (rc) {
             c.SQLITE_ROW => .row,
             c.SQLITE_DONE => .done,
-            else => Error.StepFailed,
+            else => blk: {
+                if (self.conn.db) |db| self.conn.setErr(cSpan(c.sqlite3_errmsg(db)));
+                break :blk Error.StepFailed;
+            },
         };
     }
 
@@ -324,6 +337,28 @@ test "reset clears the bindings a previous row left behind" {
     defer rd.finalize();
     try std.testing.expectEqual(Step.row, try rd.step());
     try std.testing.expect(rd.columnText(0) == null);
+}
+
+test "a failed step names the constraint that refused the row" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/err.db", .{&env.tmp.sub_path});
+    const pathz = try arena.dupeZ(u8, path);
+
+    var conn: Connection = .{};
+    try conn.open(pathz);
+    defer conn.close();
+    try conn.exec("CREATE TABLE rows (role TEXT NOT NULL CHECK (role IN ('user', 'assistant')));");
+
+    var stmt = try conn.prepare("INSERT INTO rows (role) VALUES (?1);");
+    defer stmt.finalize();
+    try stmt.bindText(1, "root");
+    try std.testing.expectError(Error.StepFailed, stmt.step());
+    // The driver text is copied out at the failure site, because the buffer
+    // sqlite3_errmsg returns is only good until the next call on the handle.
+    try std.testing.expect(std.mem.indexOf(u8, conn.last_error, "CHECK constraint failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, conn.last_error, "role") != null);
 }
 
 test "open re-tightens a database that was created world-readable" {
