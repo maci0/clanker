@@ -2,7 +2,7 @@
 
 A clanker plugin is two files: a WebAssembly module and a `*.tool.json`
 manifest that describes it. The module implements the behaviour; the manifest
-is the whole of what the harness knows about it — the name and description the
+is the whole of what the harness knows about it: the name and description the
 model reads, the JSON Schema for its arguments, and the sandbox policy the host
 enforces on every call.
 
@@ -40,15 +40,15 @@ author wrote, which is the one failure mode a version key exists to prevent.
 | Key | Type | Meaning |
 |---|---|---|
 | `name` | string | What the model writes to call the tool. Lowercase letters, digits and underscores only. Also the registry key, so it must be unique across the tools directory |
-| `description` | string | Human-facing description — what a person reads in the web UI's Tools view or the REPL's tool detail. The model only ever sees it as the loader's fallback when `llm_description` is absent |
+| `description` | string | Human-facing description: what a person reads in the web UI's Tools view or the REPL's tool detail. The model only ever sees it as the loader's fallback when `llm_description` is absent |
 | `wasm` | string | The module. See [Where the module lives](#where-the-module-lives) |
 
 Two optional string fields refine those:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. Its first line (up to 160 bytes) is what the catalog shows, and the catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
-| `prompt_guidance` | string | Optional binding usage rules for this tool. Injected into the system prompt's `## Tool guidance` section (one `### name` block per declaring tool, ahead of the catalog) whenever the tool is enabled and non-internal, and echoed as `guidance` in the `load_tools` reply so a model that just loaded the tool reads the rules at the moment of use. For workflow constraints the model must follow — the descriptions say what the tool does, this says how it must be used |
+| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. Its first line (up to 160 bytes) is what the catalog shows, and the catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works, just not as cheaply |
+| `prompt_guidance` | string | Optional binding usage rules for this tool. Injected into the system prompt's `## Tool guidance` section (one `### name` block per declaring tool, ahead of the catalog) whenever the tool is enabled and non-internal, and echoed as `guidance` in the `load_tools` reply so a model that just loaded the tool reads the rules at the moment of use. For workflow constraints the model must follow. The descriptions say what the tool does; this says how it must be used |
 
 `input_schema` is not strictly required, but a manifest without one tells the
 model the tool takes no arguments, so the validator warns.
@@ -61,7 +61,7 @@ model the tool takes no arguments, so the validator warns.
 | `parameters` | object | OpenAI's spelling of `input_schema`, accepted for compatibility. `input_schema` wins if both are present |
 
 The type matters more than it looks: Anthropic rejects a request whose tool
-list contains a schema with no `type`, and it rejects the *entire* request — one
+list contains a schema with no `type`, and it rejects the *entire* request: one
 malformed manifest breaks every tool call for every tool. `normalizedSchema`
 defaults the type rather than shipping a request no provider will take, and the
 validator treats a `type` that is not `"object"` as an error.
@@ -78,13 +78,13 @@ its arguments.
 | `fs_read_only` | bool | `false` | Narrows `fs_prefixes` to reads: every `ck_fs_*` write call is refused even though the path is granted. Name it on a tool whose code only ever reads, so the next patch to that tool does not silently inherit write authority over the whole prefix. Covers the `ck_fs_*` channel only; exec is `exec_allow` and a nested `ck_tool` call is bounded by the callee's own descriptor. As shipped: `read_file`, `list_files`, `find_files`, `image`, `lsp`, `repo_search`, `chain`, `goal_write`, `learnings`, `logs`, `memory`, `reasoning`, `roadmap`, `tools`, `workflows`. A manifest whose guest never calls a `lib.fs*` write helper and does not set it fails the registry conformance test; `clanker plugins validate` reports the same as a warning |
 | `network_allow` | string[] | `[]` | Hostnames this tool may reach through `ck_http`. Each entry is an exact hostname or a glob (`*.github.com`, and a bare `*` allows every host). No scheme, no path, no port |
 | `network_from_config` | string | `""` | `"peers"` or `"providers"`: the harness appends those configured hosts to `network_allow` at load, because a manifest cannot know what is in someone's `config.toml` |
-| `exec_allow` | string[] | `[]` | Commands this tool may run through `ck_exec`, compared against `argv[0]` **exactly**. Empty is not "the harness default set" — it is no exec at all |
+| `exec_allow` | string[] | `[]` | Commands this tool may run through `ck_exec`, compared against `argv[0]` **exactly**. Empty is not "the harness default set"; it is no exec at all |
 | `env_allow` | string[] | `[]` | Environment variables this tool may read. Empty means the safe defaults in `host.zig`, never the whole process environment: that is where the API keys are |
 | `fuel` | integer | sandbox default | Instruction budget for one call. See below |
 | `llm` | bool | `false` | May call the model through `ck_llm` / `ck_llm_many`. Costs tokens, so it is opt-in, and it forces the tool onto the sequential execution path |
 | `session` | bool | `false` | May read the host session store through `ck_session` (list saved sessions, fetch one, search transcripts). The store is host-side SQLite; this grant is the only way a guest reaches it. As shipped: the `sessions`, `session_search`, and `session_export` tools |
 | `live_publish` | bool | `false` | May emit onto the serve live bus through `ck_publish`. The import existing is not a grant. Events land on `Topic.plugin` only; the host stamps `t` and `from`. Forces the sequential path: the bus is host-shared state |
-| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `run_plan` (a bounded step list), `bugreport` (`kanban_add`), and `goal_write` (`ask_user`) |
+| `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it: as shipped, `chain` (the tools it wraps), `run_plan` (a bounded step list), `bugreport` (`kanban_add`), and `goal_write` (`ask_user`) |
 | `tool_allow` | string[] | all | With `tool_call`, which tool names it may invoke. Absent or empty means every enabled non-internal tool. Ignored entirely without `tool_call` |
 | `confirm` | bool | derived | Ask the human before running, when a confirm channel is installed (`agent.confirm_writes`). Unset, it is derived from the grants: any tool with `exec_allow` or a writable `fs_prefixes` is a write in a viewer's eyes, so `fs_read_only` implies no confirm on its own. A read-only tool opts out with `false`; a tool whose risk its grants understate opts in with `true` |
 
@@ -95,7 +95,7 @@ is clamped to that as a **ceiling**, so a descriptor can tighten its own budget
 and can never raise it (`runtime.zig`'s `fuelBudget`). `calculator` ships with
 `100000000` as the demonstration.
 
-`0` is the loader's "unset", so writing it does not ask for the default — it is
+`0` is the loader's "unset", so writing it does not ask for the default; it is
 a mistake the validator names. A value above the ceiling is an error rather
 than a silent clamp: the clamp is not in question, the manifest's claim about
 itself is.
@@ -104,9 +104,9 @@ itself is.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `internal` | bool | `false` | Hidden from the model's tool catalog. Used by the `cmd_*` slash commands, the web UI, and transforms — reachable through a REPL command or an HTTP route, never chosen by the agent |
-| `enabled` | bool | `true` | The manifest's own default on/off state. Ships `false` for anything that spends tokens unasked. `state/plugins.json` overrides it either way — except an `internal` tool with no `transform`, which cannot be toggled and keeps its shipped state |
-| `sequential` | bool | `false` | Never runs on the parallel worker pool. For tools over host-shared state (the chatroom log) — each call waits its turn on the main thread |
+| `internal` | bool | `false` | Hidden from the model's tool catalog. Used by the `cmd_*` slash commands, the web UI, and transforms, reachable through a REPL command or an HTTP route, never chosen by the agent |
+| `enabled` | bool | `true` | The manifest's own default on/off state. Ships `false` for anything that spends tokens unasked. `state/plugins.json` overrides it either way, except an `internal` tool with no `transform`, which cannot be toggled and keeps its shipped state |
+| `sequential` | bool | `false` | Never runs on the parallel worker pool. For tools over host-shared state (the chatroom log); each call waits its turn on the main thread |
 | `check` | bool | `false` | This tool answers pass/fail about something (a gate, an eval, a lint). Its verdict is recorded in the run graph as a check |
 | `statusline` | bool | `false` | Contributes a segment to the REPL status line, invoked with empty input after each turn. Pair with `"internal": true` |
 | `turn_hook` | bool | `false` | Runs once after each REPL turn and may print a line into the transcript. Pair with `"internal": true` |
@@ -116,11 +116,11 @@ itself is.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `config` | object | `{}` | Free-form per-plugin settings, handed to the guest through `ck_config`. Not verbatim for every tool: an `exec_allow` tool gets a harness-generated exec policy in place of its own config, and a `kanban_*` tool in a workspace gets `room` injected — see below |
+| `config` | object | `{}` | Free-form per-plugin settings, handed to the guest through `ck_config`. Not verbatim for every tool: an `exec_allow` tool gets a harness-generated exec policy in place of its own config, and a `kanban_*` tool in a workspace gets `room` injected (see below) |
 | `config_editable` | string[] | `[]` | Which `config` keys may be changed at runtime, from the web UI or `state/plugin_config.json` |
 
-The harness reads exactly three keys out of `config` for itself — `provider`,
-`model` and `max_tokens` — to aim `ck_llm` at a specific backend. Everything
+The harness reads exactly three keys out of `config` for itself (`provider`,
+`model` and `max_tokens`) to aim `ck_llm` at a specific backend. Everything
 else reaches the guest untouched, with two exceptions: a tool with `exec_allow`
 has its whole `config` replaced by the harness's exec policy (`git_remote_ops`,
 `exec_pattern_allow`), and a `kanban_*` tool in a workspace gets
@@ -135,7 +135,7 @@ operator's key.
 *output*, and on a reasoning model the reasoning trace is output: the provider
 fills `reasoning_content` first and only then emits `content`. A grant sized
 for the answer alone is spent before a visible token exists, and the provider
-still answers 200 — empty `content`, `finish_reason: "length"` — so the guest
+still answers 200 (empty `content`, `finish_reason: "length"`), so the guest
 sees an empty string and reports that the model said nothing. The floor is
 `reasoning_headroom` in [`tools/zig/llm_budget.zig`](../tools/zig/llm_budget.zig)
 (4096 tokens on top of the content budget), and `toolDescriptorGate` fails any
@@ -143,13 +143,13 @@ sees an empty string and reports that the model said nothing. The floor is
 decide this: `Model.capabilities` is filled from the models.dev snapshot and is
 empty on any checkout that has not run `clanker providers refresh`.
 
-The ceiling is not a bill — the grant caps what a call *may* generate, not what
+The ceiling is not a bill: the grant caps what a call *may* generate, not what
 it does. Measured on `deepseek-v4-pro`, the effort classifier spends 95 tokens
 against its 4096 grant.
 
 Omitting the key is a different statement from setting a small one. A
 descriptor with `"llm": true` and no `config.max_tokens` falls back to the host
-default and is not claiming a budget — `providers` pings with `max_tokens: 1`
+default and is not claiming a budget: `providers` pings with `max_tokens: 1`
 and ignores the completion entirely, and `rlm`, `subagent` and `swarm` reach a
 model through `ck_subagent`/`ck_swarm`, whole agent turns the harness budgets.
 
@@ -170,7 +170,7 @@ A transform plugin wraps other tools instead of being called by the model.
 | `transform.order` | integer | `0` | Ascending; lower runs first. A transform never wraps itself or another transform |
 
 Pair a transform with `"internal": true`: it is not a tool the model calls. It
-stays switchable through `/plugins` anyway — being able to turn a filter off is
+stays switchable through `/plugins` anyway; being able to turn a filter off is
 the whole point of it.
 
 ## Where the module lives
@@ -246,7 +246,7 @@ One remaining limit, deliberate rather than unfinished:
 - **There is no trust story.** Nothing is fetched, verified, signed, or
   attributed. A manifest is a local file you are expected to have read, and its
   sandbox policy is the only thing standing between the module and your
-  machine — so read the policy before you point `tools_dir` at it, the same way
+  machine, so read the policy before you point `tools_dir` at it, the same way
   you would read a shell script before running it. See
   [ADR 0007](adrs/0007-plugin-manifests-are-declarative-and-unsigned.md).
 
@@ -256,8 +256,8 @@ One remaining limit, deliberate rather than unfinished:
 a directory (default: `agent.tools_dir`). It exits non-zero if anything is an
 error, so it can guard a release script.
 
-The loader is deliberately forgiving — one bad manifest must not take the other
-ninety down with it — so an unknown key, a dead grant, or a fuel budget above
+The loader is deliberately forgiving (one bad manifest must not take the other
+ninety down with it), so an unknown key, a dead grant, or a fuel budget above
 the ceiling all load without complaint and quietly do nothing. That is the class
 of bug the validator exists to name:
 
@@ -279,7 +279,7 @@ not on disk yet.
 Two checks need more than the manifest's own bytes, and run when the
 surrounding files are there: whether the module exists, and whether a guest
 source file that calls the model declares `llm`. The second is the same rule
-`registry.zig`'s conformance test enforces for this repo — an undeclared model
+`registry.zig`'s conformance test enforces for this repo: an undeclared model
 caller runs on the parallel worker pool and races the shared access-token cache,
 which surfaces as a crash in somebody else's tool.
 

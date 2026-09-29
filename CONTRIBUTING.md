@@ -12,7 +12,7 @@ scripts/setup.sh
 
 That is the whole bootstrap: it checks the toolchain, runs
 `zig build --fetch=all` and `scripts/apply-patches.sh` (re-applying
-`patches/*.patch` to the fetched dependencies — the SIGWINCH patch is
+`patches/*.patch` to the fetched dependencies; the SIGWINCH patch is
 load-bearing for `clanker repl` and the pty e2e journeys, and `build.zig`
 refuses to compile against an unpatched tree), then `zig build` and
 `zig build tools`. The order is the whole trap: `--fetch=all` extracts
@@ -44,7 +44,7 @@ Three speeds, slowest last:
 - `zig build test -Dtest-filter="<substring>"`: only tests whose name
   contains the substring are compiled in. A filter that matches nothing passes
   with 0 tests; the JS suites still run.
-- `zig build test` — the full suite (Zig + JS), which takes minutes.
+- `zig build test`: the full suite (Zig + JS), which takes minutes.
 
 `zig build fmt-fix` fixes what `quick-check` reports. Also:
 
@@ -56,14 +56,14 @@ Three speeds, slowest last:
   so they need the dependency patches applied: run `scripts/apply-patches.sh`
   once after `zig build --fetch=all` (idempotent; `scripts/verify.sh` does it
   for you).
-- Before pushing: `scripts/verify.sh` — mirrors everything CI's verify job
+- Before pushing: `scripts/verify.sh` mirrors everything CI's verify job
   runs (shellcheck, oxlint, ruff, SBOM generation,
   AssemblyScript rebuild-and-diff, `clanker gate`, e2e), so a red CI run is
   not the first place you hear about it.
 
 ## What must pass
 
-- `clanker gate` — build, test, tools, fmt, lint, and the self-integrity
+- `clanker gate`: build, test, tools, fmt, lint, and the self-integrity
   gates (provider-kind, test-root-coverage, js-suite-coverage, tool-helper-coverage,
   webui-budget,
   sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory,
@@ -72,7 +72,7 @@ Three speeds, slowest last:
   `dep-patches` is about your checkout rather than your diff: run
   `zig build --fetch=all` and then `scripts/apply-patches.sh` before compiling
   in each new worktree.
-- CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
+- CI: the workflow in `.github/workflows/ci.yml` additionally checks shell
   scripts with shellcheck, `ui/` and `tools/ts` with oxlint, every tracked
   `.py` with ruff (`ruff.toml`), the SBOM generation, and that
   `tools/ts/dist/*.wasm` matches a clean rebuild (`tools/ts/verify.sh`).
@@ -93,7 +93,7 @@ Three speeds, slowest last:
   extracted from the changelog, so a shipped change without an entry never
   reaches the release notes. This obligation is convention, not mechanism:
   the `release-contract` gate checks release-file structure only and never
-  reads the diff, so a missing entry ships green — authors and reviewers are
+  reads the diff, so a missing entry ships green; authors and reviewers are
   what enforce it. Records-only and internal-docs-only changes are not
   consumer-visible and need no entry. See
   [the investigation](docs/reports/investigations/2026-08-24-release-contract-never-reads-the-diff.md).
@@ -101,7 +101,7 @@ Three speeds, slowest last:
 ## Generated files
 
 - `tools/ts/dist/*.wasm` is committed. After editing `tools/ts/*.ts`, run
-  `bun run build:all` in `tools/ts/` and commit the result —
+  `bun run build:all` in `tools/ts/` and commit the result;
   `tools/ts/verify.sh` fails on drift otherwise.
 - `ui/app/tailwind.css` is generated from `ui/app/tailwind.src.css` by
   `bun run css:build` and is committed, because `clanker serve` embeds the

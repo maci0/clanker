@@ -1,4 +1,4 @@
-# Configuration — providers, models, and `config.toml`
+# Configuration: providers, models, and `config.toml`
 
 Everything clanker needs to reach a model and run lives in two TOML files at
 the working directory root. This is the complete reference; the authoritative
@@ -9,9 +9,9 @@ checkout actually does.
 
 ## Where config lives
 
-- **`config.toml`** — the committed configuration: providers, models, module
+- **`config.toml`**: the committed configuration: providers, models, module
   toggles, agent settings.
-- **`config.local.toml`** — checkout-private overrides (gitignored), merged on
+- **`config.local.toml`**: checkout-private overrides (gitignored), merged on
   top of `config.toml` key by key: a section the local file touches is merged
   field by field, so naming one key in `[tui]`, `[notify]`, `[mesh]`,
   `[chatrooms]`, `[memory]`, `[web]`, `[advisor]`, `[hooks]`, `[ttsr]`,
@@ -32,7 +32,7 @@ checkout actually does.
   `[models."<provider>/<model>"]` entry is applied after the provider merge,
   so it may add a model to a provider only `config.toml` declares, without
   repeating that `[providers.<name>]` stanza.
-- **`.env`** — API keys. clanker loads it at startup (the `dotenv` module) into
+- **`.env`**: API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
   `api_key_env`. Keys never go in the TOML. A line that is neither a comment
   nor a `KEY=VALUE` assignment, one with an empty key, and one whose value
@@ -122,13 +122,13 @@ unconfigured one.
 | `kind` | string | Wire format: `openai_compat` (default), `anthropic`, `vertex_anthropic`, `vertex`, `azure_openai`, `gemini`, `codex` (OpenAI Responses), `grok` (xAI Responses), or `claude` (Anthropic Messages bound to clanker's own OAuth metadata). See below. |
 | `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, `azure_openai` builds `/openai/deployments/<model>/chat/completions`, `gemini` builds `/models/<model>:generateContent`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
-| `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
+| `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional; each `kind` auto-detects where the credential types are distinguishable. See below. |
 | `oauth_plugin` | string | Name of a native OAuth plugin (`codex`, `grok`, `claude`) whose `clanker auth login <name>` flow mints the credential. Names which plugin to drive when `api_key_env` is unset; an available key still wins. Empty is the default. |
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
 | `extra_body` | object | JSON object merged last into `openai_compat` and `azure_openai` chat bodies so non-standard fields (for example NVIDIA NIM `chat_template_kwargs`) can be sent. Same-name keys overwrite generated fields. Refused at load if it is not an object. Ignored by Anthropic/Vertex/Gemini codecs. |
-| `cache_ttl_ms` | int | Prompt-cache idle warning TTL in milliseconds. Unset uses the wire kind's default: 300000 on `anthropic` / `claude` / `vertex_anthropic`, **0 (off)** on `openai_compat` and every other kind — a local llama.cpp/ollama endpoint that reports `cached_tokens` is not judged by Anthropic's five-minute cloud cache. `0` disables the warning for this provider. |
+| `cache_ttl_ms` | int | Prompt-cache idle warning TTL in milliseconds. Unset uses the wire kind's default: 300000 on `anthropic` / `claude` / `vertex_anthropic`, **0 (off)** on `openai_compat` and every other kind, because a local llama.cpp/ollama endpoint that reports `cached_tokens` is not judged by Anthropic's five-minute cloud cache. `0` disables the warning for this provider. |
 | `rpm` | int | Self-imposed requests per minute for every model on this provider. Omit or `0` = no cap. A model's own `rpm` is a separate cap on that name, not an override. |
 | `tool_schema` | string | Wire shape for tool calls: `openai` (default) or `none` (endpoint with no tool support). A model entry can override. |
 | `thinking_schema` | string | How the reasoning knob is encoded on the wire: `reasoning_effort` (the flat OpenAI field), `reasoning` (OpenRouter-style `{"reasoning":{"effort":...}}`), `thinking` (GLM/Zhipu `{"thinking":{"type":"enabled"}}`), `anthropic_thinking` (Anthropic Messages: `{"thinking":{"type":"adaptive"}}` plus `{"output_config":{"effort":...}}`, and no `temperature`/`top_p`, which current Claude models reject outright), or `none` (omit every reasoning field for endpoints that 400 on unknown keys). Unset takes the *wire kind's* own shape, not one global default: `reasoning_effort` on the OpenAI-compatible wire, `anthropic_thinking` for `anthropic`/`claude`/`vertex_anthropic` and `vertex` on a Claude SKU. Set it explicitly to run an older Claude SKU that still accepts the flat field and a temperature. A model entry can override. |
@@ -250,7 +250,7 @@ api_key_env = "GOOGLE_API_KEY"
 default_model = "gemini-3.6-flash"
 ```
 
-### `auth` — the credential axis
+### `auth`: the credential axis
 
 Auth is a separate axis from the wire format, so `kind` says how the request is
 *shaped* and `auth` says where the credential *comes from*:
@@ -267,7 +267,7 @@ Leave it unset unless you need it. Each kind auto-detects: `anthropic` reads an
 `api_key_env` (the credentials file is resolved at mint time);
 `openai_compat` defaults to `api_key` and does *not* guess, because an API
 key and an OAuth token are indistinguishable across the vendors it serves
-— set `auth = "oauth_static"` explicitly there.
+(set `auth = "oauth_static"` explicitly there).
 
 ```toml
 [providers.xai]
@@ -311,7 +311,7 @@ alias can keep its own `max_tokens` while inheriting the SKU's window.
 | `temperature` | float | unset | Sampling temperature. |
 | `top_p` | float | unset | Nucleus cutoff; best set *instead of* temperature, not alongside. |
 | `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. `[agent] reasoning_effort` (or the CLI's `--reasoning-effort`) overrides it. |
-| `base_url` | string | unset | Endpoint override for this model only, replacing the provider's `base_url` — for URL building only, auth stays the provider's. Use it when one SKU is routed through a different host than its siblings. |
+| `base_url` | string | unset | Endpoint override for this model only, replacing the provider's `base_url`, for URL building only, auth stays the provider's. Use it when one SKU is routed through a different host than its siblings. |
 | `path` | string | unset | Endpoint path override for this model only, replacing the provider's `path`. |
 | `tool_schema` | string | provider's, else `openai` | Wire shape for tool calls: `openai` or `none`. Overrides the provider's value for this model. |
 | `thinking_schema` | string | provider's, else the wire kind's own shape | How the reasoning knob is encoded on the wire: `reasoning_effort`, `reasoning`, `thinking`, `anthropic_thinking`, or `none`. Overrides the provider's value for this model. |
@@ -402,9 +402,9 @@ Run-loop and path settings. The commonly-touched keys:
 | `tool_result_prune_bytes`, `tool_result_prune_head_bytes`, `tool_result_prune_tail_bytes` | 8192, 4096, 1024 | Request-only head/tail pruning for oversized tool results. Threshold `0` disables it; saved transcripts remain exact. |
 | `repeat_tool_thresholds`, `repeat_tool_exclude` | `[3, 5, 8]`, todo tools | Advisory reminders for consecutive canonical-equivalent tool calls. Excluded name patterns (with optional `*`) neither increment nor reset a chain. |
 | `repeat_tool_abort_threshold` | 0 | Consecutive identical tool calls after which the turn fails with `RepeatedToolCalls` instead of being reminded again. `0` disables it. The reminders above are advice; a model that ignores them repeats until `max_iterations`, buying a completion per round. |
-| `request_timeout_ms` | 900000 | Deadline on one non-streaming completion end to end, and on the wait for a streaming one's *first* bytes. `0` opts out and is unbounded — see [Request deadlines](#request-deadlines). |
+| `request_timeout_ms` | 900000 | Deadline on one non-streaming completion end to end, and on the wait for a streaming one's *first* bytes. `0` opts out and is unbounded; see [Request deadlines](#request-deadlines). |
 | `stream_idle_timeout_ms` | 120000 | Longest gap between reads of a streaming response before it is abandoned. `0` opts out and is unbounded. |
-| `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. `max_tokens_per_turn` is the per-turn *input* floor (compaction must never sit below it); the completion grant sent to the provider is the model's `max_tokens`. `max_history_tokens` is lifted for a run when it sits below what compaction cannot remove — see [History budget and compaction](#history-budget-and-compaction). |
+| `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. `max_tokens_per_turn` is the per-turn *input* floor (compaction must never sit below it); the completion grant sent to the provider is the model's `max_tokens`. `max_history_tokens` is lifted for a run when it sits below what compaction cannot remove; see [History budget and compaction](#history-budget-and-compaction). |
 | `llm_token_budget` | 100000 | Output tokens one tool call may spend on `ck_llm` / `ck_llm_many` in total. A tool descriptor's `max_tokens` grant bounds one completion, not how many a guest makes, so this is what bounds a guest that loops on the channel. Charged before the request is issued, against the call's own grant, so a refused call costs nothing; the tokens actually spent are charged afterwards, so the ceiling can be overshot by at most the one grant in flight. `0` opts out. `agent.max_total_tokens` covers the agent's own completions and does not cover guest `ck_llm` calls. |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
@@ -412,8 +412,8 @@ Run-loop and path settings. The commonly-touched keys:
 | `skills_dir`, `workflows_dir`, `chains_dir`, `state_dir`, `sandbox_root` | see defaults | Where the harness reads skills/state. |
 | `tui_plugins_dir` | `tui-plugins` | Directory of TUI slash-command plugin manifests (PRD 0012): `{command, help, tool, args}.json` entries become `/command` slash commands dispatching to a sandboxed tool. Enabled via `state/tui_plugins.json` (enabled-list, default off); the REPL's `/tui-plugins` lists and toggles. |
 | `cli_plugins_dir` | `cli-plugins` | Directory of CLI plugin manifests (PRD 0012 Tier 1): `{command, description, tool}.json` entries become `clanker <command>` subcommands dispatching to a sandboxed tool with the remaining argv as `{"args":[...]}`. Enabled via `state/cli_plugins.json` (enabled-list, default off). Tier 2 (`clanker-<name>` on PATH / `~/.clanker/plugins/`) needs no directory. |
-| `sandbox_follow_symlinks` | `false` | Allow a component of an already-granted sandbox path to be a symlink. Following a link out of the sandbox root is a known security risk, so it is off unless asked for; turn it on when a granted prefix deliberately lives elsewhere, such as a `state/` symlinked into backed-up storage, where leaving it off refuses every guest read and write under `state/`. It never widens which prefixes a tool is granted. Deliberate and opt-in: read [ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md) before treating its existence as a security finding — what to audit is the default, not the flag. |
-| `worktree_link_local_config` | `true` | Whether `clanker worktree prepare` (and `worktree add`) may link the checkout's `.env` and `config.local.toml` into a worktree made by hand with `git worktree add`. Both are gitignored, so `git worktree add` never populates them and every verb in such a worktree otherwise resolves the committed `config.toml` `default_provider` with no key behind it. Set `false` for a checkout whose worktrees must not reach the main tree's credentials; `prepare` then reports both names as skipped rather than quietly doing nothing. Read from the **main checkout's** config, never the worktree's — the worktree cannot see `config.local.toml` yet, so asking it would answer from the committed defaults every time. |
+| `sandbox_follow_symlinks` | `false` | Allow a component of an already-granted sandbox path to be a symlink. Following a link out of the sandbox root is a known security risk, so it is off unless asked for; turn it on when a granted prefix deliberately lives elsewhere, such as a `state/` symlinked into backed-up storage, where leaving it off refuses every guest read and write under `state/`. It never widens which prefixes a tool is granted. Deliberate and opt-in: read [ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md) before treating its existence as a security finding: what to audit is the default, not the flag. |
+| `worktree_link_local_config` | `true` | Whether `clanker worktree prepare` (and `worktree add`) may link the checkout's `.env` and `config.local.toml` into a worktree made by hand with `git worktree add`. Both are gitignored, so `git worktree add` never populates them and every verb in such a worktree otherwise resolves the committed `config.toml` `default_provider` with no key behind it. Set `false` for a checkout whose worktrees must not reach the main tree's credentials; `prepare` then reports both names as skipped rather than quietly doing nothing. Read from the **main checkout's** config, never the worktree's: the worktree cannot see `config.local.toml` yet, so asking it would answer from the committed defaults every time. |
 | `system_prompt_file`, `learnings_file`, `global_instructions_file` | see defaults | Prompt-assembly inputs. |
 | `git_remote_ops` | false | Whether the `git` tool may run `push`/`merge`/`checkout` (the rest of the deny list still applies). |
 | `git_commit` | true | Commit promoted self-improvements with git. |
@@ -435,7 +435,7 @@ setting makes compaction able to drop them.
 
 That matters when the budget is set below what they cost. `max_history_tokens`
 is an absolute number, not a share of the model's window, so a 16000-token
-default applies unchanged to a model with a 1M-token window — and a system
+default applies unchanged to a model with a 1M-token window, and a system
 prompt of 14000 tokens (a large `AGENTS.md` plus a grown `state/learnings.md`
 will do it) leaves almost nothing for the conversation. Compaction would then be
 demanded on every iteration and free nothing on any of them.
@@ -454,14 +454,14 @@ alive, it does not make 16000 a sensible cap for a large-window model.
 
 A run that still needs to compact on five consecutive iterations ends with
 `error.CompactionStalled` rather than continuing to the iteration cap, and prints
-both ceilings — the configured cap and what the model's window leaves compaction
-— because raising the cap only helps when the model has the room. The recovery
+both ceilings (the configured cap and what the model's window leaves compaction),
+because raising the cap only helps when the model has the room. The recovery
 is [the compaction thrash runbook](runbooks/agent-run-compaction-thrash.md).
 
 ### Request deadlines
 
 A provider that accepts the TCP connection and then never answers does not make
-a turn slow — it makes the run stop forever. `std.http.Client` has no read
+a turn slow; it makes the run stop forever. `std.http.Client` has no read
 timeout (`ConnectTcpOptions.timeout` is declared and never referenced), and
 cancellation cannot reach a thread parked in a read on an established
 connection, so nothing below the agent loop can end that wait. The retry
@@ -483,17 +483,17 @@ opt-out.
 
 Set both, not just the idle one. A streaming read completes only when its 8 KiB
 buffer fills or the stream ends, so a provider that emits a few hundred bytes
-and then falls silent never finishes a read at all — to the idle clock that is
+and then falls silent never finishes a read at all. To the idle clock that is
 indistinguishable from a provider that never answered, and only
 `request_timeout_ms` bounds it.
 
 They cannot be one number. On the non-streaming path `request_timeout_ms` caps
-total generation time, so it has to sit above the slowest legitimate answer —
+total generation time, so it has to sit above the slowest legitimate answer:
 on a reasoning model the entire trace is generated before the response arrives.
 A streaming answer can legitimately run past any such ceiling, so bounding its
 total duration would abandon healthy work; what a healthy stream does not do is
 go quiet mid-answer, which is what `stream_idle_timeout_ms` measures. Every read
-that returns bytes counts as life, including SSE keepalives — a provider sending
+that returns bytes counts as life, including SSE keepalives: a provider sending
 keepalives is answering.
 
 A lapsed deadline surfaces as `Timeout` and is **not** retried against the same
@@ -576,7 +576,7 @@ them, so re-list what a cell still needs.
 
 ## `[debug]`
 
-Debug Adapter Protocol client. Off by default — an adapter is an
+Debug Adapter Protocol client. Off by default: an adapter is an
 unsandboxed subprocess (ADR 0010 / 0011 carve-out). Do not flip
 `enabled` on in a recommended config.
 
@@ -601,8 +601,8 @@ one off removes its tools, endpoints, and prompt surface: `mcp`, `mcp_client`,
 HTTP `[[peers]]` list. Off until you turn it on and restart serve.
 
 `goal_auto_steer` is the one that is not a whole subsystem: off, the goal module
-stays on — explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
-tracking all still work — but a run
+stays on (explicit `--goal`, `goal`, `/goal`, `write-goal`, `add-goal`, and
+tracking all still work), but a run
 with no goal named stops attaching itself to whatever goal is newest.
 
 `goal` and `/goal` start a multi-turn goal loop; `--goal <id>` starts that
@@ -659,9 +659,9 @@ A second process on the same host uses another `id`, `listen_port`,
 
 ## Other sections
 
-- **`[instance]`** — `name` and `id`. Mesh addresses members by `id`,
+- **`[instance]`**: `name` and `id`. Mesh addresses members by `id`,
   not `name`. Empty `id` refuses to bind the mesh listener.
-- **`[serve]`** — what `clanker serve` binds, for a deployment that cannot pass
+- **`[serve]`**: what `clanker serve` binds, for a deployment that cannot pass
   flags: `host` (interface, default `127.0.0.1`), `webui_port` (default
   `17921`), and `serve_as` (a TOML array of hostnames the server may present
   itself as). `proxy` (default false) mounts an OpenAI/Anthropic compatibility
@@ -672,7 +672,7 @@ A second process on the same host uses another `id`, `listen_port`,
   startup when bound to a non-loopback host. `proxy_aliases` maps client-facing
   model names to configured `provider/model` ids. `proxy_first_byte_timeout_s`
   and `proxy_idle_timeout_s` default to 300 and 60 seconds respectively; `0`
-  disables either ceiling. The weakest of three layers —
+  disables either ceiling. The weakest of three layers:
   `CLANKER_HOST` / `CLANKER_WEBUI_PORT` / `CLANKER_PROXY_PORT` override it, and
   `--host` / `--webui-port` / `--serve-as` / `--proxy` / `--no-proxy` /
   `--proxy-port` override those. A non-loopback `host` also puts `/api` off
@@ -693,13 +693,13 @@ A second process on the same host uses another `id`, `listen_port`,
   proxy = true
   proxy_token_env = "CLANKER_PROXY_TOKEN"
   ```
-- **`[[peers]]`** — repeated tables of `name` + `url`, other `clanker serve`
+- **`[[peers]]`**: repeated tables of `name` + `url`, other `clanker serve`
   instances this one can notify and share chatrooms/board with. Optional `id`
   is the mesh allowlist key (PRD 0011). Outbound only: a peer URL is
   something this process connects to, never a port it opens, so nothing
   here is exposed by binding `serve` more widely.
-- **`[chatrooms]`** — `on`, `rooms` (default subscriptions), `max_history`.
-- **`[memory]`** — RAG backend. One key at the top level, `backend`
+- **`[chatrooms]`**: `on`, `rooms` (default subscriptions), `max_history`.
+- **`[memory]`**: RAG backend. One key at the top level, `backend`
   (`hybrid`/`vector`/`keyword`), and the retrieval cut-offs under
   `[memory.vector]`. Chunk size, chunk overlap and the embedder are inputs to
   the `memory` tool call, not config: the harness passes only `backend`,
@@ -719,16 +719,16 @@ A second process on the same host uses another `id`, `listen_port`,
   top_k = 5
   threshold = 0.35
   ```
-- **`[web]`** — `allow`: hostnames the research tools (`web_fetch`,
+- **`[web]`**: `allow`: hostnames the research tools (`web_fetch`,
   `web_search`) may reach, added to their sandbox `network_allow` at load. A
   research site is a config edit, not a manifest edit. Entries may use `*` and
   `?` globs, and a bare `"*"` allows any host.
-- **`[ttsr]`** — turn-time self-repair: watch the stream for a pattern and
+- **`[ttsr]`**: turn-time self-repair: watch the stream for a pattern and
   inject a correction instead of letting the turn fail on a known-shaped
   mistake. `max_retries_per_turn`, `buffer_bytes`, and repeated
   `[[ttsr.rules]]` tables of `name` / `pattern` / `inject` / `max_fires`. No
   rules by default, which leaves the whole thing inert.
-- **`[improve]`** — self-improvement loop gates: `capability_gate`,
+- **`[improve]`**: self-improvement loop gates: `capability_gate`,
   `inert_gate`, `plan_phase`, `backlog` (seed the plan phase from open bug
   reports, PRD known issues/unchecked items and planned ROADMAP entries,
   scored in that order, before asking the model for ideas),
@@ -739,14 +739,14 @@ A second process on the same host uses another `id`, `listen_port`,
   times one run's model may ask to see files it was not shown instead of
   proposing a patch; each request costs a call that produces no patch, 0
   disables it), and more. See `src/config.zig` `Improve` and `AGENTS.md`.
-- **`[tui]`** — REPL appearance. Only the mascot lives here so far; the colour
+- **`[tui]`**: REPL appearance. Only the mascot lives here so far; the colour
   theme is still `CLANKER_THEME` plus the session-scoped `/theme`, because
   moving it would change behaviour rather than just add a key.
 
   `mascot` is an opt-in easter egg: a small robot animated from an eleven-frame
   run cycle. The renderer is chosen from the terminal's own answer to a
-  capability query — kitty graphics first, then sixel, then unicode
-  half-blocks — and never from `$TERM` or a terminal name, because ssh and
+  capability query (kitty graphics first, then sixel, then unicode
+  half-blocks), and never from `$TERM` or a terminal name, because ssh and
   multiplexers change what reaches the process. There is no key to force one:
   a terminal that claims a protocol it cannot do would leave the mascot
   invisible.
@@ -760,13 +760,13 @@ A second process on the same host uses another `id`, `listen_port`,
 
   The modes differ in where the robot lives and what moves it:
 
-  - `type` — position tracks the composer, one column per byte typed. Stands
+  - `type`: position tracks the composer, one column per byte typed. Stands
     still between keystrokes, and mirrors horizontally while you backspace.
-  - `loop` — runs across the width, off the right edge, back in from the left,
+  - `loop`: runs across the width, off the right edge, back in from the left,
     ignoring what you are doing.
-  - `place` — runs on the spot, bottom right above the box, facing left by
+  - `place`: runs on the spot, bottom right above the box, facing left by
     default.
-  - `input` — runs on the spot *inside* the box, at its bottom right. At its
+  - `input`: runs on the spot *inside* the box, at its bottom right. At its
     default size the box keeps the three rows it has with no mascot at all; a
     larger size grows it. Either way the text field is narrowed by the robot's
     width, so a long line can never run underneath it. The only mode that costs
@@ -779,7 +779,7 @@ A second process on the same host uses another `id`, `listen_port`,
   Unset means "per mode", not "medium": `input` defaults to `mini`, the one
   size that fits the ordinary composer, and every other mode defaults to
   `medium`, where the rows come out of the transcript and shrinking the robot
-  buys nothing. Below `small` the robot is a silhouette and its eye — the
+  buys nothing. Below `small` the robot is a silhouette and its eye: the
   generator drops its emptiness threshold and leans harder on the eye to keep
   even that (`src/tui/mascot/gen_frames.py`).
 
@@ -794,8 +794,8 @@ A second process on the same host uses another `id`, `listen_port`,
 
   `--mascot[=<mode>]`, `--mascot-size`, `--mascot-facing`, and
   `--mascot-speed` override these settings for one session; a bare `--mascot`
-  means `loop`. An invalid command-line value — or an unparseable `mascot`,
-  `mascot_size`, or `mascot_facing` from config — is reported on the transcript
+  means `loop`. An invalid command-line value, or an unparseable `mascot`,
+  `mascot_size`, or `mascot_facing` from config, is reported on the transcript
   and falls back rather than refusing to start the REPL; only an out-of-range
   `mascot_speed` in config is rejected while loading the configuration.
 
@@ -805,16 +805,16 @@ A second process on the same host uses another `id`, `listen_port`,
   mascot_size = "small"
   mascot_speed = 6
   ```
-- **`[mcp_servers.<name>]`** — external MCP servers, parsed and validated at
+- **`[mcp_servers.<name>]`**: external MCP servers, parsed and validated at
   load and manageable from the web UI; the client bridge that actually
   connects to them is gated behind `modules.mcp_client` (off by default).
   `transport` is `"stdio"` (spawn `command`, with optional `args`/`env`/`cwd`)
   or `"http"` (streamable HTTP at `url`, with optional `headers`);
   `tool_call_timeout_ms` defaults to `60000`. `env` entries are
-  `"NAME=value"` strings and `headers` entries `"Name: value"` — the value
+  `"NAME=value"` strings and `headers` entries `"Name: value"`; the value
   half carries a token, so the whole-file `config` dump (and
   `ck_harness_config`) redacts those values while keeping the names.
-- **`[notify]`** — peer notifications from the improve loop: `on` (default
+- **`[notify]`**: peer notifications from the improve loop: `on` (default
   `true`) and `topic` (default `"clanker"`). When a proposal is promoted, the
   engine sends a `notify` message with this topic to every `[[peers]]` entry
   via the sandboxed `peers` tool; each reachable peer records it in its own

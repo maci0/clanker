@@ -1,13 +1,13 @@
 @AGENTS.md
 
-# Use clanker's own tooling — mandatory
+# Use clanker's own tooling: mandatory
 
 Use these verbs only within the current task's permissions. Tool preference
 never authorizes network calls, credential linking, commits, or cleanup.
 
 **If clanker implements a verb for the task, you must use that verb.** Ad-hoc
-shell — `grep`, `find`, `rm`, hand-written markdown, a hand-rolled `git`
-sequence — is the fallback for what clanker does not implement, never the
+shell (`grep`, `find`, `rm`, hand-written markdown, a hand-rolled `git`
+sequence) is the fallback for what clanker does not implement, never the
 default. Reaching for shell when a verb exists is a defect, not a shortcut.
 
 Before starting any task, ask: *does clanker already have a verb for this?*
@@ -20,7 +20,7 @@ structure), not a `grep -r` walk. Clean up with `clanker janitor`, not `rm` or
 The reason is the plugin boundary, not convenience. clanker is both the program
 you are changing and the program you work with. Nearly every verb below is a
 sandboxed WASM guest plus a manifest, and the CLI, the web UI, and the agent all
-call that one implementation — `toolText` / `toolJson` in `cli.zig` are that
+call that one implementation: `toolText` / `toolJson` in `cli.zig` are that
 call. Reaching for `grep`, `find`, or hand-written markdown builds a second
 implementation that drifts from the first, skips the descriptor's path and
 command policy, and leaves no durable record. `clanker reports search` reads the
@@ -51,7 +51,7 @@ looks for it.
 | `docs/reviews/` | working review logs | by hand |
 
 Reference documents, not records: `docs/README.md` (architecture),
-`docs/configuration.md` (config reference — `src/config.zig` is the
+`docs/configuration.md` (config reference; `src/config.zig` is the
 authoritative schema and the code wins on any disagreement),
 `docs/manifest.md` (every field a descriptor honors), and
 `docs/prompts/*-review.md` (the review prompts, which AGENTS.md marks as
@@ -69,7 +69,7 @@ clanker rfc search "<decision>"
 ```
 
 Gathering the evidence and making the decision are separate records with
-separate tools, and **neither requires the other** — never create one merely
+separate tools, and **neither requires the other**; never create one merely
 because the other exists.
 
 ### `clanker reports`
@@ -83,7 +83,7 @@ and a runbook once recovery is confirmed:
 clanker reports create investigation <YYYY-MM-DD-slug> "<title>" "<TL;DR>"
 ```
 
-A basic verb clanker lacks is documented with the `missing-tool` kind — the
+A basic verb clanker lacks is documented with the `missing-tool` kind: the
 tool inserts `missing-clanker-tool-` into the filename itself, so these
 records are findable by name without trusting the author to mark them:
 
@@ -106,10 +106,10 @@ the one most often missed.
 `recommend`, `status`, `rename`. An RFC needs at least two candidates, the
 status quo, one out-of-the-box option, and a recommendation whose confidence is
 a number from 0 to 10. `search` covers the RFCs and the ADRs together on
-purpose. `checklist` answers a bare request with the whole recipe — what to pin
+purpose. `checklist` answers a bare request with the whole recipe (what to pin
 down, what to put to the operator with `ask_user`, that a research note's
 claims stay unverified until reopened at the source it cites, the shape the
-option set has to take, and the closing `recommend` — so start there rather
+option set has to take, and the closing `recommend`), so start there rather
 than inventing a scope.
 
 ### `clanker adr`
@@ -120,13 +120,13 @@ decision once it is made. The title is the **choice**, not the question.
 naming what replaced it: a reversal links forward instead of editing the
 history out, because that history is the only account of why the original
 constraint looked binding. `search` spans the ADRs, RFCs and PRDs and reports
-each separately — which store a hit lands in is the answer. Passing the RFC a
+each separately: which store a hit lands in is the answer. Passing the RFC a
 decision came from links it and quotes its recommendation under the Decision.
 
 ### `clanker prd`
 
 `list`, `search`, `open`, `checklist`, `create`, `append`, `update`, `status`,
-`rename`. What a feature is meant to be — never a decision (that is an ADR) and
+`rename`. What a feature is meant to be, never a decision (that is an ADR) and
 never the shipped narrative (that is the ROADMAP). `list` groups by status with
 the unfinished work first. `checklist` is the Draft bar: dependencies named,
 blocking questions settled in Design rather than parked under Open questions,
@@ -189,10 +189,10 @@ minute-by-minute invocation cannot stack sweeps.
 Two layers with the same four verb names, deliberately separate
 ([ADR 0002](docs/adrs/0002-private-todos-vs-shared-board.md)):
 
-- `todo_add` / `todo_claim` / `todo_close` / `todo_list` — the **run's own**
+- `todo_add` / `todo_claim` / `todo_close` / `todo_list`: the **run's own**
   in-memory checklist, capped at 100 items and gone when the run ends. Never
   visible to a peer. This is why `todo_*` tools stay in the `agent` category.
-- `kanban_*` — the **shared** board: cards, columns, claims, subtasks, cost,
+- `kanban_*`: the **shared** board: cards, columns, claims, subtasks, cost,
   replicated to peers. There is no `state/board.json`; a card action is a chat
   message folded out of a room's log
   ([ADR 0001](docs/adrs/0001-board-is-a-chatroom.md)).
@@ -214,13 +214,13 @@ Two layers with the same four verb names, deliberately separate
 | Verify providers, models, catalog | `clanker providers [check\|models\|catalog\|fill\|refresh]` |
 
 `clanker stats` reads the host-side aggregate of `state/token_stats.jsonl`,
-which records failed completions too (`ok:false`) — a log of only successes
+which records failed completions too (`ok:false`); a log of only successes
 cannot answer "is the provider down?".
 
 Providers are a **native vtable, not a WASM guest**: keys must not enter the
 sandbox and the transport is on the per-token hot path
 ([ADR 0004](docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md)).
-Adding one is one file, one registry row, one `ProviderKind` tag — never a new
+Adding one is one file, one registry row, one `ProviderKind` tag, never a new
 `switch (provider.kind)`.
 
 ## Setting up and maintaining
@@ -277,8 +277,8 @@ session's staged slice into your commit
 The repository rules make every session create its own worktree with `git
 worktree add`, and that checks out **tracked** files only. `.env` and
 `config.local.toml` are gitignored, so a fresh worktree has neither and every
-verb there resolves the committed `config.toml` `default_provider` — moonshotai,
-which nobody has a key for. `clanker commit` then degrades to the one-commit
+verb there resolves the committed `config.toml` `default_provider` (moonshotai,
+which nobody has a key for). `clanker commit` then degrades to the one-commit
 fallback plan `--yes` refuses, and every other model-calling verb fails the same
 way. Prepare the worktree **before the first model-calling verb**, or you hit
 the bug you are working in:
@@ -287,7 +287,7 @@ the bug you are working in:
 clanker worktree prepare
 ```
 
-Both at once — this fetches `origin`, branches from the remote tip and prepares
+Both at once: this fetches `origin`, branches from the remote tip and prepares
 the result, which is the whole flow the rules ask for:
 
 ```bash
@@ -379,19 +379,19 @@ one, so a typo'd grant fails only when the tool runs.
 A consumer-visible change is not done when the code passes. Land it in the
 documents too, or the next reader learns the feature from source:
 
-- `CHANGELOG.md` — every consumer-visible change, Keep a Changelog format,
-  under `## [Unreleased]`. This is the one most often forgotten — and no gate
+- `CHANGELOG.md`: every consumer-visible change, Keep a Changelog format,
+  under `## [Unreleased]`. This is the one most often forgotten, and no gate
   will remind you: `release-contract` checks release-file structure only,
   never the diff, so a missing entry ships green (see
   docs/reports/investigations/2026-08-24-release-contract-never-reads-the-diff.md).
   Records-only and internal-docs-only changes are exempt: not consumer-visible,
   no entry.
-- `RELEASES.md` — release and version policy. `build.zig.zon` is the single
+- `RELEASES.md`: release and version policy. `build.zig.zon` is the single
   source of truth for the version; a release needs an immutable
   `vMAJOR.MINOR.PATCH` tag and a matching dated CHANGELOG section.
-- `README.md` and `docs/README.md` — a new operator verb belongs in both, the
+- `README.md` and `docs/README.md`: a new operator verb belongs in both, the
   second with its runnable commands and its store.
-- `AGENTS.md` and this file — when the change alters how an agent should
+- `AGENTS.md` and this file: when the change alters how an agent should
   work, not merely what exists.
 
 AGENTS.md is a living document: when a turn surfaces a caveat, quirk, or

@@ -1,4 +1,4 @@
-# clanker — Reference Documentation
+# clanker: Reference Documentation
 
 External-project digests (what we can learn from them) live in [docs/digests/](digests/).
 Product requirement docs live in [docs/prds/](prds/) ([index](prds/README.md), [template](prds/TEMPLATE.md));
@@ -10,8 +10,8 @@ Decisions that are still open live in [docs/rfcs/](rfcs/) ([index](rfcs/README.m
 and the evidence they rest on in [docs/research/](research/) ([index](research/README.md), [template](research/TEMPLATE.md));
 a decision that has been made is an [ADR](adrs/). The `rfc` and `research` tools maintain both,
 and neither requires the other.
-The security model of the running system — entry points, trust boundaries, assets, per-boundary
-threats, and the controls that do or do not exist — is [docs/THREAT_MODEL.md](THREAT_MODEL.md).
+The security model of the running system (entry points, trust boundaries, assets, per-boundary
+threats, and the controls that do or do not exist) is [docs/THREAT_MODEL.md](THREAT_MODEL.md).
 
 
 ## Architecture
@@ -25,12 +25,12 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns in one SQLite database per conversation (`state/sessions/<id>.db` — meta, transcript and an append-only event stream, see [PRD 0044](prds/0044-per-session-sqlite-store-with-an-append-only-event-stream.md)), and each save records the `system_prompt` snapshot the model was running against (built with the preset persona and injected context), so a session or an exported transcript shows what the model saw, not just the visible chat. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
+Sessions are stateful: messages persist across turns in one SQLite database per conversation (`state/sessions/<id>.db`: meta, transcript and an append-only event stream, see [PRD 0044](prds/0044-per-session-sqlite-store-with-an-append-only-event-stream.md)), and each save records the `system_prompt` snapshot the model was running against (built with the preset persona and injected context), so a session or an exported transcript shows what the model saw, not just the visible chat. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
 `clanker repl` and `clanker run` share the same live output pieces, so there is never a silent gap between hitting enter and seeing output:
-- a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool, and a `⚙ <tool names>` line when a tool batch starts, with a `↳ <ms>` line when it finishes — REPL-only; a one-shot `run` stays plain so its output is safe to pipe into scripts,
+- a dim animated braille spinner (`⠋⠙⠹…`) while waiting on the LLM or a tool, and a `⚙ <tool names>` line when a tool batch starts, with a `↳ <ms>` line when it finishes (REPL-only; a one-shot `run` stays plain so its output is safe to pipe into scripts),
 - a bold `›` gutter marking where the model's actual answer begins,
 - the answer itself rendered live: `**bold**`, `*italic*`, `` `inline code` ``, fenced blocks, and `- ` bullets turn into real ANSI styling as tokens stream in (`MdStream` in `src/tui/transcript.zig`; a marker split across two deltas, e.g. `**` arriving as two 1-byte chunks, is buffered and resolved once the rest arrives),
 - a dim stats footer per turn: `[turn: 1234 in / 567 out · 4.2s · 135.1 tok/s · cache 82% · $0.0031 · ctx 12.3k/128k (10%)]`. One formatter behind both surfaces (`src/tui/turn_stats.zig`): `clanker run` prints it on stderr, `clanker repl` appends it to the transcript as the last line of the turn. A model with no `cost_per_1m_input`/`cost_per_1m_output` in the catalogue drops the `$` segment rather than claiming the turn was free, and a provider that reported no cache accounting drops `cache` rather than showing 0%.
@@ -43,7 +43,7 @@ The vaxis REPL adds two things `clanker run` has no use for, since a one-shot ru
 - a running `ctx <used>/<window> (<pct>%)` meter, the tokens the session has spent, and its cost so far, in the status bar next to the provider/model,
 - a line whenever history is actually dropped. `[history compacted: dropped 12 messages, freed 48 KB]` is the save-time trim against `max_session_tokens`; `[context compacted: N earlier messages replaced by a summary to fit the model window]` is the mid-turn compaction `agent.compact_threshold_bytes` triggers inside the agent loop. Mid-turn compaction keeps the run's original request as a labeled anchor ahead of the generated summary, so a failed or incomplete summary cannot leave the model without the task it is meant to finish. Both used to happen silently, which meant a long session could lose the exchange it was about to be asked to remember with nothing on screen.
 
-`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included — a redirected run gets plain, unstyled text) and puts the per-turn stats footer on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the live stats footer.
+`clanker run` keeps stdout content-only (safe to pipe: identical bytes whether or not it's a terminal, markdown rendering included; a redirected run gets plain, unstyled text) and puts the per-turn stats footer on stderr, gated on `stderr` being a real TTY; the gutter and markdown styling on stdout are gated on `stdout` being a real TTY. So `clanker run "…" > out.txt` stays byte-clean while an interactive shell gets the live stats footer.
 
 ### LLM providers (`src/llm/`)
 
@@ -60,7 +60,7 @@ on the per-token hot path, which is what rules WASM out:
 It is deliberately one module for every provider and contains no
 `switch (provider.kind)`: it resolves the vtable once per call
 (`providers.forKind`) and calls through it. The codec halves are pure
-functions of their inputs — no I/O, no credentials — so each provider's
+functions of their inputs (no I/O, no credentials), so each provider's
 request building and response/stream parsing is unit-tested on the host beside
 its own file.
 
@@ -72,7 +72,7 @@ ships a native OAuth flow adds a fourth: a `src/llm/oauth_plugins/<name>.zig`
 and a row in that directory's `plugins` table, which is what `clanker auth
 login` looks up. Nothing else in the tree learns about it. Where a new provider
 mostly matches an existing one, re-export that provider's function pointers
-rather than copying the codec — `vertex_anthropic.zig` does exactly this with
+rather than copying the codec: `vertex_anthropic.zig` does exactly this with
 `anthropic.zig` and differs only in a body header, the URL verb and the
 credential, and `claude.zig` does it with `anthropic.zig` for the OAuth
 variant.
@@ -98,13 +98,13 @@ variant.
 **Auth is a separate axis from the wire format**
 ([ADR 0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
 and the split is real in the code: `src/llm/auth.zig` owns **credential
-acquisition** — where the secret comes from — while **header application** —
-how it rides the request — stays each provider's `authHeaders`. Three
+acquisition** (where the secret comes from), while **header application**
+(how it rides the request) stays each provider's `authHeaders`. Three
 strategies:
 
-- `api_key` — read `api_key_env` and present it the wire kind's way.
-- `oauth_static` — a pasted OAuth access token, presented as `Bearer`.
-- `oauth_refresh` — a token minted and renewed in-process.
+- `api_key`: read `api_key_env` and present it the wire kind's way.
+- `oauth_static`: a pasted OAuth access token, presented as `Bearer`.
+- `oauth_refresh`: a token minted and renewed in-process.
 
 Each provider declares an `auth.Spec` in its registry entry saying which is the
 default, how to recognise an OAuth token by shape, and how to mint one.
@@ -112,7 +112,7 @@ Anthropic stays zero-config that way: a token starting `sk-ant-oat` (an OAuth
 access token from `ant auth login`) is detected as `oauth_static` and sent as
 `Authorization: Bearer` with an `oauth-2025-04-20` beta header, while any other
 value is `api_key` and goes on `x-api-key`. Vertex is `oauth_refresh`,
-minting a GCP token from a service-account JSON or gcloud ADC — an access token in
+minting a GCP token from a service-account JSON or gcloud ADC: an access token in
 `api_key_env` still wins over it. So are the three native OAuth providers
 (`codex`, `grok`, `claude`), each with a row in `src/llm/oauth_plugins/`; with no
 key configured they mint and renew in-process, and `clanker auth
@@ -132,8 +132,8 @@ kind.
 Streaming is split the same way. Each provider's `parseStreamEvent` is a pure
 `(chunk_arena, payload) -> ?StreamEvent` function; `null` means "ignore this
 frame". One `StreamAccumulator` in `client.zig` folds those neutral events into
-a `ChatResponse` — text, per-index tool-call fragments, usage and the finish
-reason — so the two event vocabularies share one accumulation and one token
+a `ChatResponse` (text, per-index tool-call fragments, usage and the finish
+reason), so the two event vocabularies share one accumulation and one token
 accounting path instead of two that can drift. The Anthropic vocabulary:
 `content_block_delta` carries `text_delta` for prose and `input_json_delta`
 fragments for tool arguments, and usage arrives split across `message_start`
@@ -211,8 +211,8 @@ to keep track of two trees at once.
 `clanker run --worktree` isolates a run by moving it: it creates a worktree on a
 fresh branch cut from the current one, chdirs into it, and runs there.
 
-Isolation is **already the default** where the run is unattended — a `--goal` run
-and any run the scheduler fires — and **off** for a plain typed `clanker run`.
+Isolation is **already the default** where the run is unattended (a `--goal` run
+and any run the scheduler fires) and **off** for a plain typed `clanker run`.
 That split is the whole rule, and it is about two things a person notices
 immediately and a timer never does: an isolated run cannot see **uncommitted**
 work (the worktree is cut from the branch tip), and its output is commits on a
@@ -238,7 +238,7 @@ allowed git verb and `remove` is not on the deny list, so
 `git worktree remove .clanker-worktrees/<other>` would otherwise have deleted
 another run's tree and its commits.
 
-The worktree and its branch are **kept** when the run ends — the commits are the
+The worktree and its branch are **kept** when the run ends: the commits are the
 deliverable, and the run ends long before anyone has read them.
 (`improve-self` differs: it merges its branch back at the ref level and only then
 removes the worktree.)
@@ -248,7 +248,7 @@ removes the worktree.)
 Cleanup follows the **goal's** lifecycle, not the run's and not the clock: an old
 worktree holding unmerged commits is precisely the one not to delete. A run that
 carried a goal is recorded in `state/worktrees.json` against it, and the worktree
-is retired once that goal reaches `archived` or `abandoned` — the two statuses
+is retired once that goal reaches `archived` or `abandoned`, the two statuses
 that mean nobody is coming back for it. `done` and `review` do **not** retire
 anything; those are when someone is about to read the diff.
 
@@ -274,19 +274,19 @@ Isolation covers **git-tracked files only**. Those are the run's own, because
 editing them without disturbing anyone else is the entire point.
 
 Everything git does *not* track belongs to the checkout, and an isolated run
-reaches it exactly as it would without isolation — same files, same writes, no
+reaches it exactly as it would without isolation: same files, same writes, no
 snapshot:
 
 | | Resolves to |
 |---|---|
 | `src/`, `docs/`, `tools/`, `build.zig`, `AGENTS.md`, … (tracked) | the worktree |
-| `state/` — sessions, goals, learnings, stats, run graphs | the checkout |
+| `state/`: sessions, goals, learnings, stats, run graphs | the checkout |
 | `.local/`, `.agents/`, `.claude/` | the checkout |
 | `.env`, `config.local.toml`, `config.local.json` | the checkout |
 | `zig-out/`, `.zig-cache/` | the worktree (see below) |
 
 A snapshot would quietly cripple the run: no goal to be steered by, no session to
-resume, and its notes and token accounting written where nothing reads them —
+resume, and its notes and token accounting written where nothing reads them,
 each of which looks like a broken tool rather than a missing directory.
 
 Two mechanisms, because two different readers resolve these paths, and both are
@@ -298,7 +298,7 @@ needed:
   to traverse a symlinked component (that is what stops `allowed/link/secret`
   escapes), so a linked `state/` *denies* every tool that touched it. A checkout
   that deliberately keeps `state/` in external storage sets
-  `agent.sandbox_follow_symlinks` to lift exactly that refusal — off by default,
+  `agent.sandbox_follow_symlinks` to lift exactly that refusal, off by default,
   a known risk, and not a security finding
   ([ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md)).
 - **The harness itself** resolves native I/O against the process cwd, so
@@ -313,7 +313,7 @@ needed:
 
 `zig-out/` and `.zig-cache/` are untracked but stay per-worktree: builds *write*
 there, and a shared `zig-out` lets a worktree's build clobber the binaries the
-checkout is using — including the running `clanker`. The part a run needs to
+checkout is using, including the running `clanker`. The part a run needs to
 *read*, the guest wasm modules, is pinned to the harness's own build
 (`Registry.rebaseWasmPaths`), which is read-only and cannot collide.
 
@@ -345,8 +345,8 @@ was started, not something the agent can opt into mid-run.
    and be asked again with those files pinned in for the rest of the run. That
    round does not consume a retry; `improve.max_context_requests` (default 3,
    0 disables) caps how many a run gets. The readable surface is wider than the
-   writable one — the gate machinery, `docs/`, and `AGENTS.md` can be read but
-   not patched — and excludes `state/`, `.env` and `config.local.*` entirely.
+   writable one (the gate machinery, `docs/`, and `AGENTS.md` can be read but
+   not patched) and excludes `state/`, `.env` and `config.local.*` entirely.
    It is a prefix-plus-extension allowlist, so a writable source type must be
    listed by extension too: `.mjs` files under `ui/` are writable, and a model
    that asks for one is refused unless `.mjs` is also readable.
@@ -356,14 +356,14 @@ was started, not something the agent can opt into mid-run.
    lint, and (with `improve.capability_gate` on) the deterministic capability
    evals, which `improve.eval_provider` can aim at a cheaper/faster provider
    than the one writing patches. Textual invariants (`gate_invariants` in
-   `engine.zig`) additionally assert that load-bearing code — the gate call
-   sites themselves, the worktree's shared-state arrays — survives in the
+   `engine.zig`) additionally assert that load-bearing code (the gate call
+   sites themselves, the worktree's shared-state arrays) survives in the
    staged text, so a patch cannot quietly remove its own safety net.
 5. On green, promote and commit the changes in that worktree, then merge the
    commit back into the original checkout as `clanker: <summary> [imp-<id>]`.
 
 Separately from the staged proposal's gates, the loop also tracks the state of
-the *live* tree it is patching — the baseline it reports at startup, the number
+the *live* tree it is patching: the baseline it reports at startup, the number
 recorded against each promotion, and the build errors it shows the model when
 the tree it is working from is already broken. That measurement is another full
 `zig build` + `zig build tools` + `zig build test`, so it is taken once and
@@ -377,20 +377,20 @@ the worktree's cache at the start of each run.
 
 The history is stored in `state/history/` and can be reverted with `clanker
 revert <id>`. Human reverts are a feedback channel, not just an undo. The loop
-detects promoted improvements that a person later reverted — both those undone
-by a recognisable revert commit and those simply deleted from the tree — and
+detects promoted improvements that a person later reverted, both those undone
+by a recognisable revert commit and those simply deleted from the tree, and
 records them in `state/improvements.jsonl` as `"status": "reverted"`, together
 with *why*: the subject line of the reverting commit, or a note that the change
 was removed without one. Both the planning prompt and the patch prompt then
 render that reason under the entry, labelled as a human's refusal rather than a
 gate's, so the next run knows which idea was refused and on what grounds. The
 sync runs at startup and again after each promotion, since merging back is when
-commits made outside the run's worktree — a revert landed on the base branch
-while the run is still going — first become visible to it.
+commits made outside the run's worktree (a revert landed on the base branch
+while the run is still going) first become visible to it.
 
 Write a refusal in by hand the same way: append a record with the improvement's
 `id`, `"status": "reverted"` and a `detail` saying what is wrong with it. That
-is the whole contract — the loop reads the status to stop re-proposing the
+is the whole contract: the loop reads the status to stop re-proposing the
 change, and the detail to explain itself.
 
 ### Evals and gates (`src/evals/`, `src/gate/checks.zig`)
@@ -438,7 +438,7 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   its `build.zig.zon` `.hash` pin names, under `zig-pkg/`. That directory is
   gitignored and therefore per-worktree, `zig build` extracts pristine
   upstream tarballs into it, and `scripts/apply-patches.sh` was called by
-  nothing — not `build.zig`, not any gate — so a fresh worktree built, tested
+  nothing (not `build.zig`, not any gate), so a fresh worktree built, tested
   and gated green against pristine vaxis and zwasm. That covers strictly less
   code than the same commit does patched (`sixel_supported` in
   `src/tui/mascot.zig` compiles the sixel path out) and runs a different
@@ -448,8 +448,8 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   nothing exists to patch before the dependencies are extracted, which is the
   ordering trap the failure message names.
 - plus `zig fmt`, a lint check, a release-contract check (CHANGELOG,
-  RELEASES.md, and README links stay aligned with `build.zig.zon`), and — in
-  the improve loop — the capability
+  RELEASES.md, and README links stay aligned with `build.zig.zon`), and, in
+  the improve loop, the capability
   evals (`evals/*.task.json` run against the staged binary) and a
   git-deny-guard that parses staged `config.toml`/`config.local.toml` changes
   and rejects any that would let `exec_pattern_allow` name a git command.
@@ -477,7 +477,7 @@ Module flag: `modules.token_stats`.
 ### Chatrooms (`src/peers/chatrooms.zig`)
 
 Clankers can subscribe to named chatrooms and talk to each other. A room is
-implicit — created on first message. Sending appends the message to the local
+implicit: created on first message. Sending appends the message to the local
 log and fans it out to every configured peer's `POST /api/chat/message`; each
 peer keeps the message only when it subscribes to that room. A member's
 inbound `CHAT` frame arrives on the serve-owned mesh socket
@@ -517,7 +517,7 @@ sending still uses HTTP (`fanOut` has no mesh send path).
 - Sub-agents can ask the parent: `ask_user {"parent": true}` in a nested run
   routes the question to the agent that spawned it. The answer is one bounded
   completion on the parent's provider over a snapshot of the parent's
-  transcript (`answerAsParent`, `src/agent/loop.zig`) — safe because
+  transcript (`answerAsParent`, `src/agent/loop.zig`), safe because
   `ck_subagent` joins the nested thread, so the parent is parked with no tool
   of its own in flight while the question is answered.
 - HTTP: `POST /api/chat/message` (delivery), `GET /api/chat/messages?room=..&after=..`,
@@ -588,42 +588,42 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 |------|------|----------|
 | `tools/` | `src/toolhost/` | Tool sources, descriptors, and committed WASM |
 | `evals/` | `src/evals/` | `*.task.json` eval definitions |
-| `skills/` | — | Markdown skills folded into the system prompt |
+| `skills/` | n/a | Markdown skills folded into the system prompt |
 | `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
-| `chains/` | — | Transform chains (`agent.chains_dir`) |
+| `chains/` | n/a | Transform chains (`agent.chains_dir`) |
 | `presets/` | `src/preset/preset.zig` | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
-| `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`, then `profiles/<name>.local.toml` when present) |
+| `profiles/` | n/a | Config overlays (`--profile <name>` applies `profiles/<name>.toml`, then `profiles/<name>.local.toml` when present) |
 | `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens. A `<name>.css` beside a palette is that theme's companion chrome sheet (`/webui/themes/<name>.css`), which the web UI links only while that theme is applied |
-| `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
+| `commands/` | n/a | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
 | `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
 | `hooks/` | `src/hooks/` | Claude-compatible lifecycle hook catalogs (`[hooks] config_path`, `ponytail.json` is the shipped one) |
-| `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
-| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `grammars/build.sh` |
-| `vendor/` | — | Vendored third-party source, committed rather than fetched |
-| `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
-| `docs/` | — | This reference, the roadmap, review prompts, assets |
-| `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
-| `scripts/` | — | Development scripts (`verify.sh`, `apply-patches.sh`) |
-| `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
+| `ui/` | n/a | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
+| `rules/` | n/a | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `grammars/build.sh` |
+| `vendor/` | n/a | Vendored third-party source, committed rather than fetched |
+| `patches/` | n/a | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
+| `docs/` | n/a | This reference, the roadmap, review prompts, assets |
+| `tests/` | n/a | Fixtures; the tests themselves live in `test` blocks beside the code |
+| `scripts/` | n/a | Development scripts (`verify.sh`, `apply-patches.sh`) |
+| `state/` | n/a | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
-entry points and cross-cutting operator commands—`main.zig`, `cli.zig`,
-`config.zig`, `doctor.zig`, and `proxy_main.zig`—sit directly under `src/`. Build
+entry points and cross-cutting operator commands (`main.zig`, `cli.zig`,
+`config.zig`, `doctor.zig`, and `proxy_main.zig`) sit directly under `src/`. Build
 output (`zig-out/`) and `.zig-cache/` are generated and gitignored; Zig's
 dependency cache location is controlled by the Zig installation/environment.
 
 ## Tool layout
 
-- `tools/zig/` — Zig tool sources.
-- `tools/ts/` — AssemblyScript tool sources.
-- `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
-- `grammars/` — the Zig tree-sitter grammar `ast-grep` loads for structural search over this repo's own source, patched for the Zig version this tree builds against and rebuilt by `grammars/build.sh`; the `.so` is a build artifact and gitignored.
-- `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
-- `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
-- `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
-- `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
-- `zig-out/tools/` — built WASM binaries from `zig build tools`.
-- `tools/ts/dist/` — committed AssemblyScript artifacts (compiled JS/WASM).
+- `tools/zig/`: Zig tool sources.
+- `tools/ts/`: AssemblyScript tool sources.
+- `tools/c/`, `tools/cpp/`, `tools/py/`: tool sources in those languages.
+- `grammars/`: the Zig tree-sitter grammar `ast-grep` loads for structural search over this repo's own source, patched for the Zig version this tree builds against and rebuilt by `grammars/build.sh`; the `.so` is a build artifact and gitignored.
+- `tools/examples/manifests/`: descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
+- `patches/`: patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
+- `ui/plugins/`: web UI plugin apps, served under `/webui/plugins/<name>`.
+- `tools/manifests/*.tool.json`: tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
+- `zig-out/tools/`: built WASM binaries from `zig build tools`.
+- `tools/ts/dist/`: committed AssemblyScript artifacts (compiled JS/WASM).
 
 Tools are discovered by the registry (`src/toolhost/registry.zig`) from the configured `tools_dir` (default `tools/manifests`).
 
@@ -670,9 +670,9 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `web_fetch` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, `worktree`, plus the index verbs `write-tree`, `read-tree` without `-u`, and `restore --staged` (never `restore --worktree`), which `smart_commit` needs to honor a hunk-narrowed index, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
+| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, `worktree`, plus the index verbs `write-tree`, `read-tree` without `-u`, and `restore --staged` (never `restore --worktree`), which `smart_commit` needs to honor a hunk-narrowed index, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree (an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree), and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
-| `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or deliver a machine notification (`notify`). Conversational DMs are `chat_dm` |
+| `peers` | none; reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or deliver a machine notification (`notify`). Conversational DMs are `chat_dm` |
 | `chat_dm` | none | Direct message another instance (`to` + `text`); same send path as `chat_send`, canonical dm room |
 | `opencv` | none | Image analysis: size/brightness/sharpness, Canny edges, contours, faces, grayscale, resize |
 | `zig_check` | none | Fast per-file `zig ast-check` and format check, without the full gate |
@@ -700,12 +700,12 @@ Internal tools, never offered to the model:
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
 | `tools` | `tools/manifests/` | List registered tools |
-| `sessions` | none — reads the host session store (ck_session) | List saved conversations |
+| `sessions` | none; reads the host session store (ck_session) | List saved conversations |
 | `graph` | `state/runs/` | Render the latest execution graph |
-| `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
+| `status` | none; reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
 | `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`); `--model` is the same guest via `ck_llm` |
-| `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
+| `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file: the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 | `kanban` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
 | `janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
@@ -723,7 +723,7 @@ Internal tools, never offered to the model:
 
 ## Plugins
 
-Every tool is a WASM plugin; the descriptor decides how much of the harness it gets. **[docs/manifest.md](manifest.md) is the full field reference** — every key the harness honors, what happens when one is wrong, and how to package a plugin that does not live in this repo. The table below is the shortlist.
+Every tool is a WASM plugin; the descriptor decides how much of the harness it gets. **[docs/manifest.md](manifest.md) is the full field reference**: every key the harness honors, what happens when one is wrong, and how to package a plugin that does not live in this repo. The table below is the shortlist.
 
 | Descriptor key | Meaning |
 |----------------|---------|
@@ -758,7 +758,7 @@ consent to run).
 
 - **TUI slash commands.** One `{command, help, tool, args}.json` in
   `agent.tui_plugins_dir` (default `tui-plugins/`) becomes a `/command` that
-  dispatches to a sandboxed tool — the same `.tool` action a built-in
+  dispatches to a sandboxed tool, the same `.tool` action a built-in
   command uses, so `/help`, Tab-complete, Ctrl-P and dispatch see it exactly
   like a built-in. Enable per name in `state/tui_plugins.json` (`{"enabled":
   [...]}`, default off); the REPL's `/tui-plugins` lists and toggles, and a
@@ -849,7 +849,7 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/tui-plugins [on\|off <name>]` | in-process | List TUI slash-command plugins, or enable/disable one (PRD 0012) |
 | `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
-### `!cmd` — the inline shell escape
+### `!cmd`: the inline shell escape
 
 A line starting with `!` is a third input mode, checked before the command table above: it runs right there and its output lands in the transcript, and nothing about it is sent to the model.
 
@@ -858,7 +858,7 @@ A line starting with `!` is a third input mode, checked before the command table
 !rg "fn parseShellEscape" src
 ```
 
-It is not a shell. The line is split into one fixed argv — whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes — and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
+It is not a shell. The line is split into one fixed argv (whitespace separates arguments, `'…'` or `"…"` groups one argument that contains spaces, there are no backslash escapes), and that argv goes through the same `ck_exec` gate a WASM tool's exec call goes through (`host.execUnderPolicy` → `host.execDenial`). So there are no pipes, redirections, globs or `$VAR` expansion, because there is no shell to expand them; the child also gets the same filtered environment a tool's subprocess gets, which is why an allowed binary cannot print this project's API keys.
 
 The commands it may run are the union of every registered tool's `exec_allow` (`ast-grep`, `gh`, `git`, `rg`, `semcode`, `uv`, `zig`, `zls` as shipped) plus anything in `agent.repl_exec_allow`. A bare `!` prints usage and that list. The rest of the policy still applies: `git` is limited to its local verbs, the deny tokens (`reset`, `rebase`, `rm`, `-f`, …) still refuse, and a refusal is printed as a transcript line saying which token tripped it. A non-zero exit is reported as `error: ! exited with status N`; output is control-stripped like every other untrusted string and capped at 200 lines.
 
@@ -945,10 +945,10 @@ iter 2
 A bare `clanker providers check` sweeps every configured provider in config order and reports as it goes, so nothing has to be inferred from silence:
 
 - The `default provider: <name> (from <path>)` line comes first, whatever happens below it.
-- A provider that cannot possibly answer — no `base_url`, or an `api_key_env` that is not set in the environment — is reported as `not configured — …, nothing sent` before any socket work, so it costs the sweep nothing.
+- A provider that cannot possibly answer (no `base_url`, or an `api_key_env` that is not set in the environment) is reported as `not configured — …, nothing sent` before any socket work, so it costs the sweep nothing.
 - Every other provider is announced (`<name>: checking <model>...`) *before* the request goes out, then gets its result line.
 - Each attempt is capped by `agent.provider_check_timeout_seconds` (default 10, `0` disables) or the provider's own `check_timeout_seconds`. A provider that has not answered by then is canceled and reported as timed out, and the sweep moves on.
-- The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`, `needs login` (no OAuth token on disk, so nothing was sent; the repair is `clanker auth login <name>`).
+- The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set: `OK`, `not configured`, `failed` (it answered, with an error status; a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`, `needs login` (no OAuth token on disk, so nothing was sent; the repair is `clanker auth login <name>`).
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
 
@@ -956,7 +956,7 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 
 `git worktree add` checks out **tracked** files only. `.env` and
 `config.local.toml` are both gitignored, so a worktree made by hand has
-neither, and `Config.load` there sees only the committed `config.toml` — whose
+neither, and `Config.load` there sees only the committed `config.toml`, whose
 `default_provider` is `moonshotai`, which nobody has a key for. Every
 model-calling verb then fails inside that worktree, and `clanker commit` in
 particular falls back to the degraded one-commit plan that `--yes` refuses.
@@ -980,7 +980,7 @@ Prepare another one:
 clanker worktree prepare /tmp/wt-probe
 ```
 
-Create a worktree and prepare it in one command — this fetches `origin` and
+Create a worktree and prepare it in one command: this fetches `origin` and
 branches from the current branch's remote tip, which is what the repository
 rules ask for, naming the branch after the directory:
 
@@ -1024,7 +1024,7 @@ the path it should point at:
 
 - `state/improvements.jsonl` and `state/history` **fail**. They are the
   improve loop's cross-run memory, and a private copy means every write goes
-  somewhere thrown away with the worktree — the defect in
+  somewhere thrown away with the worktree: the defect in
   [the ledger bug](reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md),
   where 21 improvements were lost that way.
 - `.env` and `config.local.toml` **warn**. `prepareLinked` never overwrites an
@@ -1034,21 +1034,21 @@ the path it should point at:
 An ordinary checkout has no main checkout to link back to (its `.git` is a
 directory, not a file), so the section does not appear at all. The names come
 from `local_config_names` and `shared_state_link_names` in
-`src/improve/worktree.zig` — the same lists the linking reads, so the check
+`src/improve/worktree.zig`, the same lists the linking reads, so the check
 and the links cannot drift apart. Recovery is
 [worktree-state-link-replaced-by-a-copy](runbooks/worktree-state-link-replaced-by-a-copy.md).
 
 An operator who does not want worktrees reaching the main tree's credentials
 sets `worktree_link_local_config = false` under `[agent]`; `prepare` then
 reports both names as `skipped` rather than quietly doing nothing. That key is
-read from the **main checkout's** config, never the worktree's — the worktree
+read from the **main checkout's** config, never the worktree's: the worktree
 cannot see `config.local.toml` yet, which is the whole defect, so asking it
 would answer from the committed defaults every time.
 
 The verb is native rather than a WASM guest, against the usual rule, for one
 reason: the guest ABI has no symlink call (`ck_fs_*` reads, writes, copies,
 renames and deletes; nothing links), and adding one would let any tool plant a
-link inside its own granted prefix and reach past it — exactly the risk
+link inside its own granted prefix and reach past it, exactly the risk
 [ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md) keeps behind an
 opt-in flag. Creating the link is a host job.
 
@@ -1073,7 +1073,7 @@ clanker reports update docs/reports/investigations/2026-08-19-demo-record.md "In
 clanker reports status docs/reports/investigations/2026-08-19-demo-record.md resolved "fixed in <sha>"
 ```
 
-`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `rename <path> <new-slug>` moves a record inside its own store, rewrites the inventory link under compare-and-swap, preserves a `missing-clanker-tool-` marker whether or not the new slug carries it, and lists every in-store file still naming the old record (mentions elsewhere in the tree are outside the tool's grants — search for them). `append` adds markdown to the end of a record, except that a block whose first line is a heading the record already carries *empty* fills that section in place instead of leaving a second copy of the heading (the reply says `filled ## <section>` when it does). `update` replaces one exact passage, or every copy of it with `--replace-all` — which is what editing a `status` note takes, since that sentence is written into the TL;DR bullet and the `## Status` section alike. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+`create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `rename <path> <new-slug>` moves a record inside its own store, rewrites the inventory link under compare-and-swap, preserves a `missing-clanker-tool-` marker whether or not the new slug carries it, and lists every in-store file still naming the old record (mentions elsewhere in the tree are outside the tool's grants; search for them). `append` adds markdown to the end of a record, except that a block whose first line is a heading the record already carries *empty* fills that section in place instead of leaving a second copy of the heading (the reply says `filled ## <section>` when it does). `update` replaces one exact passage, or every copy of it with `--replace-all`, which is what editing a `status` note takes, since that sentence is written into the TL;DR bullet and the `## Status` section alike. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
 
 ### Open decisions (RFCs)
 
@@ -1111,9 +1111,9 @@ Seed a new RFC from an existing research note by passing its path as `create`'s 
 clanker rfc create "State store" "Peers disagree about state" state-store docs/research/decentralized-state-store.md
 ```
 
-That links the note from References and lifts its option headings in as stubs marked unverified — claims to re-check against the sources the note cites, never content to keep.
+That links the note from References and lifts its option headings in as stubs marked unverified: claims to re-check against the sources the note cites, never content to keep.
 
-`create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2. `rename <path> <new-slug>` moves a record to a new slug and rewrites its inventory link in the same call, and it keeps the **number**: these records are cited by number in prose across the tree, where a scan of filenames cannot follow, so the slug is a name and the number is identity. Pass the new name without a number; a slug carrying a different number is refused by name rather than silently ignored. The unnumbered `research` store has the same action with no such rule.
+`create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10; a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2. `rename <path> <new-slug>` moves a record to a new slug and rewrites its inventory link in the same call, and it keeps the **number**: these records are cited by number in prose across the tree, where a scan of filenames cannot follow, so the slug is a name and the number is identity. Pass the new name without a number; a slug carrying a different number is refused by name rather than silently ignored. The unnumbered `research` store has the same action with no such rule.
 
 ### Decisions already made (ADRs)
 
@@ -1154,7 +1154,7 @@ record destroys the only account of why the original constraint looked binding.
 
 ### Feature specifications (PRDs)
 
-What a feature is *meant to be*, in [docs/prds/](prds/) — distinct from a
+What a feature is *meant to be*, in [docs/prds/](prds/), distinct from a
 decision (an ADR), an open question (an RFC), and the shipped narrative
 ([ROADMAP.md](ROADMAP.md)). `clanker prd` calls the `prd` tool
 (`tools/zig/prd.zig`); `src/records/prd.zig` renders. Read them:
@@ -1186,7 +1186,7 @@ clanker prd rename docs/prds/0009-schedule.md scheduled-runs
 ```
 
 `shipped` requires a note naming the source files that are now the single
-source of truth — that is what makes the claim checkable instead of taken on
+source of truth: that is what makes the claim checkable instead of taken on
 trust. The `prd` index is a Markdown table with a Notes column rather than a
 list, so a status change rewrites only the status cell and leaves the note
 alone.
@@ -1235,7 +1235,7 @@ curl -s -X POST http://127.0.0.1:17921/api/prd -H 'content-type: application/jso
 ```
 
 The endpoint always sends an explicit action, so a guest's own default action
-never applies over HTTP — `GET /api/research` lists rather than planning. A
+never applies over HTTP: `GET /api/research` lists rather than planning. A
 write action named on `GET`, a read action named on `POST`, and a `POST` with
 no `action` are all refused with 400 before the guest runs: a GET is what a
 browser prefetches and a crawler follows, so it must not be able to change a
@@ -1248,7 +1248,7 @@ action here; `clanker research sweep` and the agent still have it.
 Compare-and-swap survives the trip unchanged, because nothing native writes:
 an `append`, `update`, `status` or `recommend` against text the record no
 longer has comes back as the guest's own refusal telling the caller to re-open
-and retry, mapped to 400 — never a silent overwrite, and never a 500. A path
+and retry, mapped to 400, never a silent overwrite, and never a 500. A path
 that does not exist is 404.
 
 None of the five is behind a `modules.*` flag, for the same reason
@@ -1266,13 +1266,13 @@ Recurring agent runs, kept in `state/schedule.json` and recorded in `state/sched
 | `schedule add "<cron>" "<task>"` | Schedule a task. The first run is the first window *after* the add, never immediately |
 | `schedule remove <id>` | Drop an entry; its ledger history stays |
 | `schedule enable <id>` / `disable <id>` | A disabled entry is never due. Re-enabling counts the next window from now, not from the pause |
-| `schedule run <id>` | Fire one entry now, whatever its schedule says — the way to test an entry. Counts as a real run: it advances the window and lands in the ledger marked `manual` |
+| `schedule run <id>` | Fire one entry now, whatever its schedule says: the way to test an entry. Counts as a real run: it advances the window and lands in the ledger marked `manual` |
 | `schedule run-due` | Fire everything whose window has passed. What cron calls |
 | `schedule log` | The last 20 ledger records, newest first |
 
 Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a scheduled run can use a cheaper backend than the default; `--tz-offset <±HH:MM>` sets the fixed offset the cron fields are read at (also `UTC`, or a plain minute count).
 
-**Nothing fires on its own.** There is no background loop and no scheduling thread in `clanker serve` — the system's own cron (or a systemd timer, or launchd) is the clock, which is the decision recorded in [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md):
+**Nothing fires on its own.** There is no background loop and no scheduling thread in `clanker serve`; the system's own cron (or a systemd timer, or launchd) is the clock, which is the decision recorded in [ADR 0008](adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md):
 
 ```
 * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due
@@ -1280,13 +1280,13 @@ Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a
 
 `run-due` is built for that: it holds a non-blocking exclusive lock for the whole sweep, so a per-minute cron overlapping a run that takes longer than a minute prints `another 'schedule run-due' is still working` and exits 0 rather than stacking sweeps. It exits non-zero only when an entry it fired came back an error.
 
-**Cron dialect.** Five fields — `minute hour day-of-month month day-of-week` — each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10` — write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
+**Cron dialect.** Five fields (`minute hour day-of-month month day-of-week`), each `*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those. Sunday is `0` or `7`. Deliberately not accepted, because guessing at a dialect is worse than an error at the point the mistake was made: names (`MON`, `JAN`), `@nicknames` (`@daily`), a seconds field, `L`/`W`/`#`, wrapping ranges (`55-5`), and a step on a bare number (`5/10`: write `5-59/10` or `*/10`). When *both* day fields are restricted the entry fires when **either** matches, as in Vixie cron: `0 0 13 * 5` is "the 13th, and every Friday", not "Friday the 13th". A field counts as unrestricted when it is written `*` or `*/n`; `*/2,15` is a set the writer chose and is treated as one. A spec that parses but can never come around (`0 0 30 2 *`) is refused by `add`.
 
 **Time zones.** Fields are read in UTC, shifted by the entry's own fixed `--tz-offset`. There is no time zone database in the binary and therefore no DST handling: an entry at `+01:00` stays at `+01:00` all year, so a wall-clock-sensitive job needs its offset edited twice a year. The reasoning is in [ADR 0009](adrs/0009-schedule-fires-on-fixed-utc-offsets.md); the payoff is that `tools/zig/schedule_cron.zig` is pure and every awkward case (leap years, month lengths, an offset crossing a UTC date boundary) is a host unit test.
 
 **Missed runs fire once and are never backfilled.** An entry's `last_run` records the moment it *ran*, not the slot it ran *for*, so the next window is computed from wake time. A machine that slept through a day of a `*/5` entry fires it exactly once on waking, counts the 286 windows in between into the ledger's `skipped`, and resumes on the normal grid. Backfilling would mean 288 agent runs and a real bill for answers that stopped being interesting hours ago.
 
-`run-due` claims a window — writes `last_run` and `runs += 1` — *before* it calls the model, then re-opens the store afterwards to record the outcome. A sweep killed halfway therefore leaves the entry looking fired (at-most-once, rather than a crash loop that bills per iteration), and an `enable`/`disable` that landed while the model was working survives the write.
+`run-due` claims a window (writes `last_run` and `runs += 1`) *before* it calls the model, then re-opens the store afterwards to record the outcome. A sweep killed halfway therefore leaves the entry looking fired (at-most-once, rather than a crash loop that bills per iteration), and an `enable`/`disable` that landed while the model was working survives the write.
 
 **Ledger.** `state/schedule/log.jsonl`, one JSON object per line: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
 
@@ -1303,7 +1303,7 @@ expected shape, actual TOML type/value where safe, and a corrected example.
 may be overriding an otherwise valid `config.toml`. The full format and common
 TOML corrections are in [Configuration errors](configuration.md#configuration-errors).
 
-A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider` — inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
+A provider declares its backend once (`[providers.<name>]`); its models live in a separate, top-level `[models."<provider>/<model>"]` table, keyed by that composite id, each entry naming its own `provider`, inspired by Kimi Code's config.toml shape. Per-model settings (`context_window`, `max_tokens`, `temperature`, `reasoning_effort`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`) belong to the model rather than the provider, because they differ between models sharing one endpoint:
 
 ```toml
 [providers.moonshotai]
@@ -1327,27 +1327,27 @@ max_tokens = 16384
 
 `default_model` is only needed when a provider declares more than one model; with a single model it is inferred, so naming it twice is unnecessary. `capabilities` (e.g. `"tool_use"`, `"image_in"`, `"video_in"`, `"audio_in"`, `"thinking"`, `"always_thinking"`) self-documents what the model supports. It is mostly informational, but one thing gates on it: a model that declares its capabilities while omitting `image_in` is treated as non-vision, so the webui refuses image attachments to it up front (DeepSeek v4-flash's endpoint rejects `image_url` blocks with an opaque deserialize 400), and a model with no `capabilities` declared is left unknown and the attachment is attempted. `clanker providers fill <name>` prints a ready-to-paste `[models."<provider>/<name>"]` block per configured model, including `capabilities`, from the [models.dev](https://models.dev) catalog (`limit.context` → `context_window`, `cost.input`/`cost.output` → `cost_per_1m_input`/`cost_per_1m_output`, `reasoning`/`tool_call`/`modalities` → `capabilities`); it never writes the file, so a human stays in the loop for the merge.
 
-Providers do not store API keys directly — `api_key_env` names an environment variable instead, loaded from `.env` (`modules.dotenv`) or the process environment.
+Providers do not store API keys directly; `api_key_env` names an environment variable instead, loaded from `.env` (`modules.dotenv`) or the process environment.
 
 The pre-`models`-table form is **rejected**, not silently accepted:
 
 | In the file | Result |
 |-------------|--------|
-| `model` on the provider | `ProviderLegacyModelFields` — declare the model in the top-level `models` table instead |
-| `max_tokens` / `context_window` / `temperature` / `top_p` / `reasoning_effort` on the provider | `ProviderLegacyModelFields` — move it into the model |
-| `models` nested under the provider (the pre-Kimi-restructure shape) | `ProviderLegacyModelFields` — move it to the top-level `models` table |
+| `model` on the provider | `ProviderLegacyModelFields`: declare the model in the top-level `models` table instead |
+| `max_tokens` / `context_window` / `temperature` / `top_p` / `reasoning_effort` on the provider | `ProviderLegacyModelFields`: move it into the model |
+| `models` nested under the provider (the pre-Kimi-restructure shape) | `ProviderLegacyModelFields`: move it to the top-level `models` table |
 | a `models."<provider>/<model>"` entry naming no `provider`, or whose key doesn't start with `"<provider>/"` | `MissingField` / `ModelKeyProviderMismatch` |
 | a `models` entry naming a `provider` that isn't declared under `providers` | `ModelUnknownProvider` |
 | a provider ending up with no models at all | `ProviderMissingModel` |
 | `default_model` naming an absent entry | `ProviderDefaultModelUnknown` |
-| a provider with several models and no `default_model` | `ProviderDefaultModelMissing` — the active model is only inferred when there is exactly one |
+| a provider with several models and no `default_model` | `ProviderDefaultModelMissing`: the active model is only inferred when there is exactly one |
 | `default_provider` naming a provider that isn't defined | `DefaultProviderUnknown` |
 
 Each names the provider (or model key) and the fix. All fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.
 
-A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load — it logs `unknown key '<name>' in <section> (ignored, check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
+A key that doesn't belong in its section (a typo like `mx_iterations`) doesn't fail the load; it logs `unknown key '<name>' in <section> (ignored, check spelling)` and falls back to that field's default, so a misspelling is visible in the startup log instead of silently taking effect as "unset."
 
-Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream — `Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting — still sees the same per-provider model map it always has. The table-key name is the local alias (`--model xai/grok4.6-coding`); optional `id` is the SKU sent on the wire, so two names can share one SKU with different sampling. Omitted context/max-output/cost/display/capabilities are filled from the models.dev snapshot when that file exists; a written value wins. `rpm` on a provider or model is a self-imposed requests-per-minute cap enforced in `src/llm/rate_limit.zig` before each send. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`, `skills` for `skills_dir`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`, `mesh`, `ttsr`, `advisor`, `hooks`, `mcp_servers`) and still omits `api_key_env` and `service_account_file`. `mcp_servers` is the one section whose schema carries a credential inline rather than by env-var name, so its `env` and `headers` entries cross the bridge as names with the value replaced by `<redacted>` (`writeMcpServerJson` in `src/sandbox/host.zig`).
+Internally, `Config.load` distributes the top-level `models` table into each `Provider`'s own `models` map at load time (`distributeModels` in `src/config.zig`), so everything downstream (`Provider.activeModel()`, `resolveProvider`, the LLM client, the agent loop's context budgeting) still sees the same per-provider model map it always has. The table-key name is the local alias (`--model xai/grok4.6-coding`); optional `id` is the SKU sent on the wire, so two names can share one SKU with different sampling. Omitted context/max-output/cost/display/capabilities are filled from the models.dev snapshot when that file exists; a written value wins. `rpm` on a provider or model is a self-imposed requests-per-minute cap enforced in `src/llm/rate_limit.zig` before each send. Only the on-disk shape changed; wasm guest tools that need structured config fields (`peers`, `providers`, `status`, `ask_user`, `skills` for `skills_dir`) go through a `ck_harness_config` host function rather than reading `config.toml` themselves, since a `wasm32-freestanding` guest carries no TOML parser. `config` is the exception for its whole-file dump (raw bytes). Its `{"section":...}` filter reads the same host JSON, which includes every non-secret top-level section of the merged config (`agent` budgets, `modules`, `models` as the reconstructed flat table, `chatrooms`, `tui`, `improve`, `web`, `serve`, `memory`, `notify`, `mesh`, `ttsr`, `advisor`, `hooks`, `mcp_servers`) and still omits `api_key_env` and `service_account_file`. `mcp_servers` is the one section whose schema carries a credential inline rather than by env-var name, so its `env` and `headers` entries cross the bridge as names with the value replaced by `<redacted>` (`writeMcpServerJson` in `src/sandbox/host.zig`).
 
 Full example:
 
@@ -1405,21 +1405,21 @@ Fields:
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
   - Moonshot's `kimi-k3` model supports reasoning (returns a `reasoning` field).
-- `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `id` (wire SKU when the table key is a local alias), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`, `rpm` (per-name requests-per-minute cap), `tool_schema`/`thinking_schema`/`reasoning_format` (per-model wire overrides, same spellings as the provider-level keys), `base_url`/`path` (endpoint override for this model alone).
+- `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required: which entry under `providers` this belongs to), `id` (wire SKU when the table key is a local alias), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`, `rpm` (per-name requests-per-minute cap), `tool_schema`/`thinking_schema`/`reasoning_format` (per-model wire overrides, same spellings as the provider-level keys), `base_url`/`path` (endpoint override for this model alone).
 - `agent`:
   - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.
   - `max_total_tokens`: total token budget across the run.
-  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in. The completion grant on each chat call is the model's `max_tokens`, not `max_tokens_per_turn` — that mix-up spent a reasoning model's 4096-token input cap on `reasoning_content` and the run died `AnswerTruncatedToEmpty`. `max_history_tokens` is an absolute number rather than a share of the model's window, so its 16000 default is small for a large-window model; a run lifts it for itself (and logs that it did) when it falls below what compaction cannot remove — the system message and the six kept messages — and ends with `CompactionStalled` rather than compacting on every iteration when even that is not enough. See [History budget and compaction](configuration.md#history-budget-and-compaction).
+  - `max_tokens_per_turn`, `max_history_tokens`: per-turn input cap and total history budget before compaction kicks in. The completion grant on each chat call is the model's `max_tokens`, not `max_tokens_per_turn`; that mix-up spent a reasoning model's 4096-token input cap on `reasoning_content` and the run died `AnswerTruncatedToEmpty`. `max_history_tokens` is an absolute number rather than a share of the model's window, so its 16000 default is small for a large-window model; a run lifts it for itself (and logs that it did) when it falls below what compaction cannot remove (the system message and the six kept messages) and ends with `CompactionStalled` rather than compacting on every iteration when even that is not enough. See [History budget and compaction](configuration.md#history-budget-and-compaction).
   - `tools_dir`: one directory or a list of them (default `tools/manifests`). Later-listed wins on a tool name collision. `skills_dir`, `system_prompt_file`, `learnings_file`, `state_dir`: other paths the agent reads/writes at runtime.
   - `global_instructions_file`: optional path to device-global operator instructions. When empty (default), clanker loads `$HOME/.agents/AGENTS.md` if present. Missing or empty files are skipped.
   - `sandbox_root`: the run's root. `ck_fs_*` paths resolve under it and `ck_exec`
     children run in it, so the file tools and the commands agree on one tree
     (see [Isolating a run](#isolating-a-run)).
   - `git_commit`: commit promoted improvements with git (default true).
-  - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot — `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
+  - `git_remote_ops`: when true, let the `git` tool run the PR-lifecycle verbs it otherwise cannot: `push`, `merge`, `checkout` (default false). Scoped to the `git` command only; `reset`, `rebase`, `clean`, `rm`, `fetch`, `-f`, … stay denied. This is the machine-local flip that lets the agent open and merge PRs unaided; set it in `config.local.toml`, not the committed example.
   - `exec_pattern_allow`: whole-command-line glob patterns a tool may run through `ck_exec`, e.g. `"gh pr create*"` or `"gh pr merge*"`. When a pattern names a command, that command becomes strict: only an argv matching one of its patterns runs, and the match also overrides the deny tokens for the args it grants (`"gh pr merge"` legitimately contains `"merge"`). Commands with no pattern stay under the deny-list check, so a pattern for `gh` does not widen `git` or anything else. `*` matches any run of characters, including across spaces and empty. The `gh` tool refuses to run at all unless a matching pattern is configured.
-  - `repl_exec_allow`: extra commands the REPL's `!cmd` escape may run, e.g. `["ls", "cat"]`. Empty (default) means `!` runs exactly the union of every registered tool's `exec_allow` and nothing more, so the escape starts with no authority the harness did not already have. Nothing but the REPL reads this, so widening it never widens a tool, and the rest of the policy — the deny tokens, `git`'s verb allowlist, `exec_pattern_allow` — still applies to whatever is named here.
+  - `repl_exec_allow`: extra commands the REPL's `!cmd` escape may run, e.g. `["ls", "cat"]`. Empty (default) means `!` runs exactly the union of every registered tool's `exec_allow` and nothing more, so the escape starts with no authority the harness did not already have. Nothing but the REPL reads this, so widening it never widens a tool, and the rest of the policy (the deny tokens, `git`'s verb allowlist, `exec_pattern_allow`) still applies to whatever is named here.
   - `seed`: tool-RNG seed for reproducible tool runs (`0`, the default, is time-seeded; set a nonzero value to pin the `ck_random` stream).
   - `workflows_dir`: where reusable prompt workflows are read from (default `workflows`).
   - `chains_dir`: where transform chains are read from (default `chains`).
@@ -1431,16 +1431,16 @@ Fields:
   - `fallback_provider` / `fallback_providers`: ordered fallbacks after the selected provider cannot serve a request (default unset). A string still means one name. After the primary exhausts its own retries (or fails before any content is delivered), the next configured name is tried. Also the preferred vision-routing target: ignored unless it names a configured provider that differs from the current one and has a vision model; with nothing set, the first other provider that qualifies is used.
   - `ask_timeout_seconds`: how long a serve-side `ask_user` question waits for the browser before giving up (default 120). Confirm questions share the timeout.
   - `provider_check_timeout_seconds`: how long `providers check` waits for one provider before reporting it as timed out and moving on (default 10). Without a ceiling a single unreachable endpoint costs the whole sweep the OS connect timeout (~75s on macOS). `0` disables the ceiling; `[providers.<name>] check_timeout_seconds` overrides it per provider.
-  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions — the call blocks on a modal in `clanker repl` (Enter allows, Esc denies, Ctrl-C denies and stops the turn), and anything short of an explicit allow, a timeout after `ask_timeout_seconds` included, refuses the call. Runs with no human channel — headless one-shots, the improve loop, nested sub-agents — are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
+  - `confirm_writes`: gate write-capable tool calls (exec or filesystem access in the descriptor, or `"confirm": true`) on a human's allow/deny. `"never"` (default) asks nobody; `"browser"` asks streaming web runs; `"always"` also asks interactive REPL sessions: the call blocks on a modal in `clanker repl` (Enter allows, Esc denies, Ctrl-C denies and stops the turn), and anything short of an explicit allow, a timeout after `ask_timeout_seconds` included, refuses the call. Runs with no human channel (headless one-shots, the improve loop, nested sub-agents) are never gated. Read-only tools opt out with `"confirm": false` in their manifest.
   - `tool_catalog`: when true (default), send full schemas only for hot tools and let the model ask for the rest by name.
   - `hot_tools`: how many of the most-used tools keep their schemas loaded without being asked for (default 10).
 - `peers`: list of peer agents with `name` and `url`, plus optional `id` (mesh allowlist key).
 - `mesh`: TCP cluster listen and admission. Off via `modules.mesh`. See [Mesh](#mesh-srcpeersmeshzig) and [docs/configuration.md](configuration.md#mesh).
 - `web`: research-host allowlist for `web_fetch` and `web_search` only.
-  - `allow`: hostnames or glob patterns — no scheme, path, or port. Each entry matches the exact hostname or a `*`/`?` glob (e.g. `"*.github.com"` matches any subdomain, and a bare `"*"` allows every host). These are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
+  - `allow`: hostnames or glob patterns, no scheme, path, or port. Each entry matches the exact hostname or a `*`/`?` glob (e.g. `"*.github.com"` matches any subdomain, and a bare `"*"` allows every host). These are appended to each tool's descriptor `network_allow`, so the static hosts remain available. Put machine-specific grants in `config.local.toml`.
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
-- `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
+- `chatrooms`: default room subscriptions (`rooms`, `max_history`), separate from the `modules.chatrooms` on/off flag.
 - `modules`: feature on/off flags (`mcp`, `mcp_client`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `session_events`, `acp`, `mesh`). All default to `true` except `acp`, `mesh`, and `mcp_client`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
 - `improve`: settings for self-improvement.
   - `max_context_bytes`: byte budget for the proposal context slice.
@@ -1448,11 +1448,11 @@ Fields:
   - `capability_gate`: run the deterministic capability evals as a promotion gate (default true).
   - `arena_advisory`: run an advisory Arena match ("promote this proposal" vs "reject this proposal") before the capability evals (default false). Advisory only by construction: the verdict is logged and can ride along with a real gate failure's feedback, but no gate consults it and it cannot reject a proposal. Costs several model calls per attempt, which is why it is off.
   - `eval_provider`: provider name the staged capability-eval agents run on, so a fast/cheap model can score capability while a stronger one writes patches. Unset uses the loop's own provider.
-  - `plan_phase`: plan-then-patch — propose a deduplicated idea list once per run, then implement one idea per iteration (default true).
+  - `plan_phase`: plan-then-patch: propose a deduplicated idea list once per run, then implement one idea per iteration (default true).
   - `inert_gate`: reject changes classified as doing nothing observable (default true).
   - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
-  - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate` — the two commands that compile repeatedly.
-- `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). `proxy` enables the OpenAI/Anthropic compatibility surface; `proxy_port` can put it on a dedicated listener, `proxy_token_env` names its optional local token, `proxy_aliases` maps client-facing model names to configured models, and `proxy_first_byte_timeout_s`/`proxy_idle_timeout_s` tune its 300s/60s upstream deadlines (`0` disables either). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT`/`CLANKER_PROXY_PORT` override it, and `--host`/`--webui-port`/`--serve-as`/`--proxy`/`--no-proxy`/`--proxy-port` override those. See [Binding and the trust model](#binding-and-the-trust-model).
+  - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate`, the two commands that compile repeatedly.
+- `serve`: what `clanker serve` binds: `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). `proxy` enables the OpenAI/Anthropic compatibility surface; `proxy_port` can put it on a dedicated listener, `proxy_token_env` names its optional local token, `proxy_aliases` maps client-facing model names to configured models, and `proxy_first_byte_timeout_s`/`proxy_idle_timeout_s` tune its 300s/60s upstream deadlines (`0` disables either). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT`/`CLANKER_PROXY_PORT` override it, and `--host`/`--webui-port`/`--serve-as`/`--proxy`/`--no-proxy`/`--proxy-port` override those. See [Binding and the trust model](#binding-and-the-trust-model).
 - `tui`: REPL decoration. `mascot` accepts `off`, `type`, `loop`, `place`, or `input`; `mascot_size` accepts `mini`, `xsmall`, `small`, `medium`, or `large`; and `mascot_facing` accepts `default` or `inverted`. The detailed behavior and terminal sizes are in [docs/configuration.md](configuration.md#other-sections).
 - `advisor`: optional fail-open post-turn critique (`enabled`, `provider`, `model`, `scope`, `context_turns`, `timeout_ms`).
 - `ttsr`: optional turn-time self-repair (`max_retries_per_turn`, `buffer_bytes`, and `[[ttsr.rules]]`).
@@ -1513,7 +1513,7 @@ Instruction files support Claude-compatible `@path` imports. Relative paths reso
 
 Tools that already understand Claude-style imports (Claude Code, and others that copy it) can expand the same line when they read `AGENTS.md`. Clanker expands imports in all three instruction layers. If root `AGENTS.md` already inlined `.agents/AGENTS.md` via `@`, the dedicated local section is not appended again. Imports inside `` `code spans` `` or fenced code blocks are left literal.
 
-For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig` — this section is kept in sync by hand and can lag.
+For the authoritative field list and defaults, see the doc comments on each struct in `src/config.zig`; this section is kept in sync by hand and can lag.
 
 ## HTTP server
 
@@ -1534,7 +1534,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/peers` | GET | Every configured peer's live A2A agent card, via the sandboxed `peers` tool (JSON) |
 | `/api/mesh/map` | GET | Fleet lamp map: self + `[[peers]]` + chat wires. Served even when `modules.mesh` is off |
 | `/api/mesh/status` | GET | Mesh listen, admission, instance id, members |
-| `/api/mesh/join` | POST | `{"address":"host:port"}` — dial that member |
+| `/api/mesh/join` | POST | `{"address":"host:port"}`: dial that member |
 | `/api/mesh/leave` | POST | `{"peer_id":"…"}` or `{}` for self-leave |
 | `/api/mesh/pending` | GET, POST | Prompt-mode JOIN queue; POST `{"id","allow"}` admits or denies |
 | `/api/sessions` | GET, POST | List saved conversations, newest first; POST `{import_chat:true,title,messages}` imports one |
@@ -1590,7 +1590,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/arena` | GET | List past arena matches |
 | `/api/arena/<id>` | GET | One match: combatants, HP, per-round moves and the verdict. The arena view polls this while a match is running and stops on the verdict |
 | `/api/compare` | GET | List past blind comparisons. Read blind: each row says whether a judge reached a verdict, never whose, since a winning provider name beside a verdict letter is the key to a two-way comparison |
-| `/api/compare/<id>` | GET, POST | GET reads one comparison blind — the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
+| `/api/compare/<id>` | GET, POST | GET reads one comparison blind: the answers in their stored order under `A`/`B`/`C`, with no provider or model anywhere in the reply. POST `{"pick":"<letter>"}` records the human's pick through the same tool op `clanker compare --show <id> --pick <letter>` uses, and the reply is revealed |
 | `/api/sessions/search?q=` | GET | Relays the `sessions` guest (`q`). Every saved conversation with a message containing `q`, newest first, one row each: the first match in context plus a count of the others in that conversation (`turn`, `role`, `archived`, `snippet`, `more`). Case-insensitive substring, not the fuzzy match the sidebar filter uses on titles, because fuzzy over whole transcripts matches nearly everything. Queries under 3 characters return an empty result rather than an error, and the list is capped at 50 with `truncated` set |
 | `/api/schedule` | GET | Every scheduled entry with its next fire time, plus the last 20 ledger records. Relays the `schedule` guest. The next-fire reading is the one `clanker schedule list` prints, and it is omitted rather than zeroed when an entry can never fire (disabled, or a spec that parses to nothing) |
 | `/api/schedule/<id>` | POST | `{"enabled":true\|false}` pauses or resumes one entry via the `schedule` guest (same `state/schedule.json` `clanker schedule enable\|disable` writes). Resuming re-dates the window from now, so an entry parked for a month does not come back owing a run. Firing is deliberately not here: that is `run`/`run-due`, from cron or a terminal |
@@ -1600,14 +1600,14 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
 | `/api/events?topics=..` | GET | Server-sent events bus: comma-separated topics `chat`, `mesh`, `arena`, `run`, `metrics`, `plugin`; an empty or missing `topics=` subscribes to all. Cross-origin requests are refused 403; when every subscriber slot is taken the answer is 503 |
 | `/api/live` | POST | Publish `{from,data}` on the `plugin` topic (`from` is a plugin slug, `data` any JSON value); the same channel the `ck_publish` host function hands guests |
-| `/api/config/model` | POST | `{provider,model}` — look the model up in the local models.dev snapshot and splice its `[models."<provider>/<model>"]` block into `config.local.toml`. 404 on no catalog match, 502 when the snapshot cannot be read or fetched |
+| `/api/config/model` | POST | `{provider,model}`: look the model up in the local models.dev snapshot and splice its `[models."<provider>/<model>"]` block into `config.local.toml`. 404 on no catalog match, 502 when the snapshot cannot be read or fetched |
 | `/api/config/model/set` | POST | Table-replace one model's complete field set into `config.local.toml` (hand-add or edit). Send the model's full desired config with only the edited fields changed, not a diff: an omitted field falls back to its default on load |
-| `/api/config/model/remove` | POST | `{provider,model}` — delete that model's `[models.*]` table from `config.local.toml` if present there. A model only declared in the shared `config.toml` is untouched (the server never writes that file) and the reply's note says so |
-| `/api/config/default` | POST | `{provider,model}` — set the top-level `default_provider`/`default_model` keys in `config.local.toml`; hot reload restarts into it |
+| `/api/config/model/remove` | POST | `{provider,model}`: delete that model's `[models.*]` table from `config.local.toml` if present there. A model only declared in the shared `config.toml` is untouched (the server never writes that file) and the reply's note says so |
+| `/api/config/default` | POST | `{provider,model}`: set the top-level `default_provider`/`default_model` keys in `config.local.toml`; hot reload restarts into it |
 | `/api/config/raw?file=` | GET | Read `config.toml` or `config.local.toml` as raw bytes for the editor. A missing file is an empty editor, not an error; any other name is 400 |
-| `/api/config/raw` | POST | `{file,content}` — validate-then-write. The candidate pair is loaded from a scratch directory first; only a pair that parses and validates reaches the real file, so a save cannot take the running config from good to broken. 400 with the load error name when validation refuses |
-| `/api/config/table/set` | POST | `{block}` — splice one complete TOML table (header line included) into `config.local.toml`, then validate exactly like a raw save. A block that would break the config is refused and nothing is written |
-| `/api/config/table/remove` | POST | `{header}` — delete one `[table]` from `config.local.toml` through the same validate-refuse-or-write pipeline. A header not present is a no-op success (`"removed":false`) |
+| `/api/config/raw` | POST | `{file,content}`: validate-then-write. The candidate pair is loaded from a scratch directory first; only a pair that parses and validates reaches the real file, so a save cannot take the running config from good to broken. 400 with the load error name when validation refuses |
+| `/api/config/table/set` | POST | `{block}`: splice one complete TOML table (header line included) into `config.local.toml`, then validate exactly like a raw save. A block that would break the config is refused and nothing is written |
+| `/api/config/table/remove` | POST | `{header}`: delete one `[table]` from `config.local.toml` through the same validate-refuse-or-write pipeline. A header not present is a no-op success (`"removed":false`) |
 | `/api/config/status` | GET | Outcome of the last config validation (`ok`, `error`, `checked_ts_ms`) |
 | `/api/mcp/servers` | GET | The configured `[mcp_servers.*]` stanzas for the System view. Env/header values are withheld; only variable names are listed |
 | `/api/feedback` | GET, POST | List submitted feedback items, or submit one by relaying the body to the `feedback` tool |
@@ -1651,10 +1651,10 @@ pass flags on the invocation. Weakest first:
 | Layer | Host | Web UI port | Names | Proxy |
 |-------|------|-------------|-------|-------|
 | `[serve]` in `config.toml` / `config.local.toml` | `host` | `webui_port` | `serve_as` (a TOML array) | `proxy`, `proxy_port` |
-| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | — | `CLANKER_PROXY_PORT` |
+| environment | `CLANKER_HOST` | `CLANKER_WEBUI_PORT` | n/a | `CLANKER_PROXY_PORT` |
 | flags | `--host` | `--webui-port` | `--serve-as` | `--proxy`, `--no-proxy`, `--proxy-port` |
 
-Each layer overrides the one above it, so a flag beats the environment and the environment beats the file — the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. Every section is field-merged, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
+Each layer overrides the one above it, so a flag beats the environment and the environment beats the file, the same order in which `--verbose` beats `CLANKER_LOG_LEVEL` and `--provider` beats `default_provider`. Every section is field-merged, so a `config.local.toml` that only moves the port leaves a `host` set by the base file alone. Giving `--serve-as` at all replaces the configured list rather than adding to it, so a command line that names hosts reads as the whole policy.
 
 A `CLANKER_WEBUI_PORT` or `CLANKER_PROXY_PORT` that is not a 16-bit number
 (or is `0`) warns and is ignored, leaving the layer below it in force, rather
@@ -1670,7 +1670,7 @@ Body: `{"task": "...", "stream": bool, "session": "<id>", "goal": "<id>", "image
 
 `backend` is an optional local coding-agent CLI (`grok`, `claude`, or `codex`), the request-shaped equivalent of `--backend` / `[agent] backend`. When set, clanker drives that vendor over ACP (falling through to `claude -p` / `codex exec` / `grok -p` if ACP is missing or hangs) instead of the in-process LLM loop. An unknown name is refused with a 400. Empty or omitted keeps today's in-process loop. `GET /api/providers` includes a `backends` array of CLIs actually present on PATH (or configured via `backend_acp_argv`); the web picker and TUI `/model` render them in a "Local coding-agent backend" group.
 
-`images` is an optional array of `{"mime", "b64"}` image attachments (the webui composer's paste/drop path, and the `image` tool's result). Each decoded image is capped at 4 MB and at most 4 per message. Attaching images requires `modules.multimodal` to be on: a run with images while it is off returns a 400 naming the flag, rather than silently dropping the attachment. A model that declares its capabilities without `image_in` is refused image attachments with a 400 naming the model (its endpoint, like DeepSeek v4-flash's, rejects the `image_url` blocks with an opaque deserialize error); a model with no `capabilities` declared is attempted and a provider 400 on an image-bearing run is surfaced with the provider name and a hint that the model may not support vision. The provider request carries the images in each provider family's native format — OpenAI-compatible sends `image_url` data URIs; Anthropic/Vertex send base64 `image` content blocks.
+`images` is an optional array of `{"mime", "b64"}` image attachments (the webui composer's paste/drop path, and the `image` tool's result). Each decoded image is capped at 4 MB and at most 4 per message. Attaching images requires `modules.multimodal` to be on: a run with images while it is off returns a 400 naming the flag, rather than silently dropping the attachment. A model that declares its capabilities without `image_in` is refused image attachments with a 400 naming the model (its endpoint, like DeepSeek v4-flash's, rejects the `image_url` blocks with an opaque deserialize error); a model with no `capabilities` declared is attempted and a provider 400 on an image-bearing run is surfaced with the provider name and a hint that the model may not support vision. The provider request carries the images in each provider family's native format: OpenAI-compatible sends `image_url` data URIs; Anthropic/Vertex send base64 `image` content blocks.
 
 With `"stream": true`, the response body is `text/plain` and framed line-by-line: plain lines are answer content, verbatim; a line prefixed with byte `0x01` is an out-of-band JSON event instead of content:
 
@@ -1681,9 +1681,9 @@ With `"stream": true`, the response body is `text/plain` and framed line-by-line
 \x01{"type":"done","prompt_tokens":8437,"completion_tokens":185,"cost":0.0281,"ms":10763}
 ```
 
-With `"stream": true` the run can also ask: when the agent calls `ask_user`, an `{"type":"ask","id":n,"question":"...","options":[...]}` event goes down the stream and the run blocks until `POST /api/ask` with `{"id": n, "answer": "<one of the options>"}` resolves it — any other answer is refused with 400. An unanswered question times out after `agent.ask_timeout_seconds` (default 120) and the tool gets the same "nobody attached" answer a headless run gets, so a closed tab degrades to the model deciding for itself.
+With `"stream": true` the run can also ask: when the agent calls `ask_user`, an `{"type":"ask","id":n,"question":"...","options":[...]}` event goes down the stream and the run blocks until `POST /api/ask` with `{"id": n, "answer": "<one of the options>"}` resolves it; any other answer is refused with 400. An unanswered question times out after `agent.ask_timeout_seconds` (default 120) and the tool gets the same "nobody attached" answer a headless run gets, so a closed tab degrades to the model deciding for itself.
 
-With `agent.confirm_writes` set to `"browser"` or `"always"`, a streaming run also confirms: before a write-capable tool call runs, a `{"type":"confirm","id":n,"tool":"git","args_preview":"...","options":["allow","deny"]}` event goes down the stream and the run blocks until `POST /api/ask` answers `"allow"` or `"deny"` (the same endpoint and the same byte-for-byte option check as `ask`). The preview is the call's arguments truncated to 400 bytes. Anything short of an explicit `"allow"` — a deny, a timeout, a closed tab — refuses the call, and the model is told the user declined rather than left hanging.
+With `agent.confirm_writes` set to `"browser"` or `"always"`, a streaming run also confirms: before a write-capable tool call runs, a `{"type":"confirm","id":n,"tool":"git","args_preview":"...","options":["allow","deny"]}` event goes down the stream and the run blocks until `POST /api/ask` answers `"allow"` or `"deny"` (the same endpoint and the same byte-for-byte option check as `ask`). The preview is the call's arguments truncated to 400 bytes. Anything short of an explicit `"allow"` (a deny, a timeout, a closed tab) refuses the call, and the model is told the user declined rather than left hanging.
 
 A streaming run also reports its own checklist. Whenever a `todo_*` call changes the run's private todo list, a `{"type":"todos","todos":[{"todo":"p1","title":"...","status":"open|claimed|closed"}]}` event goes down the stream and the web UI renders it as a checklist in the turn card. It is the whole list every time, not a delta, so a client that missed an event is never out of step. Nothing is persisted and there is no endpoint to fetch it from: the list lives in memory for the duration of the run (see [prds/0003-run-todos.md](prds/0003-run-todos.md)), and reading it with `todo_list` is not a change, so a run that polls its own list does not emit an event per poll. Shared, durable work is the board (`/api/board`), not this.
 
