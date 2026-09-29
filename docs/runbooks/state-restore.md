@@ -33,13 +33,21 @@ edit of `backups/`.
   which exists nowhere else and without which a restored store has no provider
   to call), plus a `home-agents/` entry holding `~/.agents/AGENTS.md` (the
   device-global operator rules that open every system prompt; the checkout's
-  `.agents` is a different, per-project directory). `*.lock` files are
+  `.agents` is a different, per-project directory), plus a `checkout-data/`
+  entry holding the operator-created data that lives in the checkout and is
+  written at runtime, at its checkout-relative path: `ui/plugins/` (the
+  `webui_addon` views), `cli-plugins/`, `tui-plugins/`, `tools/manifests/`,
+  `presets/`, `commands/`, `chains/`, `themes/`, `skills/`, the gitignored
+  `.claude/` and `.grok/` rule directories, and `docs/ROADMAP.md`. Git holds
+  only the half of those trees a human committed, so this entry is what
+  carries the addon or preset a run created. `*.lock` files are
   excluded by design; flock locks die with their process, so a restored tree
   never carries stale locks. `state/staging/` (the improve loop's checkout
   copies with build artifacts) is excluded too: regenerable, and it would
   dominate snapshot size and restore time.
-- Not covered: the checkout itself (`docs/` records, source — they live in
-  git) and any provider credentials held outside those files. A snapshot
+- Not covered: the rest of the checkout (`docs/` records, source — they live in
+  git, and the `checkout-data/` entry carries only the named trees) and any
+  provider credentials held outside those files. A snapshot
   taken before a key was added to `.env` cannot carry that key, so where the
   keys are actually kept stays a restore *input* for credentials no file in
   the checkout holds.
@@ -144,6 +152,13 @@ this runbook can manufacture a snapshot that does not exist.
    rsync -a "$SNAP/config/" "$repo_root/" 2>/dev/null || true
    # the device-global operator rules, back into $HOME (never the storage root)
    rsync -a "$SNAP/home-agents/" "$HOME/.agents/" 2>/dev/null || true
+   # the operator-created checkout data (addons, plugin manifests, presets,
+   # slash commands, themes, skills, .claude/.grok, docs/ROADMAP.md), back
+   # into the checkout. No --delete: a snapshot of tracked files is older
+   # than the checkout by construction, and deleting what it no longer
+   # carries would revert committed work. Copy the subtrees you need
+   # (`ui/plugins/<addon>/`) rather than the whole entry.
+   rsync -a "$SNAP/checkout-data/" "$repo_root/" 2>/dev/null || true
    ```
    `--delete` makes the target match the snapshot exactly, dropping files the
    corruption added. That also drops a live `state/staging/` if one exists —

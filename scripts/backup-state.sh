@@ -242,6 +242,66 @@ copy_home_agents() {
 }
 copy_home_agents
 
+# Operator data that lives in the checkout and is written at runtime, by the
+# agent's own tools and by config loaders: the web UI addons `webui_addon`
+# creates under `ui/plugins/`, CLI/TUI plugin manifests, presets, slash
+# commands, chains, themes, skills, tool manifests, the per-project `.claude`
+# and `.grok` rule directories, and the ROADMAP `autolearn` rewrites. None of
+# them is under `state/`, and git only holds the half a human committed, so a
+# lost checkout (the disaster the restore runbook opens with) brings the store
+# back and leaves every addon, preset and rule file the operator built behind
+# it. A lost volume does not reach them either, since they are in the checkout
+# rather than the storage root.
+#
+# Copied as one `checkout-data` entry that preserves the checkout-relative
+# layout, so a restore is one rsync back into the checkout and a drill can
+# compare it like any other. The committed half rides along, which is the
+# point: the snapshot is what has the uncommitted files git has not. The entry
+# is restored without `--delete` (see docs/runbooks/state-restore.md), since a
+# snapshot of tracked source is older than the checkout by construction and
+# deleting what it no longer carries would revert committed work.
+checkout_data_dirs=(
+    ui/plugins
+    cli-plugins
+    tui-plugins
+    tools/manifests
+    presets
+    commands
+    chains
+    themes
+    skills
+    .claude
+    .grok
+)
+checkout_data_files=(docs/ROADMAP.md)
+copy_checkout_data() {
+    local rel copied_any=0
+    mkdir -p -- "$staging/checkout-data"
+    for rel in "${checkout_data_dirs[@]}"; do
+        [ -d "$repo_root/$rel" ] || continue
+        mkdir -p -- "$staging/checkout-data/$(dirname -- "$rel")"
+        # `--link-dest` needs an absolute path, and `$latest` is one; without
+        # it every 30-minute run would store a fresh copy of an unchanged tree
+        # instead of hard-linking it to the last snapshot.
+        rsync -a --exclude='*.lock' --exclude='.git' \
+            --link-dest="$latest/checkout-data/$rel" \
+            "$repo_root/$rel/" "$staging/checkout-data/$rel/"
+        copied_any=1
+    done
+    for rel in "${checkout_data_files[@]}"; do
+        [ -f "$repo_root/$rel" ] || continue
+        mkdir -p -- "$staging/checkout-data/$(dirname -- "$rel")"
+        cp -p -- "$repo_root/$rel" "$staging/checkout-data/$rel"
+        copied_any=1
+    done
+    if [ "$copied_any" = 1 ]; then
+        copied="$copied checkout-data"
+    else
+        rmdir -- "$staging/checkout-data" 2>/dev/null || true
+    fi
+}
+copy_checkout_data
+
 # rsync's exit code is the only success signal so far; a run that copied
 # nothing would still rotate `latest` onto a hollow snapshot and read as
 # healthy in every later check. Refuse to promote a staging dir whose

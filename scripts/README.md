@@ -73,6 +73,17 @@ snapshot whose entries did not materialize is refused rather than promoted.
 `.agents` and `.local` are checkout-private and may be real directories inside
 the checkout; when either is absent the backup skips it instead of aborting.
 
+**Checkout data.** A `checkout-data/` entry carries the operator-created data
+that lives in the checkout rather than in the storage root and is written at
+runtime: `ui/plugins/`, `cli-plugins/`, `tui-plugins/`, `tools/manifests/`,
+`presets/`, `commands/`, `chains/`, `themes/`, `skills/`, the gitignored
+`.claude/` and `.grok/` rule directories, and `docs/ROADMAP.md`, each at its
+checkout-relative path. Git only holds what a human committed, so without this
+entry a lost checkout brings the store back and leaves every addon and preset
+behind. Restore it without `--delete` (a snapshot of tracked files is older
+than the checkout by construction); see
+[state-restore.md](../docs/runbooks/state-restore.md).
+
 **Local configuration.** `config.local.toml`, `config.local.json`, `.env` and
 every `profiles/<name>.local.toml` are the one piece of machine state that
 lives in the checkout rather than in `state/`, and they are gitignored, so a
@@ -179,8 +190,10 @@ three-month-old snapshot still means the RPO is three months. The bound is
 `CLANKER_BACKUP_MAX_AGE_SECONDS`, default 7200 (four missed 30-minute timer
 intervals); a drill of a snapshot you chose on purpose skips the age check.
 When `CLANKER_BACKUP_OFFSITE_DEST` names a directory on this host, the drill
-also warns if that mirror holds no `latest`, so a second failure domain that
-stopped following the local root is not read as a healthy copy.
+also fails when that mirror holds no `latest`, so a second failure domain that
+stopped following the local root is not read as a healthy copy. A remote
+`user@host:/vol/...` destination has no local directory to read, so the drill
+notes that mirror freshness is unchecked.
 
 The drill stages its copy in `restore-verify/` beside the store (override with
 `CLANKER_VERIFY_SCRATCH_DIR`), not in `$TMPDIR`: the copy is store-sized, and

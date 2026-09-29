@@ -72,10 +72,10 @@ The script's own diagnostics are one line each and name the entry at fault:
   only check that notices a backup that stopped running, so the drill
   (`clanker-state-verify.timer`) is what turns a silent stall into a failed
   unit.
-- `warning: off-site mirror <dest> holds no latest` — the mirror is a local
-  path but has no promoted snapshot, so the second failure domain is empty or
-  stale even though local runs succeed. Re-run the backup with the
-  destination reachable.
+- `error: off-site mirror <dest> holds no latest` — the drill failed rather
+  than warned: the mirror is a local path but has no promoted snapshot, so the
+  second failure domain is empty or stale even though local runs succeed.
+  Re-run the backup with the destination reachable.
 - local runs all succeed, no `mirrored backup root` line ever appears, and
   `CLANKER_BACKUP_OFFSITE_DEST` looks set — the variable is in a shell, or in a
   file no unit reads. Both units read

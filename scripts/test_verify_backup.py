@@ -150,6 +150,38 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("differs from the snapshot", result.stderr)
 
+    def test_empty_offsite_mirror_fails_the_drill(self) -> None:
+        # A configured second failure domain holding no `latest` is exactly
+        # what the drill exists to catch, and it used to warn and exit 0.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        mirror = self.root / "mirror"
+        mirror.mkdir()
+        result = self.run_verify(str(snap), env_extra={"CLANKER_BACKUP_OFFSITE_DEST": str(mirror)})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("second failure domain is empty or stale", result.stderr)
+
+    def test_populated_offsite_mirror_passes_the_drill(self) -> None:
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        mirror = self.root / "mirror"
+        mirror.mkdir()
+        # The mirror carries the whole backup root, so `latest` resolves to a
+        # directory there, as it does after a successful mirror run.
+        (mirror / "20260901T120000Z").mkdir()
+        (mirror / "latest").symlink_to("20260901T120000Z")
+        result = self.run_verify(str(snap), env_extra={"CLANKER_BACKUP_OFFSITE_DEST": str(mirror)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checkout_data_entry_is_restored_and_compared(self) -> None:
+        # An entry the backup writes but the drill skips is a file whose
+        # restorability nobody ever checks; the drill has to carry the
+        # checkout-side data entry for the same reason it carries home-agents.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        (snap / "checkout-data" / "ui" / "plugins" / "timer").mkdir(parents=True)
+        (snap / "checkout-data" / "ui" / "plugins" / "timer" / "app.js").write_text("// timer\n")
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("checkout-data", result.stdout)
+
     def run_verify(
         self, *args: str, env_extra: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:

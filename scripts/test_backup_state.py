@@ -321,6 +321,44 @@ class BackupStateTest(unittest.TestCase):
             "the committed half of the profile is git's backup, not this one's",
         )
 
+    def test_checkout_data_created_at_runtime_is_in_the_snapshot(self) -> None:
+        # Web UI addons, plugin manifests, presets and the per-project rule
+        # directories are written into the checkout, never into `state/`, and
+        # git holds only the half a human committed. A lost checkout brought
+        # the store back and left every operator-built addon behind.
+        (self.repo / "ui" / "plugins" / "timer").mkdir(parents=True)
+        (self.repo / "ui" / "plugins" / "timer" / "app.js").write_text("// timer\n")
+        (self.repo / "cli-plugins").mkdir()
+        (self.repo / "cli-plugins" / "myreport.json").write_text("{}\n")
+        (self.repo / "presets").mkdir()
+        (self.repo / "presets" / "night.toml").write_text('name = "night"\n')
+        (self.repo / ".claude").mkdir()
+        (self.repo / ".claude" / "settings.json").write_text("{}\n")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "ROADMAP.md").write_text("- item\n")
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        data = self.latest() / "checkout-data"
+        self.assertEqual((data / "ui" / "plugins" / "timer" / "app.js").read_text(), "// timer\n")
+        self.assertEqual((data / "cli-plugins" / "myreport.json").read_text(), "{}\n")
+        self.assertEqual((data / "presets" / "night.toml").read_text(), 'name = "night"\n')
+        self.assertEqual((data / ".claude" / "settings.json").read_text(), "{}\n")
+        self.assertEqual((data / "docs" / "ROADMAP.md").read_text(), "- item\n")
+
+    def test_absent_checkout_data_adds_no_entry(self) -> None:
+        # A checkout with none of those trees must not carry a hollow
+        # `checkout-data/` that every later check reads as coverage.
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.latest() / "checkout-data").exists())
+        self.assertTrue((self.latest() / "state" / self.session_db("s1")).exists())
+
     def test_installed_symlink_launcher_resolves_the_checkout(self) -> None:
         # What the systemd unit runs: `~/.local/bin/clanker-state-backup` is a
         # symlink to the script in the checkout. Both links matter -- the

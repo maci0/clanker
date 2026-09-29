@@ -27,8 +27,8 @@
 # Restore time is measured so RTO stops being an unknown: a snapshot that
 # takes N seconds to copy out is the lower bound on a real restore of the
 # same size. The drill copies the same entry set the backup captures
-# (state/, plus local/, agents/, config/ and home-agents/ when the snapshot
-# holds them);
+# (state/, plus local/, agents/, config/, home-agents/ and checkout-data/
+# when the snapshot holds them);
 # `staging/` and `*.lock` are absent by design (see backup-state.sh).
 set -euo pipefail
 
@@ -102,7 +102,7 @@ fi
 snapshot=$(resolve_path "$snapshot")
 
 entries="state"
-for extra in local agents config home-agents; do
+for extra in local agents config home-agents checkout-data; do
     [ -d "$snapshot/$extra" ] && entries="$entries $extra"
 done
 
@@ -235,10 +235,19 @@ printf 'ok: %s restored %s entries (%s KiB) in %ss, matches the snapshot, and it
 # stale second copy that still looks healthy. Only checkable when the
 # destination is a path on this host; a `user@host:/vol/...` destination has no
 # local directory to read, so the drill says so instead of claiming a pass.
+#
+# A readable destination holding no `latest` is a failure, not a warning: the
+# operator configured a second failure domain, that domain holds nothing, and
+# the whole point of it is the disaster the local copy does not survive. The
+# header above already promises exit 1 for "a mirror that stopped following the
+# local root"; the check used to warn, so a drill ran green over an empty
+# second copy and the promise held for no reason.
 offsite_dest=${CLANKER_BACKUP_OFFSITE_DEST:-}
 if [ -n "$offsite_dest" ] && [ -d "$offsite_dest" ] && [ ! -e "$offsite_dest/latest" ]; then
-    printf 'warning: off-site mirror %s holds no latest: the second failure domain is empty or stale\n' \
+    printf 'error: off-site mirror %s holds no latest: the second failure domain is empty or stale\n' \
         "$offsite_dest" >&2
+    printf 'the local snapshot restored cleanly, so a failure here is the mirror, not the store\n' >&2
+    exit 1
 elif [ -n "$offsite_dest" ] && [ ! -d "$offsite_dest" ]; then
     printf 'note: off-site mirror %s is not readable from this host; mirror freshness unchecked\n' \
         "$offsite_dest" >&2
