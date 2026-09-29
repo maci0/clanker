@@ -76,6 +76,9 @@ else
 fi
 
 step "Python lint (CI: Lint Python)"
+# ruff.toml's `required-version` is the single pin: CI installs that release
+# and this runs whatever is on PATH, so a mismatch refuses to check rather
+# than reporting a result CI will not reproduce.
 if command -v ruff >/dev/null 2>&1; then
     if [ -n "$(git ls-files -z '*.py' | tr -d '\0')" ]; then
         git ls-files -z '*.py' | xargs -0 ruff check || status=1

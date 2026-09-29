@@ -4,7 +4,8 @@
 Reads only in-tree manifests, so it runs offline and never sends the package
 list anywhere:
 
-- build.zig.zon            — zwasm, vaxis (zig hash-pinned)
+- build.zig.zon            — the Zig release that builds the host binary, and
+                             zwasm, vaxis (zig hash-pinned)
 - vendor/toml/README.md    — vendored zig-toml (MIT)
 - vendor/sqlite/README.md  — vendored SQLite amalgamation (Public Domain)
 - package.json             — root devDependencies, paired with bun.lock
@@ -292,6 +293,24 @@ def recorded_digests() -> list:
     return digests
 
 
+# --- build toolchain (build.zig.zon) ---------------------------------------
+
+def zig_toolchain() -> dict | None:
+    """The compiler release the shipped binary was built with.
+
+    `build.zig.zon` names it once and three readers take it from there: CI
+    installs exactly this version, build.zig refuses to configure against any
+    other 0.16.x, and scripts/setup.sh warns when the one on PATH disagrees.
+    The document named every dependency the binary links and no toolchain at
+    all, so the compiler that produced the artifact a consumer downloads was
+    the one part of the build nothing recorded.
+    """
+    m = re.search(r'\.minimum_zig_version\s*=\s*"([^"]+)"', read("build.zig.zon"))
+    if not m:
+        return None
+    return {"name": "zig", "version": m.group(1)}
+
+
 # --- optional kernel interpreter (scripts/setup-python-wasi.sh) --------------
 
 def python_wasi() -> dict | None:
@@ -316,6 +335,11 @@ def python_wasi() -> dict | None:
 def purl(name: str, version: str) -> str:
     n = name.replace("@", "%40")
     return f"pkg:npm/{n}@{version}"
+
+
+def generic_purl(name: str, version: str) -> str:
+    """purl for something with no registry of its own (a compiler, an interpreter)."""
+    return f"pkg:generic/{name}@{version}"
 
 
 def license_obj(license_id: str) -> dict:
@@ -347,6 +371,23 @@ def component(comp: dict) -> dict:
 
 def build() -> dict:
     comps = []
+
+    # The compiler that builds the host binary. First because it is what every
+    # other entry below was compiled by: a dependency pin says what went in,
+    # this says what put it there.
+    zig = zig_toolchain()
+    if zig:
+        comps.append(component({
+            "name": zig["name"],
+            "version": zig["version"],
+            "license": "MIT",
+            "purl": generic_purl(zig["name"], zig["version"]),
+            "scope": "required",
+            "properties": [
+                {"name": "clanker:build-toolchain", "value": "zig"},
+                {"name": "clanker:pin", "value": "build.zig.zon:minimum_zig_version"},
+            ],
+        }))
 
     # Zig host dependencies
     for z in zig_dependencies():

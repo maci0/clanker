@@ -72,7 +72,10 @@ fi
 
 # Python lint, when ruff is installed (CI runs it regardless). Same config
 # (ruff.toml) and same file set as CI: every tracked .py, globbed from the
-# index by the caller.
+# index by the caller. `required-version` in ruff.toml is what keeps a ruff
+# from another release off both sides: it names the version CI installs, so a
+# PATH ruff that disagrees refuses to run rather than verifying a rule set
+# CI never ran.
 if command -v ruff >/dev/null 2>&1; then
     if [ -n "$(staged '*.py' | tr -d '\0')" ]; then
         staged '*.py' | xargs -0 ruff check || fail "ruff check failed"

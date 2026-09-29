@@ -137,6 +137,22 @@ class SbomTest(unittest.TestCase):
         # Tailwind sheet are produced by the same project release.
         self.assertEqual(len(managers), 1)
 
+    def test_build_toolchain_is_recorded(self) -> None:
+        # Every dependency the binary links was named and no compiler was, so
+        # the document could not say what built the artifact it ships. The pin
+        # lives in build.zig.zon alone, which is where CI reads the version it
+        # installs from.
+        toolchain = sbom.zig_toolchain()
+        self.assertIsNotNone(toolchain)
+        component = self.components[
+            sbom.generic_purl(toolchain["name"], toolchain["version"])
+        ]
+        self.assertEqual(component["scope"], "required")
+        properties = {p["name"]: p["value"] for p in component["properties"]}
+        self.assertEqual(
+            properties["clanker:pin"], "build.zig.zon:minimum_zig_version"
+        )
+
     def test_every_manifest_dependency_is_named_in_the_license_inventory(self) -> None:
         # THIRD_PARTY_LICENSES.md claims "adding a dependency means adding a
         # row in the same change"; nothing enforced that, and the Tailwind

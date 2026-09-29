@@ -29,7 +29,9 @@ Requirements are Zig 0.16.x (pinned in `build.zig.zon`, enforced by
 `build.zig`), Git, Bash, and patch. Tests also need Bun for the JS suites
 and Python 3 for the process fixtures. Full verification additionally needs
 shellcheck and ruff; `scripts/verify.sh` installs the declared JS dependencies
-locally.
+locally. Ruff is pinned too, in `ruff.toml` as `required-version`, so a
+different release on PATH refuses to run rather than checking a rule set CI
+never ran.
 
 ## The edit-test loop
 

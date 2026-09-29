@@ -9,6 +9,11 @@
 # manifest, so a non-executable bit is not a defect here.
 line-length = 100
 target-version = "py310"
+# The one place the ruff version is written down. CI reads it from here
+# instead of restating a literal, and every `ruff check` (CI, the pre-commit
+# hook, scripts/verify.sh) refuses to run on any other version, so a checkout
+# that verifies green locally verified the same rules CI will.
+required-version = "0.16.4"
 
 [lint]
 select = [
