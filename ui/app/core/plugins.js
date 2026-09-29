@@ -501,7 +501,7 @@ export function renderWebuiPlugins(list) {
   if (!list.length) {
     var none = document.createElement("p");
     none.className = "run-empty";
-    none.textContent = "No plugins installed. A plugin is a directory under ui/plugins/ — see its README.";
+    none.textContent = "No plugins installed. A plugin is a directory under ui/plugins/; see its README.";
     _el.webuiPlugins.appendChild(none);
     return;
   }

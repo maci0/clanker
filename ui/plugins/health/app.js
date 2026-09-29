@@ -106,12 +106,12 @@ clanker.registerView({
     }
 
     function fmtRate(r) {
-      if (r === null) return "—";
+      if (r === null) return "n/a";
       return fmtUnit(r, "per-second", r >= 10 ? 0 : 1);
     }
 
     function fmtMs(ms) {
-      if (ms === null) return "—";
+      if (ms === null) return "n/a";
       if (ms >= 1000) return fmtUnit(Math.round(ms / 100) / 10, "second", 1);
       return fmtUnit(ms >= 10 ? Math.round(ms) : Math.round(ms * 10) / 10, "millisecond", ms >= 10 ? 0 : 1);
     }
@@ -122,7 +122,7 @@ clanker.registerView({
     }
 
     function fmtPct(p) {
-      if (p === null) return "—";
+      if (p === null) return "n/a";
       if (p === 0) return fmtPctFmt(0, 0);
       if (p < 0.1) return "<" + fmtPctFmt(0.1, 1);
       return fmtPctFmt(p, p >= 10 ? 0 : 1);

@@ -346,7 +346,7 @@ clanker.registerView({
         row.appendChild(nameCell);
 
         var sizeCell = mk("span", CELL_CLASS);
-        sizeCell.textContent = e.is_dir ? "—" : api.fmt.bytes(e.size);
+        sizeCell.textContent = e.is_dir ? "n/a" : api.fmt.bytes(e.size);
         row.appendChild(sizeCell);
 
         var whenCell = mk("span", CELL_CLASS);
@@ -447,7 +447,7 @@ clanker.registerView({
 
           if (d.binary) {
             vMeta.textContent = "";
-            vBody.appendChild(mk("p", EMPTY_CLASS, "Binary file — no preview."));
+            vBody.appendChild(mk("p", EMPTY_CLASS, "Binary file, no preview."));
             api.status(name+" (binary).");
             return;
           }
@@ -457,7 +457,7 @@ clanker.registerView({
             + (lineCount > 1 ? " · " + api.fmt.plural(lineCount, { one: "line", other: "lines" }) : "");
 
           if (d.truncated) {
-            vNote.textContent = "Showing first "+api.fmt.bytes(content.length)+" — file is larger.";
+            vNote.textContent = "Showing first "+api.fmt.bytes(content.length)+"; file is larger.";
             vNote.hidden = false;
           }
 
@@ -549,7 +549,7 @@ clanker.registerView({
           var vis = allEntries.filter(function(e){ return !e.name.startsWith("."); }).length;
           // A capped listing is not the whole folder: saying "2000 items" for
           // a directory holding far more reads as complete when it is not.
-          api.status(vis+(vis===1?" item":" items")+(d.truncated ? " (first "+(d.entry_cap||vis)+" — folder holds more)." : "."));
+          api.status(vis+(vis===1?" item":" items")+(d.truncated ? " (first "+(d.entry_cap||vis)+"; folder holds more)." : "."));
         })
         .catch(function(err) {
           if (mine !== generation) return;

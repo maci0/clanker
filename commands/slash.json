@@ -3,7 +3,7 @@
   { "cmd": "/fork", "desc": "Fork this conversation", "click": "session-fork", "palette": "Fork this conversation" },
   { "cmd": "/branch", "desc": "Branch from last turn", "selector": ".turn:last-child .turn-foot-actions button" },
   { "cmd": "/clear", "desc": "Start a new conversation", "click": "new-chat", "palette": "New chat" },
-  { "cmd": "/model", "desc": "Switch model — e.g. /model gpt-4o", "action": "model" },
+  { "cmd": "/model", "desc": "Switch model, e.g. /model gpt-4o", "action": "model" },
   { "cmd": "/knowledge", "desc": "Open Knowledge collections", "view": "knowledge" },
   { "cmd": "/prompts", "desc": "Open Prompts library", "view": "prompts" },
   { "cmd": "/compare", "desc": "Open blind model comparisons", "view": "compare" },

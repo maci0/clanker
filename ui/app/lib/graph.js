@@ -134,7 +134,7 @@ export function buildIncompleteNode(nodeW) {
   stop.textContent = "did not finish";
   var why = document.createElement("span");
   why.className = "sr-only";
-  why.textContent = " \u2014 the run ended without a final answer, most likely hitting the iteration limit or the token budget.";
+  why.textContent = ": the run ended without a final answer, most likely hitting the iteration limit or the token budget.";
   stop.appendChild(why);
   return stop;
 }
@@ -164,7 +164,7 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   var jm = (node.output || node.detail || "").match(jumpRe);
   if (jm) {
     label.textContent = (node.label || node.detail || kind) + "  ↗ " + jm[1].slice(0, 10);
-    label.title = (node.label || "") + (node.detail ? " · " + node.detail : "") + " — has sub-run " + jm[1] + " (open from detail)";
+    label.title = (node.label || "") + (node.detail ? " · " + node.detail : "") + " (has sub-run " + jm[1] + ", open from detail)";
   } else {
     label.textContent = node.label || node.detail || kind;
     label.title = label.textContent;
@@ -287,7 +287,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
       svg.style.opacity = "0.35";
       if (statusEl) {
         var n = data.filter(function(x){ return x._matches; }).length;
-        statusEl.textContent = n + " of " + data.length + " nodes match" + (n ? "" : " — try Clear");
+        statusEl.textContent = n + " of " + data.length + " nodes match" + (n ? "" : "; try Clear");
       }
     } else {
       data.forEach(function(d){ d.el.removeAttribute("data-match"); d.el.style.opacity = ""; });

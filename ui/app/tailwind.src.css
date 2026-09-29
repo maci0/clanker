@@ -723,8 +723,7 @@
      same specificity and comes later, so it wins and stretches the box. Size is
      left to the global rule; only the stretch is undone here. */
   /* Board header — lane plate, not a Trello banner */
-  /* Basis 0, so a wide view shrinks beside the rail instead of wrapping under it. */
-  .shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 0%; min-width: 0; min-height: 0; }
+  .shell { display: flex; align-items: stretch; gap: 0; min-width: 0; min-height: 0; }
   main {
     background: var(--bg);
     border: 0;

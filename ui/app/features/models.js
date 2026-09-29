@@ -443,7 +443,7 @@ function loadConfigured() {
       var uncallable = (d.providers || []).filter(function (p) { return p && p.usable === false; });
       if (uncallable.length) {
         box.appendChild(empty("Not callable from this server: " + uncallable.map(function (p) {
-          return p.name + " — " + providerUnusableReason(p);
+          return p.name + ": " + providerUnusableReason(p);
         }).join("; ") + ". Still listed below; the chat picker hides them."));
       }
       box.appendChild(table(["enabled", "provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
@@ -702,7 +702,7 @@ function saveTomlEdit() {
       loadConfigured();
     })
     .catch(function (err) {
-      setEditNote("Refused: " + err.message + " — the running config is unchanged.");
+      setEditNote("Refused: " + err.message + ". The running config is unchanged.");
     })
     .finally(function () { if (btn) btn.disabled = false; });
 }
@@ -750,7 +750,7 @@ function removeEdit() {
           status("Removed " + name + ".");
           loadConfigured();
         } else {
-          setEditNote("Not in config.local.toml — it must be declared in the shared config.toml, which this page never edits.");
+          setEditNote("Not in config.local.toml: it must be declared in the shared config.toml, which this page never edits.");
         }
       })
       .catch(function (err) {
@@ -871,7 +871,7 @@ function searchCatalog() {
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", ""], rows));
       status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.", "catalog");
       if (d.truncated) {
-        out.appendChild(empty("Showing the first " + rows.length + " matches — narrow the query for more specific results."));
+        out.appendChild(empty("Showing the first " + rows.length + " matches; narrow the query for more specific results."));
       }
     })
     .catch(function (err) {

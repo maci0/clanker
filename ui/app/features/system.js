@@ -79,7 +79,7 @@ function bindConfigEditor() {
       })
       .catch(function (err) {
         // readJson surfaces the server's {error} message on a 400.
-        setNote("Refused: " + err.message + " — the running config is unchanged.");
+        setNote("Refused: " + err.message + ". The running config is unchanged.");
       })
       .finally(function () {
         saveBtn.disabled = false;
@@ -227,7 +227,7 @@ function bindMcpServers() {
         note("Saved. " + (d.applied || "The server reloads into it."));
         load();
       })
-      .catch(function (err) { note("Refused: " + err.message + " — nothing was written."); })
+      .catch(function (err) { note("Refused: " + err.message + ". Nothing was written."); })
       .finally(function () { btn.disabled = false; });
   }
 

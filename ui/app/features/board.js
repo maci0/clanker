@@ -387,7 +387,7 @@ function boardColumn(col, s) {
     if (boardHasActiveFilters(s)) {
       emptySlot.textContent = "No cards in this lane match the filters";
     } else {
-      emptySlot.textContent = "Drop here — or ";
+      emptySlot.textContent = "Drop here, or ";
       var addLink = document.createElement("button");
       addLink.type = "button"; addLink.className = "secondary";
       addLink.textContent = "Add goal";
@@ -466,7 +466,7 @@ function boardColumn(col, s) {
   // Slack-like: typing @ in quick-add shows available assignees as placeholder hint
   qaTextarea.addEventListener("input", function(){
     var m = qaMention();
-    qaTextarea.title = m ? "Assign to @" + m.name + " — press Tab to accept" : "";
+    qaTextarea.title = m ? "Assign to @" + m.name + " (press Tab to accept)" : "";
   });
   function doCreate(){
     var raw = qaTextarea.value;
@@ -897,7 +897,7 @@ function cardNode(c) {
     gf.className = CARD_BADGE_CLASS;
     gf.style.color = "var(--accent-text)";
     gf.appendChild(icon("goal", 14));
-    gf.title = "Mirrors a goal — kept in step with the Goals view";
+    gf.title = "Mirrors a goal, kept in step with the Goals view";
     badges.appendChild(gf);
     // The same start actuator the "Start work" button shows on the open card,
     // surfaced on the closed card so goal runs are visible at a glance. While
@@ -906,7 +906,7 @@ function cardNode(c) {
     var sw = document.createElement("span");
     sw.className = CARD_BADGE_CLASS;
     sw.appendChild(icon("rocket", 14));
-    sw.title = "Goal — Start work (opens a run)";
+    sw.title = "Goal: Start work (opens a run)";
     if (isGoalRunning(c.goal)) {
       sw.dataset.goalRun = "true";
       sw.title = "Goal run in progress";
@@ -2530,10 +2530,10 @@ export function bindBoard(deps) {
         var tr=document.createElement("tr");
         var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="max-w-72 truncate text-left"; titleTd.title=c.title; tr.appendChild(titleTd);
         var colTd=document.createElement("td"); colTd.textContent=c.column; tr.appendChild(colTd);
-        var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"—"; tr.appendChild(whoTd);
-        var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"—"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);
+        var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"n/a"; tr.appendChild(whoTd);
+        var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"n/a"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);
         var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
-        var costTd=document.createElement("td"); costTd.className="text-right tabular-nums"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
+        var costTd=document.createElement("td"); costTd.className="text-right tabular-nums"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"n/a"; tr.appendChild(costTd);
         var actTd=document.createElement("td");
         var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
         if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){

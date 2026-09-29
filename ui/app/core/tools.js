@@ -281,7 +281,7 @@ export function showToolDetail(t) {
       }
       list.appendChild(dt);
       var dd = document.createElement("dd");
-      dd.textContent = (spec.type || "any") + (spec.description ? " \u2014 " + spec.description : "");
+      dd.textContent = (spec.type || "any") + (spec.description ? ": " + spec.description : "");
       list.appendChild(dd);
     });
     _el.toolDetail.appendChild(sectionTitle("Accepts"));

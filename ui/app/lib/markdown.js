@@ -64,8 +64,8 @@ export function appendCitedText(parent, text) {
     chip.className = CITATION_CHIP_CLASS;
     chip.textContent = ref;
     chip.setAttribute("data-ref", ref);
-    chip.title = "Open in callgraph — " + ref;
-    chip.setAttribute("aria-label", "Citation " + ref + " — open in callgraph");
+    chip.title = "Open in callgraph: " + ref;
+    chip.setAttribute("aria-label", "Citation " + ref + ", open in callgraph");
     (function(r, el){
       el.addEventListener("click", function(e){
         e.preventDefault();

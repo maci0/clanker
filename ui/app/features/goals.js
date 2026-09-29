@@ -372,7 +372,7 @@ function sendSteer(gid) {
     .then(function () {
       box.value = "";
       appendGoalText(gid, "[steering sent: " + msg + "]\n");
-      el.goalsStatus.textContent = "Steering message sent — the run picks it up between iterations.";
+      el.goalsStatus.textContent = "Steering message sent. The run picks it up between iterations.";
     })
     .catch(function (err) {
       el.goalsStatus.textContent = "Steering failed: " + err.message;
@@ -418,7 +418,7 @@ function renderGoalRunPanel(g) {
         "data-goal-steer": gid,
         rows: "2",
         wrap: "soft",
-        placeholder: "Steer this run — tell the agent something mid-flight…",
+        placeholder: "Steer this run: tell the agent something mid-flight…",
         maxlength: "8000",
         onkeydown: function (e) {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSteer(gid); }
@@ -479,7 +479,7 @@ function runGoal(g, opts) {
       if (evt.type === "error") appendGoalText(g.id, "\n[" + evt.message + "]\n");
       else if (evt.type === "goal" && evt.status) {
         appendGoalText(g.id, "[ goal loop turn " + (evt.turn || "?") + ": " + evt.status +
-          (evt.reason ? " — " + evt.reason : "") + " ]\n");
+          (evt.reason ? ", " + evt.reason : "") + " ]\n");
       }
       // A status event is a run lifecycle note (contacting the provider,
       // processing, a steering message being applied) rather than answer
@@ -513,7 +513,7 @@ function runGoal(g, opts) {
     splitter.flush();
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {
       setGoalStatus(g.id, "finished");
-      el.goalsStatus.textContent = "Goal run finished — waiting for review.";
+      el.goalsStatus.textContent = "Goal run finished, waiting for review.";
       moveGoalCard(g, "review");
       logGoalRun(g, "finished");
       // The server records the loop's achieved/review or blocked result; re-fetch
@@ -581,7 +581,7 @@ function iterateGoal(g) {
     };
     act().then(function (goal) {
       runGoal(goal, {
-        task: "Iterate on the previous work already done toward this goal. The user wants the implementation refined in this specific way — focus on this and this alone:\n\n" +
+        task: "Iterate on the previous work already done toward this goal. The user wants the implementation refined in this specific way. Focus on this and this alone:\n\n" +
           msg + "\n\nKeep what already works; change only what this instruction targets, then land the improvement in the repository (branch, commit, push, open a pull request, and merge it).\n\nObjective: " +
           (goal.objective || "") + "\nDone when: " + (goal.completion_criterion || "")
       });

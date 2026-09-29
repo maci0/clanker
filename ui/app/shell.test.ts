@@ -87,17 +87,22 @@ const DISPLAY = new Set(["hidden", "block", "inline-block", "inline", "flex", "i
       ]),
     );
 
-test("the shell shrinks beside the rail instead of wrapping under it", async () => {
+test("the page is a two-row grid: masthead above, rail and shell side by side below", async () => {
   const [css, html] = await Promise.all([read("tailwind.src.css"), read("index.html")]),
     shells = Array.from(css.matchAll(/(?:^|[}/])\s*\.shell\s*\{(?<body>[^}]+)\}/gmu), (m) => captured(m, "body"));
 
-  /* One rule, so a later copy cannot undo it; a zero basis, so a wide view shrinks instead of wrapping. */
+  /*
+   * A flex-wrap page wrapped a wide view under the rail, and its full-height
+   * rail and shell overflowed the page by the masthead's height. A grid sizes
+   * the second row to what is left, and on a phone, where the rail is fixed
+   * and out of the flow, the shell takes both columns.
+   */
   expect(shells).toHaveLength(1);
-  expect(shells.at(0)).toContain("flex: 1 1 0%;");
   expect(shells.at(0)).toContain("min-width: 0;");
-  /* The masthead owns its row, and on a phone the out-of-flow rail leaves nothing to push the shell off it. */
-  expect(html).toMatch(/<header class="[^"]*\bshrink-0\b[^"]*\bbasis-full\b[^"]*" id="app-masthead">/u);
-  expect(html).toMatch(/<div class="shell [^"]*max-\[640px\]:basis-full[^"]*"/u);
+  expect(html).toContain('class="grid h-full min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]" id="app-page"');
+  expect(html).toContain('<header class="col-span-2 border-b border-rule" id="app-masthead">');
+  expect(html).toContain('<aside class="rail row-start-2 ');
+  expect(html).toMatch(/<div class="shell col-start-2 row-start-2 [^"]*max-\[640px\]:col-span-2 max-\[640px\]:col-start-1"/u);
 });
 
 test("no class list sets two unconditional display utilities", async () => {
@@ -160,4 +165,20 @@ test("an inventory line is a count or an empty list, never an error or a result"
 
   expect(inventory.map((line) => isInventoryStatus(line))).toEqual(inventory.map(() => true));
   expect(other.map((line) => isInventoryStatus(line))).toEqual(other.map(() => false));
+});
+
+test("each folding rail group draws its caret", async () => {
+  /* The caret is `.rail-fold > summary.rail-group::after`; the rail port dropped both classes, so Watch and Set up read as bare labels. */
+  const [css, html] = await Promise.all([read("tailwind.src.css"), read("index.html")]),
+    folds = Array.from(html.matchAll(/<details class="(?<list>[^"]*)" id="rail-fold-(?<name>\w+)">\s*<summary class="(?<summary>[^"]*)"/gu), (m) => ({
+      details: captured(m, "list").split(" "),
+      summary: captured(m, "summary").split(" "),
+    }));
+
+  expect(css).toContain(".rail-fold > summary.rail-group::after");
+  expect(folds).toHaveLength(2);
+  expect(folds.map((f) => [f.details.includes("rail-fold"), f.summary.includes("rail-group")])).toEqual([
+    [true, true],
+    [true, true],
+  ]);
 });

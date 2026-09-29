@@ -3244,7 +3244,7 @@ function pollChat(room) {
       chatFailing = true;
       chatBackoff = Math.min(chatBackoff * 3, chat_poll_max_ms);
       el.chatStatus.textContent = "Could not load messages: " + err.message +
-        " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
+        "; retrying in " + Math.round(chatBackoff / 1000) + "s.";
       var empty = document.getElementById("chat-log-empty");
       if (empty && !el.chatLog.querySelector("[data-role=msg]")) {
         empty.textContent = "Could not load messages. Retrying…";
@@ -4041,7 +4041,7 @@ el.chatText.addEventListener("input", function(){
 el.chatText.addEventListener("keydown", function(e){
   if (e.key === "@" || (e.key.length === 1 && el.chatText.value.slice(-1) === "@")) {
     var peers = (knownPeers || []).map(function(p){ return p.name || p; }).join(", ");
-    if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " — also: " + peers.split(",").slice(1,2).join("") + "…" : "");
+    if (peers) el.chatStatus.textContent = "Mention: @" + (peers.split(",")[0].trim()) + (peers.indexOf(",") !== -1 ? " (also: " + peers.split(",").slice(1,2).join("") + "…)" : "");
   }
 });
 var chatSending = false;

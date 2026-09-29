@@ -146,7 +146,7 @@ function renderRoster(container, status, a2a, cards) {
       var li = el("li", META_CLASS);
       li.setAttribute("role", "listitem");
       var c = byName[p.name];
-      var label = p.name + " \u2014 " + p.url;
+      var label = p.name + " · " + p.url;
       if (c && c.status === "up") {
         li.textContent = label + " \u00b7 up";
         if (c.card_name && c.card_name !== p.name) li.textContent += " \u00b7 " + c.card_name;
@@ -646,7 +646,7 @@ function _floorFrame(ts){
     if(bucket==="sub"){ ctx.fillStyle=pal.okFill; ctx.fillRect(x+Math.floor(cw/2)+12, by+6, 6, 10); }
   }
   if(lab){
-    if(reduced) lab.textContent="Fleet floor — still frame ("+names.length+" desks). Respecting reduced motion.";
+    if(reduced) lab.textContent="Fleet floor: still frame ("+names.length+" desks). Respecting reduced motion.";
     else lab.textContent=names.length+" desk(s) · animated by tool events; roster and runs below are source of truth.";
   }
   if(!reduced) _floorRAF=requestAnimationFrame(_floorFrame);

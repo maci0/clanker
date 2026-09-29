@@ -270,7 +270,7 @@ function renderTranscript(m) {
     var p = document.createElement("p");
     p.className = "meta";
     var out = c.eliminated ? " eliminated" : (c.conceded ? " conceded" : "");
-    p.textContent = c.label + " — \"" + c.position + "\" — " + c.hp + "/" + c.max_hp + " HP" + out;
+    p.textContent = c.label + " · \"" + c.position + "\" · " + c.hp + "/" + c.max_hp + " HP" + out;
     host.appendChild(p);
   });
 
@@ -282,7 +282,7 @@ function renderTranscript(m) {
     fold.open = ri === (m.rounds.length - 1);
     var h = document.createElement("summary");
     h.className = "my-2 cursor-pointer text-sm font-semibold";
-    h.textContent = "Round " + r.round + " — " + plural((r.moves || []).length, { one: "move", other: "moves" });
+    h.textContent = "Round " + r.round + " · " + plural((r.moves || []).length, { one: "move", other: "moves" });
     fold.appendChild(h);
     host.appendChild(fold);
     (r.moves || []).forEach(function (mv) {

@@ -528,7 +528,7 @@ function drawRun(g) {
   copyHead.addEventListener("click", function(){ copyText(g.run_id, copyHead, "Copy id", head); });
   head.appendChild(copyHead);
   var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link";
-  copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
+  copyLink.title = "Copy deep-link to this run; add ?node= to pin this exact graph position";
   copyLink.addEventListener("click", function(){
     var sel = el.runGraph.querySelector("[data-run-node][data-selected]");
     var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
@@ -616,9 +616,9 @@ function drawRun(g) {
   graphSearch.dataset.graphSearch = "";
   graphSearch.style.display = "flex"; graphSearch.style.gap = "var(--space-3)"; graphSearch.style.marginBottom = "var(--space-2)"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
   var graphSearchInput = document.createElement("input");
-  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
-  graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
-  graphSearchInput.title = "Filter nodes — / focuses, n/N next match, F failed, j/k next iteration";
+  graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)… (/ to focus)";
+  graphSearchInput.setAttribute("aria-label", "Filter graph nodes: press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
+  graphSearchInput.title = "Filter nodes: / focuses, n/N next match, F failed, j/k next iteration";
   graphSearchInput.style.flex = "1"; graphSearchInput.style.minWidth = "12rem";
   var graphNextBtn = document.createElement("button"); graphNextBtn.type = "button"; graphNextBtn.className = "secondary"; graphNextBtn.textContent = "Next";
   graphNextBtn.title = "Next match (n)";
@@ -700,7 +700,7 @@ function drawRun(g) {
   var canvas = document.createElement("div");
   canvas.className = CANVAS_CLASS;
   canvas.tabIndex = 0;
-  canvas.setAttribute("aria-label", "Scrollable execution graph — drag to pan, Ctrl+wheel to zoom, +/- keys, search to highlight");
+  canvas.setAttribute("aria-label", "Scrollable execution graph: drag to pan, Ctrl+wheel to zoom, +/- keys, search to highlight");
   (function(){
     var isPanning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
     canvas.addEventListener("mousedown", function(e){
@@ -738,7 +738,7 @@ function drawRun(g) {
 
   var minimap = document.createElement("div");
   minimap.className = MINIMAP_CLASS; minimap.hidden = true;
-  minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
+  minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap: click to jump, drag viewport to pan");
   minimap.title = "Click to jump · drag viewport to pan";
   var mmLabel = document.createElement("span"); mmLabel.className = MINIMAP_LABEL_CLASS; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
   var mmCanvas = document.createElement("canvas"); mmCanvas.className = MINIMAP_CANVAS_CLASS; mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
@@ -1169,7 +1169,7 @@ function showNodeDetail(kind, node) {
     var note = document.createElement("p");
     note.className = runDetail.note;
     note.textContent = "Showing the first " + shownBytes + " of " + node.result_bytes +
-      " bytes — the rest was not recorded, so this is raw text rather than a parsed tree.";
+      " bytes. The rest was not recorded, so this is raw text rather than a parsed tree.";
     el.runDetail.appendChild(note);
   }
 
@@ -1225,7 +1225,7 @@ function showNodeDetail(kind, node) {
       if (argsStr.length >= 8000) {
         var truncNote = document.createElement("p");
         truncNote.className = "meta px-3 py-2";
-        truncNote.textContent = "arguments preview truncated — open the run's source to see the full change";
+        truncNote.textContent = "arguments preview truncated; open the run's source to see the full change";
         out.appendChild(truncNote);
       }
       return;

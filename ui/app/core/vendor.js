@@ -98,7 +98,7 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
       range.selectNodeContents(selectTarget);
       sel.removeAllRanges();
       sel.addRange(range);
-      btn.textContent = "Selected \u2014 press Ctrl+C";
+      btn.textContent = "Selected: press Ctrl+C";
     } else {
       btn.textContent = "Copy unavailable";
     }
