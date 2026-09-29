@@ -1,0 +1,46 @@
+diff --git a/presets/core-clean.json b/presets/core-clean.json
+index 0d4771856d4250b4293e918d74ee6cf21765e693..99c9ea72fbd308691528d99e62cd1f457fb6528c 100644
+--- a/presets/core-clean.json
++++ b/presets/core-clean.json
+@@ -18,8 +18,6 @@
+ 		],
+ 		"oxc/no-async-await": "off",
+ 		"oxc/no-accumulating-spread": "error",
+-		"oxc/no-new-buffer": "error",
+-		"oxc/no-map-object-keys": "error",
+ 		"eslint/eqeqeq": ["error", "always"],
+ 		"eslint/no-unused-expressions": "error",
+ 		"eslint/no-sequences": "error",
+@@ -76,7 +74,6 @@
+ 		"unicorn/prefer-structured-clone": "error",
+ 		"unicorn/prefer-string-replace-all": "error",
+ 		"unicorn/no-thenable": "error",
+-		"unicorn/prefer-logical-operator-over-short-circuit": "error",
+ 		"unicorn/no-useless-switch-case": "error",
+ 		"unicorn/no-useless-undefined": "error",
+ 		"unicorn/no-useless-spread": "error",
+diff --git a/presets/imports-hygiene.json b/presets/imports-hygiene.json
+index 87570c577cd999f9a2b4a4fa5cb6494aa9f8a003..017c3676c732fb60df100112bbf977ed59f73af6 100644
+--- a/presets/imports-hygiene.json
++++ b/presets/imports-hygiene.json
+@@ -7,8 +7,6 @@
+ 		"import/no-commonjs": "error",
+ 		"import/no-dynamic-require": "error",
+ 		"import/max-dependencies": ["error", { "max": 35 }],
+-		"import/no-extraneous-dependencies": "error",
+-		"import/no-unresolved": "error",
+ 		"@rikalabs/no-import-then-reexport": "error"
+ 	}
+ }
+diff --git a/presets/strict-core.json b/presets/strict-core.json
+index 23ea71f06bd36f1fa3094e1f2c47df79451fce99..9e68a3b349ef2a1d90ae63cee707d6778db952ba 100644
+--- a/presets/strict-core.json
++++ b/presets/strict-core.json
+@@ -29,7 +29,6 @@
+ 		"typescript/no-require-imports": "error",
+ 		"typescript/no-namespace": "error",
+ 		"typescript/array-type": ["error", { "default": "generic" }],
+-		"import/no-reexport": "error",
+ 		"import/no-anonymous-default-export": "error",
+ 		"promise/no-return-wrap": "error",
+ 		"eslint/array-callback-return": "error",

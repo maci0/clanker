@@ -34,6 +34,7 @@ fi
 if command -v bun >/dev/null 2>&1; then
     step "JavaScript lint (CI: Lint JavaScript)"
     bun install --frozen-lockfile || status=1
+    bun test tools/oxlint || status=1
     bun run lint || status=1
 
     step "JavaScript toolchains (CI: Audit JavaScript toolchains)"

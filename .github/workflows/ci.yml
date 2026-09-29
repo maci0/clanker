@@ -96,14 +96,15 @@ jobs:
       - name: Check shell scripts
         run: git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 -r shellcheck
 
-      # oxlint over ui/ and tools/ts sources. Correctness-category rules and
-      # the paid-off anti-slop rules are errors here and block the job; the
-      # remaining warn-level rules in .oxlintrc.json carry a recorded debt, so
-      # they stay visible without failing until paid down. A disable directive
-      # that no longer silences anything is an error too.
+      # oxlint over ui/ and tools/ts sources with every rule at error (the
+      # Rika Labs strict preset, type-aware, plus anti-slop and @shadcn/lint).
+      # tools/oxlint/ratchet.ts fails the job when any file's count for a rule
+      # rises above tools/oxlint/baseline.json, or falls without the baseline
+      # being tightened, and on a disable directive that silences nothing.
       - name: Lint JavaScript
         run: |
           bun install --frozen-lockfile
+          bun test tools/oxlint
           bun run lint
 
       # The root lockfile (oxlint and its napi bindings) gets the same audit

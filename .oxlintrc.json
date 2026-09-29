@@ -1,37 +1,66 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc", "import"],
-  "categories": {
-    "correctness": "error"
+  // Every rule runs at error across ui/, tools/ts/ and the scripts: the
+  // Rika Labs strict preset (every builtin category, type-aware), the
+  // vendored anti-slop plugin (tools/oxlint/anti-slop/, provenance in its
+  // UPSTREAM.md) and @shadcn/lint over every class list passed through a
+  // merge function (`cn` in ui/app/core/utils.js). Debt that predates this
+  // config is recorded per file and rule in tools/oxlint/baseline.json;
+  // `bun run lint` fails when any count rises above it or falls without the
+  // baseline following (tools/oxlint/ratchet.ts).
+  "options": { "typeAware": true },
+  "extends": ["./node_modules/@rikalabs/oxlint-standards/presets/strict.json"],
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" },
+    "@rikalabs/oxlint-standards/plugin",
+    "@shadcn/lint"
+  ],
+  "settings": {
+    "shadcn": {
+      "note": "The cabinet design system is DESIGN.md; tokens live in ui/app/tailwind.src.css."
+    }
   },
-  // Anti-slop: syntactic shortcuts that read as AI-generated filler and
-  // survive `tsc`/`zig build` unnoticed. Rules whose count reached zero were
-  // promoted to error and block CI; the rest are warn-level with a recorded
-  // debt, so they stay visible without failing until paid down, then get the
-  // same promotion (`npx oxlint --deny-warnings` previews the stricter gate).
   "rules": {
+    "oxc/no-accumulating-spread": "error",
+    "anti-slop/no-array-filter-map": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "error",
+    "anti-slop/no-shape-in-symbol-names": "error",
+    "anti-slop/no-unknown-parameters": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "shadcn/no-arbitrary-values": "error",
+    "shadcn/no-inline-styles": "error",
+    "shadcn/no-raw-colors": "error",
+    "shadcn/no-unknown-classes": "error",
+    "shadcn/require-static-classes": "error",
+    // The runner is `bun test`, whose supported API is node:test; these two
+    // rules exist to move a suite onto the vitest runner this repo does not use.
+    "vitest/no-import-node-test": "off",
+    "vitest/prefer-importing-vitest-globals": "off",
     "no-console": "error",
-    "no-empty-function": "warn",
-    // Loose equality is the classic LLM drift (`== null` vs `=== null`);
-    // tools/ts AssemblyScript targets intentionally use `==` against
-    // JKind discriminants so the override turns this off there.
-    "eqeqeq": "warn",
+    "no-empty-function": "error",
+    "eqeqeq": "error",
     "no-duplicate-imports": "error",
-    "no-useless-escape": "warn",
+    "no-useless-escape": "error",
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",
     "typescript/no-non-null-asserted-optional-chain": "error",
     "typescript/no-empty-object-type": "error",
-    // Warn, not error: the existing debt moves with every ui/ edit and would
-    // make every run exit 1. Keep it as signal until paid, then promote back
-    // to error; current count any time: `npx oxlint 2>&1 | grep -c 'warning '`.
-    "no-unused-vars": ["warn", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
-    "no-unused-expressions": "warn",
+    "no-unused-vars": ["error", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
+    "no-unused-expressions": "error",
     "no-useless-empty-export": "error",
-    // Defect-class rules the tree already passes, from categories that stay
-    // off as groups (suspicious/restriction/pedantic all have unpaid hits in
-    // other rules). Each of these was measured at zero on the pinned oxlint
-    // 1.80.0, so a new violation fails CI rather than joining that debt.
     "default-case": "error",
     "no-fallthrough": "error",
     "no-div-regex": "error",
@@ -77,6 +106,7 @@
     "unicorn/require-module-specifiers": "error",
     "unicorn/require-post-message-target-origin": "error"
   },
+  "globals": { "Bun": "readonly" },
   "env": {
     "builtin": true,
     "browser": true,
@@ -94,6 +124,14 @@
     "state/**",
     ".clanker-worktrees/**",
     ".zig-cache/**",
+    ".scratch/**",
+    ".local/**",
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".playwright-mcp/**",
+    "tools/oxlint/anti-slop/**",
     // AssemblyScript decorators (`@external`) not yet supported by oxlint's parser.
     "tools/ts/calc_ts.ts",
     "tools/ts/lib.ts"
