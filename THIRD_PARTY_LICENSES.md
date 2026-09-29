@@ -64,8 +64,8 @@ friends" line.
 
 `package.json` and `tools/ts/package.json` declare only `devDependencies`
 (`oxlint`, `oxlint-tsgolint`, `@oxlint/plugins`, `@rikalabs/oxlint-standards`,
-`@shadcn/lint`, `zod`, `@types/bun`, `tailwindcss`, `@tailwindcss/cli` in the
-root, all MIT; `assemblyscript` in `tools/ts`), each pinned to an exact version, with `bun.lock` and
+`@shadcn/lint`, `typescript`, `zod`, `@types/bun`, `tailwindcss`, `@tailwindcss/cli` in the
+root, MIT except `typescript` which is Apache-2.0; `assemblyscript` in `tools/ts`), each pinned to an exact version, with `bun.lock` and
 `tools/ts/bun.lock` committed so `bun install --frozen-lockfile` resolves the
 same tree with the same integrity digests (CI, `scripts/verify.sh` and
 `tools/ts/verify.sh` all pass that flag). No package installs a post-install
