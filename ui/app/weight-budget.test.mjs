@@ -49,10 +49,25 @@ const preloads = [...html.matchAll(/<link rel="modulepreload" href="(\/webui\/[^
 // raw / 4.5 KB gz and three requests that every chat-only visit paid for and no
 // test could see. Only `import ... from` is followed; a dynamic `import()` is
 // the deferral this budget exists to encourage.
+//
+// Both spellings of a first-party specifier count, because both are downloaded
+// on every visit. The relative form (`./core/ui.js`) was the only one
+// followed, so an absolute one (`/webui/vendor/signals-core.module.js`, which
+// the import map rewrites to the tagged URL at runtime) fell out of the walk
+// entirely: `preact-boot.js` imports all three vendor primitives that way and
+// `core/ui.js` reaches signals-core that way, and 17.1 KB raw / 6.9 KB gz of
+// every-visit bytes sat outside the count. It read as correct only because
+// something else also happened to list those three in the head's preload
+// hints, which the total unions in, so a hint and an import were silently
+// covering for each other and deleting either one would have dropped real
+// bytes from the budget with nothing failing. A bare specifier ("preact") is
+// not a web path, so it is skipped rather than resolved instead of sending the
+// walk off to read a file that does not exist.
 const static_import_re = /^\s*import\s[^;]*?from\s+"([^"]+)"/gm;
 
 function resolveSpecifier(fromWebPath, spec) {
-  if (!spec.startsWith(".")) return spec;
+  if (spec.startsWith("/webui/")) return posix.normalize(spec);
+  if (!spec.startsWith(".")) return null;
   return posix.resolve(posix.dirname(fromWebPath), spec);
 }
 
@@ -64,7 +79,10 @@ function importClosure(roots) {
     if (seen.has(webPath)) continue;
     seen.add(webPath);
     const src = fileBytes(resolveAsset(webPath)).toString("utf8");
-    for (const m of src.matchAll(static_import_re)) stack.push(resolveSpecifier(webPath, m[1]));
+    for (const m of src.matchAll(static_import_re)) {
+      const resolved = resolveSpecifier(webPath, m[1]);
+      if (resolved) stack.push(resolved);
+    }
   }
   return [...seen];
 }
@@ -119,6 +137,28 @@ test("the head preloads the whole eager graph, heaviest first", function () {
       preloads.indexOf(heavy) <= 8,
       `${heavy} is one of the largest eager modules and must sit in the first wave of hints`
     );
+  }
+});
+
+test("the head hints and the import graph name the same modules", function () {
+  // The two lists answer one question from opposite ends: the closure says
+  // what a visit downloads, the hints say what the scanner may see of it. A
+  // module in only one of them is a defect either way, and each was invisible
+  // until the other covered for it. A hint with no import behind it pulls a
+  // full module off the wire that nothing runs, and it does so at the front of
+  // the six-connection queue, ahead of the modules that do. An eager module
+  // with no hint is requested one document-transfer late, since its <script>
+  // tag is at the end of a 107 KB body the scanner cannot read past yet. This
+  // is the assertion that keeps either list honest on its own: the totals
+  // below union the two, so a module missing from both is the case that would
+  // otherwise go uncounted, and a mismatch here names it.
+  const closure = new Set(importClosure(scriptSrcs));
+  const hinted = new Set(preloads);
+  for (const src of closure) {
+    assert.ok(hinted.has(src), `${src} is downloaded on every visit but has no modulepreload, so the scanner finds it a document-transfer late`);
+  }
+  for (const src of preloads) {
+    assert.ok(closure.has(src), `${src} is preloaded but nothing imports it, so its bytes are fetched for a module no visit runs`);
   }
 });
 
