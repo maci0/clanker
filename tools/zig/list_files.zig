@@ -37,10 +37,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const path = str(obj, "path") orelse ".";
     const suffix = str(obj, "suffix") orelse "";
-    const recursive = switch (obj.get("recursive") orelse std.json.Value{ .bool = false }) {
-        .bool => |b| b,
-        else => false,
-    };
+    const recursive = lib.boolFieldMap(obj, "recursive", false);
     const max = switch (obj.get("max") orelse std.json.Value{ .integer = default_max }) {
         // Clamped as a parsed integer: `usize` is 32 bits in the wasm build,
         // so `{"max": 4294967296}` casts to 0 and the walk's `len >= max`

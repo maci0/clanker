@@ -34,14 +34,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .string => |s| s,
         else => "python",
     };
-    const cell = switch (obj.get("cell") orelse return lib.fail(out, "missing cell")) {
-        .string => |s| s,
-        else => return lib.fail(out, "cell must be a string"),
-    };
-    const reset = switch (obj.get("reset") orelse std.json.Value{ .bool = false }) {
-        .bool => |b| b,
-        else => false,
-    };
+    const cell = lib.strFieldRequired(obj, "cell") orelse return lib.fail(out, "cell must be a non-empty string");
+    const reset = lib.boolFieldMap(obj, "reset", false);
     const timeout: i64 = switch (obj.get("timeout_ms") orelse std.json.Value{ .integer = 10000 }) {
         .integer => |n| n,
         else => 10000,

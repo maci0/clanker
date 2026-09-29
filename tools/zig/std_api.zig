@@ -14,11 +14,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const symbol = switch (obj.get("symbol") orelse return lib.fail(out, "missing symbol")) {
-        .string => |s| s,
-        else => return lib.fail(out, "symbol must be a string"),
-    };
-    if (symbol.len == 0) return lib.fail(out, "symbol must not be empty");
+    const symbol = lib.strFieldRequired(obj, "symbol") orelse return lib.fail(out, "symbol must be a non-empty string");
 
     const raw = lib.stdApi(symbol) catch |err| return lib.failErr(out, err, "looking up the std symbol");
     return lib.okText(out, raw);

@@ -20,10 +20,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const dry = switch (obj.get("dry_run") orelse std.json.Value{ .bool = true }) {
-        .bool => |b| b,
-        else => true,
-    };
+    const dry = lib.boolFieldMap(obj, "dry_run", true);
     const scope = switch (obj.get("scope") orelse std.json.Value{ .string = "staged" }) {
         .string => |s| s,
         else => "staged",

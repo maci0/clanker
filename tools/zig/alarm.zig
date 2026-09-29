@@ -30,10 +30,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be an object");
     const obj = parsed.object;
-    const action = switch (obj.get("action") orelse return lib.fail(out, "missing action")) {
-        .string => |s| s,
-        else => return lib.fail(out, "action must be a string"),
-    };
+    const action = lib.strFieldRequired(obj, "action") orelse return lib.fail(out, "action must be a non-empty string");
 
     if (std.mem.eql(u8, action, "set")) return doSet(obj, out);
     if (std.mem.eql(u8, action, "list")) return doList(out);

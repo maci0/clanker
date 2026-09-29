@@ -113,10 +113,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const to = str(obj, "to") orelse
         return lib.fail(out, "move and copy need \"to\": the destination path");
-    const overwrite = switch (obj.get("overwrite") orelse std.json.Value{ .bool = false }) {
-        .bool => |b| b,
-        else => false,
-    };
+    const overwrite = lib.boolFieldMap(obj, "overwrite", false);
     // Both operations replace the destination outright, so a move onto an
     // existing path destroyed it and answered ok: nothing in the result said a
     // file had been lost. Asking for that has to be deliberate.

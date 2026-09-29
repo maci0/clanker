@@ -14,10 +14,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const path = switch (obj.get("path") orelse return lib.fail(out, "missing path")) {
-        .string => |s| s,
-        else => return lib.fail(out, "path must be a string"),
-    };
+    const path = lib.strFieldRequired(obj, "path") orelse return lib.fail(out, "path must be a non-empty string");
     const body = lib.dockerRequest("GET", path) catch |err| {
         return lib.failErr(out, err, "calling the docker socket");
     };

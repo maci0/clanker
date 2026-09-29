@@ -14,10 +14,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const url = switch (obj.get("url") orelse return lib.fail(out, "missing url")) {
-        .string => |s| s,
-        else => return lib.fail(out, "url must be a string"),
-    };
+    const url = lib.strFieldRequired(obj, "url") orelse return lib.fail(out, "url must be a non-empty string");
 
     const body = lib.httpGet(url) catch |err| {
         return lib.failErr(out, err, "fetching the page");

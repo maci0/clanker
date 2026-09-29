@@ -25,10 +25,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const query = switch (obj.get("query") orelse return lib.fail(out, "missing query")) {
-        .string => |s| s,
-        else => return lib.fail(out, "query must be a string"),
-    };
+    const query = lib.strFieldRequired(obj, "query") orelse return lib.fail(out, "query must be a non-empty string");
     var lang: []const u8 = "";
     if (obj.get("lang")) |l| {
         if (l == .string) lang = l.string;

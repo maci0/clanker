@@ -21,10 +21,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .string => |s| s,
         else => return lib.fail(out, "engine must be a string"),
     } else "ast-grep";
-    const query = switch (obj.get("query") orelse return lib.fail(out, "missing query")) {
-        .string => |s| s,
-        else => return lib.fail(out, "query must be a string"),
-    };
+    const query = lib.strFieldRequired(obj, "query") orelse return lib.fail(out, "query must be a non-empty string");
     const path = if (obj.get("path")) |p| switch (p) {
         .string => |s| s,
         else => ".",

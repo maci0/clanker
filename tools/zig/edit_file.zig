@@ -40,10 +40,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const obj = parsed.object;
 
     const path = str(obj, "path") orelse return lib.fail(out, "missing required field: path");
-    const create = switch (obj.get("create") orelse std.json.Value{ .bool = false }) {
-        .bool => |b| b,
-        else => false,
-    };
+    const create = lib.boolFieldMap(obj, "create", false);
 
     if (str(obj, "op")) |op| {
         if (std.mem.eql(u8, op, "hashline")) return applyHashline(obj, path, out);
@@ -53,10 +50,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (create) {
         const content = str(obj, "content") orelse
             return lib.fail(out, "create needs \"content\": the whole text of the new file");
-        const overwrite = switch (obj.get("overwrite") orelse std.json.Value{ .bool = false }) {
-            .bool => |b| b,
-            else => false,
-        };
+        const overwrite = lib.boolFieldMap(obj, "overwrite", false);
         // Writing truncates, so creating over a path that already exists
         // destroys it and answers ok, with nothing in the result to say
         // anything was lost. Replacing text goes through an exact match for

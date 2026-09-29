@@ -12,10 +12,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const task = switch (obj.get("task") orelse return lib.fail(out, "missing task")) {
-        .string => |s| s,
-        else => return lib.fail(out, "task must be a string"),
-    };
+    const task = lib.strFieldRequired(obj, "task") orelse return lib.fail(out, "task must be a non-empty string");
     var provider: ?[]const u8 = null;
     if (obj.get("provider")) |p| {
         if (p == .string and p.string.len > 0) provider = p.string;

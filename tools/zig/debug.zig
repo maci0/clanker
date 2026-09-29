@@ -16,10 +16,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const op = switch (obj.get("op") orelse return lib.fail(out, "missing op")) {
-        .string => |s| s,
-        else => return lib.fail(out, "op must be a string"),
-    };
+    const op = lib.strFieldRequired(obj, "op") orelse return lib.fail(out, "op must be a non-empty string");
     _ = op;
     const raw = lib.debugEval(input) catch |err| {
         return lib.failErr(out, err, "ck_debug");

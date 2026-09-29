@@ -48,10 +48,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .integer => |i| @floatFromInt(i),
         else => return lib.fail(out, "b must be a number"),
     };
-    const op = switch (obj.get("op") orelse return lib.fail(out, "missing op")) {
-        .string => |s| s,
-        else => return lib.fail(out, "op must be a string"),
-    };
+    const op = lib.strFieldRequired(obj, "op") orelse return lib.fail(out, "op must be a non-empty string");
     const op_enum = calc.opFromStr(op) orelse
         return lib.fail(out, "unknown op; use + - * / % ^");
 

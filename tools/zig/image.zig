@@ -17,10 +17,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const path = switch (obj.get("path") orelse return lib.fail(out, "missing path")) {
-        .string => |s| s,
-        else => return lib.fail(out, "path must be a string"),
-    };
+    const path = lib.strFieldRequired(obj, "path") orelse return lib.fail(out, "path must be a non-empty string");
 
     const data = lib.fsRead(path) catch |err| return lib.failErr(out, err, "reading the image");
     // Keep the base64 + JSON under the guest output cap (lib.out_cap, 2 MiB):

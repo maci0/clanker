@@ -15,14 +15,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const org = switch (obj.get("org") orelse return lib.fail(out, "missing org")) {
-        .string => |s| s,
-        else => return lib.fail(out, "org must be a string"),
-    };
-    const repo = switch (obj.get("repo") orelse return lib.fail(out, "missing repo")) {
-        .string => |s| s,
-        else => return lib.fail(out, "repo must be a string"),
-    };
+    const org = lib.strFieldRequired(obj, "org") orelse return lib.fail(out, "org must be a non-empty string");
+    const repo = lib.strFieldRequired(obj, "repo") orelse return lib.fail(out, "repo must be a non-empty string");
     var topic: []const u8 = "";
     if (obj.get("topic")) |t| {
         if (t == .string) topic = t.string;

@@ -13,10 +13,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const file = switch (obj.get("file") orelse return lib.fail(out, "missing file")) {
-        .string => |s| s,
-        else => return lib.fail(out, "file must be a string"),
-    };
+    const file = lib.strFieldRequired(obj, "file") orelse return lib.fail(out, "file must be a non-empty string");
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(lib.alloc);
     try argv.append(lib.alloc, "test");

@@ -42,14 +42,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
-    const instruction = switch (obj.get("instruction") orelse return lib.fail(out, "missing instruction")) {
-        .string => |s| s,
-        else => return lib.fail(out, "instruction must be a string"),
-    };
-    const text = switch (obj.get("text") orelse return lib.fail(out, "missing text")) {
-        .string => |s| s,
-        else => return lib.fail(out, "text must be a string"),
-    };
+    const instruction = lib.strFieldRequired(obj, "instruction") orelse return lib.fail(out, "instruction must be a non-empty string");
+    const text = lib.strFieldRequired(obj, "text") orelse return lib.fail(out, "text must be a non-empty string");
     var depth: u32 = 0;
     if (obj.get("depth")) |d| {
         if (d == .integer and d.integer > 0) depth = std.math.lossyCast(u32, d.integer);

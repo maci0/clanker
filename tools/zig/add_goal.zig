@@ -31,11 +31,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
 
-    const objective = switch (obj.get("objective") orelse return lib.fail(out, "missing objective")) {
-        .string => |s| s,
-        else => return lib.fail(out, "objective must be a string"),
-    };
-    if (objective.len == 0) return lib.fail(out, "objective must not be empty");
+    const objective = lib.strFieldRequired(obj, "objective") orelse return lib.fail(out, "objective must be a non-empty string");
 
     // Optional: the goal loop drafts a measurable criterion on its first turn
     // when none is supplied.
