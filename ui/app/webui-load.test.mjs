@@ -267,8 +267,8 @@ test("every named static import resolves to an export of its module", function (
 
     /* The later declarators of an `export const a = 1, b = 2;` list sit at
        two-space indent until the next top-level line. */
-    for (const mm of src.matchAll(/^export const [\s\S]*?(?=^(?!\})\S|(?![\s\S]))/gm)) {
-      for (const d of mm[0].matchAll(/^ {2}([A-Za-z_$][\w$]*) = /gm)) { names.add(d[1]); }
+    for (const mm of src.matchAll(/^export const [\s\S]*?(?=^(?!\})\S|(?![\s\S]))/gmu)) {
+      for (const d of mm[0].matchAll(/^ {2}(?<name>[A-Za-z_$][\w$]*) = /gmu)) { names.add(d.groups.name); }
     }
 
     for (const mm of src.matchAll(/export\s*\{([^}]*)\}/g)) {
