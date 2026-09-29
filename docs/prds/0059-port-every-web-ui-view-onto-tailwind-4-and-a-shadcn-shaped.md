@@ -40,8 +40,9 @@ covers the repeated controls. app.css, views.css and patternfly.min.css are
 deleted at the end, with no rule left unported: ui/app/tailwind.test.mjs's
 migrated ledger reaches every file that had a cabinet rule, and the same suite
 proves each class any of them names resolves in the compiled sheet. First
-paint does not grow: the compiled sheet plus index.html plus app.css stays
-inside the existing 64K gz budget at every step, and the final state is
+paint does not grow: the compiled sheet plus index.html (the two the shipped
+`ui/app/weight-budget.test.mjs` counts) stays inside the existing 64K gz
+budget at every step, and the final state is
 lighter than the three sheets it replaces. The cabinet's scale survives the
 port: padding, margin and gap use rungs 1-7, radii are
 rounded-plate/rounded-capsule, and no arbitrary value bypasses a token except
@@ -106,7 +107,7 @@ kit only through the plugin API and a declared capability, gated in
   class such a file names must resolve in a shipped sheet.
 - Preact/htm/signals vendored modules are unchanged.
 - The web UI weight budget (ui/app/weight-budget.test.mjs) is the ceiling:
-  first paint counts index.html + app.css + tailwind.css.
+  first paint counts index.html + tailwind.css.
 
 **Implementation phases.**
 

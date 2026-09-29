@@ -3,7 +3,8 @@
 ## Status
 
 Shipped. Source of truth: `ui/app/*`
-(`index.html`/`app.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES modules),
+(`index.html`/`tailwind.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES
+modules),
 comptime-embedded via `ui/webui.zig`, routed in `src/cli.zig`
 (`handleConnection`/`handleRun`/`handleWebuiAsset`/`handlePeers`/etc).
 Surface: `clanker serve`, served at `GET /`. Co-equal product surface with
@@ -20,7 +21,11 @@ Drift since shipping: the Compare module was later refactored from
 `ui/plugins/compare` drop-in plugin served at `/webui/plugins/compare`. The
 compare view, its `GET/POST /api/compare*` surface, and its `#compare/<id>`
 deep-links are unchanged; only the hosting moved from a comptime-embedded
-feature module to a plugin.
+feature module to a plugin. Search and Schedule moved the same way, so the
+`features/search.js` and `features/schedule.js` named below are
+`ui/plugins/search/` and `ui/plugins/schedule/`. `app.css`, named in the
+Status above at the time this PRD was written, is gone: the one sheet is
+`ui/app/tailwind.css` ([PRD 0059](0059-port-every-web-ui-view-onto-tailwind-4-and-a-shadcn-shaped.md)).
 
 ## Problem
 
