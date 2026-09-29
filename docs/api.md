@@ -19,9 +19,10 @@ chain and its handler.
 
 ## Conventions
 
-**Content type.** Every response is `application/json`, including errors.
-A `HEAD` answers the headers its `GET` would, with `Content-Length` and no
-body.
+**Content type.** Every `/api/*` response is `application/json`, including
+errors. The web UI index and its assets answer HTML and `text/javascript`, and
+the two streaming routes answer `text/event-stream`. A `HEAD` answers the
+headers its `GET` would, with `Content-Length` and no body.
 
 **Success envelope.** `{"ok":true, ...}`. List routes add their own array or
 object key beside it (`{"ok":true,"goals":[...]}`, `{"ok":true,"last_seq":N}`).
@@ -36,7 +37,7 @@ carries `gap`, `have`, `need`), never instead of it.
 | Code | Meaning here |
 |---|---|
 | 400 | malformed body, missing or invalid field, unparseable query value |
-| 403 | cross-origin request, or a Host this listener does not answer to |
+| 403 | cross-origin request, a Host this listener does not answer to, editing or deleting another sender's chat message, a dotenv path, or a path with a symlinked component |
 | 404 | no such route, no such resource, or the owning module is disabled |
 | 405 | the path exists but not with this method; the `Allow` header lists the methods it does take |
 | 409 | a conflict the caller can resolve (duplicate workspace, cursor gap) |
@@ -44,7 +45,7 @@ carries `gap`, `have`, `need`), never instead of it.
 | 421 | the `Host` header names a different listener |
 | 429 | a per-run steer queue is full |
 | 500 | the server's own failure (a guest tool missing, state unreadable) |
-| 502 | `POST /api/catalog/refresh` could not reach models.dev |
+| 502 | a model catalog could not be fetched: `POST /api/catalog/refresh` could not reach models.dev, or `GET /api/providers/models` got no answer or non-JSON from the provider |
 | 503 | the connection pool is saturated; `request_status` is recorded as 0 |
 
 **Path matching.** A route that owns sub-paths claims the prefix and
@@ -86,7 +87,7 @@ probing for them.
 | POST | `/api/ask` | `{id, answer}` | answers a pending `ck_ask` question |
 | POST | `/api/steer` | `{goal?, session?, message}` | 404 when no run is working that key, 429 when the queue is full |
 | GET | `/api/status` | | server status the web UI polls |
-| GET | `/api/metrics` | | JSON counters (`http`, `live`, `llm`, `tools`, `schedule`, `jobs`, `mesh`) |
+| GET | `/api/metrics` | | JSON counters (`http`, `live`, `llm`, `tools`, `schedule`, `jobs`, `subagents`, `mesh`) |
 
 `POST /api/run` accepts `task` (or `goal` alone), `stream`, `session`,
 `goal`, `worktree`, `images`, `provider`, `model`, `fallback_provider`,
@@ -106,7 +107,7 @@ Module gate: `sessions`. Ids are 1-64 characters of `[A-Za-z0-9_-]`.
 | GET | `/api/sessions/search?q=` | full text over transcripts |
 | GET | `/api/sessions/<id>` | one session |
 | POST | `/api/sessions` | `{import_chat:true, title?, messages:[{role,content}]}` |
-| POST | `/api/sessions/<id>` | `{title?, workspace?, archived?, import_chat?, messages?}` |
+| POST | `/api/sessions/<id>` | `{title?, workspace?, archived?}`; `import_chat` and `messages` are read only on the collection POST above, and a body carrying only those is a 400 naming the three fields this route takes |
 | DELETE | `/api/sessions/<id>` | also forgets the session's spills and export |
 | POST | `/api/sessions/<id>/fork` | `{"ok":true,"id":"<new>"}` |
 | POST | `/api/sessions/<id>/compact` | `{"ok":true,"bytes":N}` |
@@ -116,8 +117,9 @@ Module gate: `sessions`. Ids are 1-64 characters of `[A-Za-z0-9_-]`.
 
 ## Workspaces
 
-A workspace is a named project folder (ADR 0020). Ids are 0-64 characters
-with no `/`, `\` or `:`.
+A workspace is a named project folder (ADR 0020). Path ids are 1-64
+characters with no `/`, `\` or `:`; an empty id is only ever a value, naming
+the default workspace.
 
 | Method | Path | Body |
 |---|---|---|
@@ -136,7 +138,8 @@ with no `/`, `\` or `:`.
 | GET/POST | `/api/board` | the shared Kanban board; GET lists, POST takes the tool input verbatim |
 | GET | `/api/workflows` | workflow definitions |
 
-Module gate: `goal`.
+Module gate: `goal` on `/api/goals` only. `/api/board` and `/api/workflows`
+carry no gate.
 
 ## Knowledge and prompts
 
@@ -183,8 +186,7 @@ Module gate: `graphs`. Run ids are `run-<digits>` or `sub-<digits>`.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/providers` | each row gains a native `usable` / `reason` annotation |
-| GET | `/api/providers/models?name=<provider>` | |
-| POST | `/api/providers/models` | `{provider, model, object}` |
+| GET | `/api/providers/models?name=<provider>` | 502 when the provider's `/models` does not answer or answers non-JSON |
 | GET | `/api/catalog?q=` | models.dev search, at least 2 characters |
 | POST | `/api/catalog/refresh` | refetch; 502 when models.dev is unreachable |
 
@@ -220,17 +222,21 @@ One relay endpoint per store: `/api/reports`, `/api/rfc`, `/api/adr`,
 `/api/prd`, `/api/research` (ADR 0019). `reports` covers `docs/reports/`
 and `docs/runbooks/`. Reads take `?action=`, writes take the same action in
 the body; pairing a read action with POST (or the reverse) is a 400 naming
-the method the action wanted. Writes land in `docs/`; `sweep` on `research` is
-the only action that leaves the process (a network fetch). See
+the method the action wanted. Writes land in `docs/`. No HTTP action leaves
+the process: `sweep` is refused here with a 400 and exists only as
+`clanker research sweep`. See
 `clanker reports --help` for the per-store action list.
 
 ## Peers, mesh and chat
 
-Module gates: `peers`, `chatrooms`.
+Module gates: `peers` and `chatrooms` across this section, plus `mesh`
+on the four `/api/mesh/` routes below `/api/mesh/map` (which is served
+even with `mesh` off). Those four answer `"modules.mesh is off; set it and
+restart serve"`, not the `<x> module disabled` form above.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/peers` | peer list with backoff state |
+| GET | `/api/peers` | phonebook rows: `name`, `url`, `status` (`up`/`down`), `card_name`, `description`, `skills`, `error` |
 | GET | `/api/mesh/map` | self, `[[peers]]` and chat wires; served even with `mesh` off |
 | GET | `/api/mesh/status` | |
 | POST | `/api/mesh/join` / `/leave` | `{address}` / `{peer_id}` |
@@ -247,7 +253,7 @@ Module gates: `peers`, `chatrooms`.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/events?topics=chat,mesh,plugin` | SSE; 403 on a cross-origin request; keep-alive opted out |
+| GET | `/api/events?topics=chat,mesh,plugin` | SSE; 403 on a cross-origin request; keep-alive opted out. Also accepts `arena`, `run` and `metrics` |
 | POST | `/api/live` | publish; `ck_publish` is the guest equivalent |
 
 ## Files, logs, misc

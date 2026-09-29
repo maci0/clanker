@@ -348,9 +348,10 @@ repl_exec_allow = ["printf"]
 #                                # connection thread, so it has to be bounded
 #
 # never | browser | always. Gate write-capable tool calls on a human's
-# allow/deny. Only the serve path reads it today, so `always` behaves like
-# `browser` until the REPL grows a prompt for it. Runs with no human channel
-# (headless, improve, sub-agents) are never gated whatever this says.
+# allow/deny. `always` prompts in the REPL as well as in the browser, so a
+# non-headless run with no one to answer is what `browser` is for. Runs with
+# no human channel (headless, improve, sub-agents) are never gated whatever
+# this says.
 confirm_writes = "browser"
 #
 # Ordered providers tried after the selected one cannot serve a request.
@@ -721,14 +722,13 @@ python_wasi_max_memory_bytes = 268435456
 # and leans on the eye to keep even that. Overridden by `--mascot-size`.
 # mascot_size = "medium"
 
-# left or right. Unset means "whatever the mode wants", which is left for
-# `place` and right for everything else -- running on the spot facing right,
-# directly above a left-to-right input box, reads as walking into a wall.
+# default or inverted. Unset and `default` both mean "whatever the mode wants";
+# `inverted` mirrors it, and applies in every mode.
 #
 # Only `loop` and `place` honour this. `type` sets its own orientation (it
 # turns upside down while deleting) and `input` is never mirrored. Overridden
 # by `--mascot-facing`.
-# mascot_facing = "right"
+# mascot_facing = "inverted"
 
 # Movement pace from 0 (still) through 10 (fastest). Unset means the regular
 # pace, 5. Overridden by `--mascot-speed`.
