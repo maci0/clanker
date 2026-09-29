@@ -13,6 +13,7 @@ const types = @import("../llm/types.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
 const openai = @import("../llm/providers/openai.zig");
 const vertex_anthropic = @import("../llm/providers/vertex_anthropic.zig");
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 
 /// Drop `model` (Vertex addresses it in the URL) and set `anthropic_version`.
 /// Other keys are kept: this is a field swap, not a rebuild.
@@ -1081,4 +1082,117 @@ test "ssePayloads returns data lines, skipping event lines and empty payloads" {
     try std.testing.expectEqualStrings("{\"a\":1}", out.items[0]);
     try std.testing.expectEqualStrings("{\"b\":2}", out.items[1]);
     try std.testing.expectEqualStrings("[DONE]", out.items[2]);
+}
+
+/// A transcoded body is handed straight to a provider, so "it parsed" is not
+/// the property that matters: it has to be a JSON *object* the provider can be
+/// asked to send. Every shape a request arrives in is here -- both wire
+/// dialects, the vertex body swap, and an SSE frame -- because each walks a
+/// different nesting of `json.Value` (string vs. array content, tool calls,
+/// data URIs) and a field mistyped the wrong way is a `switch` arm away from a
+/// crash rather than a refusal.
+const transcode_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry("{}"),
+    fuzz_corpus.entry("[]"),
+    fuzz_corpus.entry("null"),
+    fuzz_corpus.entry(" {\"model\":\"claude-sonnet-4\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"),
+    fuzz_corpus.entry(
+        \\{"model":"claude-sonnet-4","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"}],"stream":true,"max_tokens":64}
+    ),
+    fuzz_corpus.entry(
+        \\{"model":"qwen3.5","messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAA"}}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read","arguments":"{\"p\":\"a\"}"}}]},{"role":"tool","tool_call_id":"c1","content":"out"}],"tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"model":"claude-x","system":[{"type":"text","text":"sys"}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"read","input":{"deep":{"deeper":[1,2,{"k":null}]}}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}],"max_tokens":-1,"temperature":"hot","stream":"yes"}
+    ),
+    fuzz_corpus.entry(
+        \\{"messages":[{"role":"user","content":[]}],"max_tokens":18446744073709551615,"top_p":1e400,"response_format":{"type":"json_object"}}
+    ),
+    fuzz_corpus.entry("data: {\"a\":1}\r\n\r\ndata:[DONE]\n\n"),
+    fuzz_corpus.entry("event: message_start\ndata:\ndata:   \ndata: [DONE]\n\n"),
+};
+
+/// Asserts a transcoded body is a JSON object. `arena` is a throwaway so a
+/// parse that fails here reports a JSON shape problem rather than leaking the
+/// body under test.
+fn expectJsonObject(arena: std.mem.Allocator, body: []const u8) !void {
+    const parsed = json.parseFromSlice(json.Value, arena, body, .{}) catch |err| {
+        std.debug.print("transcoded body is not JSON ({s}): {s}\n", .{ @errorName(err), body });
+        return err;
+    };
+    if (parsed.value != .object) {
+        std.debug.print("transcoded body is not an object: {s}\n", .{body});
+        return error.TranscodedBodyNotAnObject;
+    }
+}
+
+test "fuzz: every request shape transcodes to a JSON object or is refused" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            const gpa = std.testing.allocator;
+            var arena_state = std.heap.ArenaAllocator.init(gpa);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            const anthropic_provider = try config.Provider.single(arena, "vertex", "https://example", .vertex_anthropic, "claude-sonnet-4", .{});
+            const openai_provider = try config.Provider.single(arena, "qwen", "http://127.0.0.1:9/v1", .openai_compat, "qwen3.5", .{});
+
+            var buf: [512]u8 = undefined;
+            const openai_body = buf[0..smith.slice(&buf)];
+            const anthropic_body = buf[0..smith.slice(&buf)];
+            // `Smith` exposes no free boolean draw, and the vertex flag only
+            // selects a body option, so it rides a bit of the first body.
+            const vertex = openai_body.len > 0 and openai_body[0] & 1 == 1;
+            var frame: [512]u8 = undefined;
+            const sse_frame = frame[0..smith.slice(&frame)];
+
+            if (openaiToAnthropic(gpa, &anthropic_provider, openai_body, vertex)) |out| {
+                defer gpa.free(out);
+                try expectJsonObject(arena, out);
+            } else |err| switch (err) {
+                // The only refusal these entry points issue for a body they
+                // cannot read. Anything else is a bug the fuzzer found.
+                error.Malformed, error.OutOfMemory => {},
+                else => return err,
+            }
+
+            if (anthropicToOpenai(gpa, &openai_provider, anthropic_body)) |out| {
+                defer gpa.free(out);
+                try expectJsonObject(arena, out);
+            } else |err| switch (err) {
+                error.Malformed, error.OutOfMemory => {},
+                else => return err,
+            }
+
+            if (rewriteVertexBody(gpa, anthropic_body)) |out| {
+                defer gpa.free(out);
+                try expectJsonObject(arena, out);
+                // The swap is the whole contract: `model` is addressed in the
+                // URL and `anthropic_version` is what the body must carry.
+                const parsed = try json.parseFromSlice(json.Value, arena, out, .{});
+                try std.testing.expect(parsed.value.object.get("model") == null);
+                const version = parsed.value.object.get("anthropic_version") orelse {
+                    std.debug.print("rewritten vertex body lost anthropic_version: {s}\n", .{out});
+                    return error.VertexVersionDropped;
+                };
+                try std.testing.expectEqualStrings(vertex_anthropic.body_version, version.string);
+            } else |err| switch (err) {
+                error.Malformed, error.OutOfMemory => {},
+                else => return err,
+            }
+
+            // Every payload must be a slice of the frame itself: the frame
+            // buffer is the only memory these spans can legally point into,
+            // and a past-the-end or reallocated read shows up here rather
+            // than as garbage forwarded to a provider.
+            var payloads: std.ArrayList([]const u8) = .empty;
+            defer payloads.deinit(gpa);
+            try ssePayloads(sse_frame, &payloads, gpa);
+            for (payloads.items) |payload| {
+                try std.testing.expect(payload.len > 0);
+                try std.testing.expect(std.mem.indexOf(u8, sse_frame, payload) != null);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &transcode_fuzz_corpus });
 }
