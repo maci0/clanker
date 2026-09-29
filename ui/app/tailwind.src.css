@@ -32,18 +32,18 @@
 :root {
   color-scheme: light dark;
 
-  /* Day-shift cabinet: warm RAL greys, not zinc-on-white. Backplane is
-     pebble grey; panel faces are a lighter grey-white. */
-  --paper: #eeebe4;
-  --bg: #dcd9d1;
-  --surface: #eeebe4;
-  --surface-2: #e2dfd6;
+  /* Light face, after Headlamp's: a light grey page, white paper for every
+     section, neutral text, and one link blue. */
+  --paper: #ffffff;
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --surface-2: #f3f2f1;
   --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
   --surface-raised: var(--surface-2);
-  --border: #7b7971;
-  --rule: #cdc9bf;
-  --fg: #1b1c18;
-  --fg-muted: #4f534b;
+  --border: #8a8886;
+  --rule: #e1dfdd;
+  --fg: #242424;
+  --fg-muted: #605e5c;
 
   /* Operator action blue and the IEC 60073 signal colours, as RAL Classic
      readings — the same enamels as the card covers and chat hues, not a
@@ -51,20 +51,20 @@
      RAL 5017 traffic blue sat two dozen lines below it in --card-blue, and
      the lamps drew Tailwind's red-700/amber-700/green-600; a cabinet whose
      whole argument is that one blue means one thing cannot carry two blues. */
-  --accent: #1d5c9e;    /* RAL 5017 traffic blue */
-  --accent-dim: #1d5c9e14;
-  --accent-text: #1d5c9e;
+  --accent: #0072c9;
+  --accent-dim: #0072c914;
+  --accent-text: #0065b3;
   --on-accent: #ffffff;
-  --ok: #117a3a;
-  --ok-fill: #2c6b34;   /* RAL 6002 leaf green */
+  --ok: #107c10;
+  --ok-fill: #107c10;
   /* Goals and jumps are operator action: same blue as the actuators. Every
      theme/ file carries its own blue reading of that role, so this is the day
      face's value and not the value a theme may borrow. */
   --violet: var(--accent);
   --violet-text: var(--accent-text);
-  --danger: #a72920;    /* RAL 3001 signal red */
+  --danger: #a4262c;
   --on-danger: #ffffff;
-  --scrim: rgba(27, 28, 24, 0.32);
+  --scrim: rgba(36, 36, 36, 0.32);
   /* Golden yellow is the abnormal lamp; on the day face it is darkened so
      white legend text on it still clears 4.5, and the text reading darker
      still for its own 4.5 on the panel. */
@@ -73,8 +73,18 @@
   /* Code wells stay in the page's luminance family so hljs tokens
      (--fg / --ok / --accent-text / --warn-text) keep contrast. A
      GitHub-dark well on a light page made every token unreadable. */
-  --code-bg: #d4d0c6;
-  --code-fg: #1b1c18;
+  --code-bg: #f3f2f1;
+  --code-fg: #242424;
+
+  /* The sidebar is dark in both faces, as Headlamp's is: #rail re-scopes the
+     surface and text tokens to these, so every utility inside it reads them. */
+  --rail-bg: #242424;
+  --rail-hover: #323130;
+  --rail-active: #3b3a39;
+  --rail-rule: #3b3a39;
+  --rail-fg: #f3f2f1;
+  --rail-muted: #c8c6c4;
+  --rail-mark: #f2e600;
 
   /* Per-sender chat hues: one stable colour per clanker name so different
      senders read as different people at a glance.
@@ -151,7 +161,7 @@
   /* Engraved legend plates: one tracking, the 0.06em DESIGN.md names.
      Headings stay untracked; tight tracking is the SaaS default this page
      does not use. */
-  --track-label: 0.06em;
+  --track-label: 0;
 
   --space-1: 0.25rem;
   --space-2: 0.4rem;
@@ -164,10 +174,10 @@
   --measure: 70ch;
 
   /* Machined plate edges, not SaaS cards. Pills stay for lamp housings. */
-  --radius-sm: 2px;
-  --radius: 3px;
-  --radius-lg: 4px;
-  --radius-pill: 999px;
+  --radius-sm: 3px;
+  --radius: 4px;
+  --radius-lg: 6px;
+  --radius-pill: 6px;
 
   /* The margin column the transcript's job numbers are stamped into. */
   --gutter: 3.25rem;
@@ -240,22 +250,22 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --paper: #232622;
-    --bg: #171916;
-    --surface: #232622;
-    --surface-2: #2e322d;
+    --paper: #292827;
+    --bg: #1f1f1f;
+    --surface: #292827;
+    --surface-2: #323130;
     --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
     --surface-raised: var(--surface-2);
-    --border: #6e726c;
-    --rule: #353934;
-    --fg: #e8eae5;
-    --fg-muted: #a3aaa1;
+    --border: #8a8886;
+    --rule: #3b3a39;
+    --fg: #faf9f8;
+    --fg-muted: #c8c6c4;
     /* Night readings of the same RAL signals — each enamel tinted for the
        cabinet interior, the derivation the sender hues below show. */
-    --accent: #7aa7ff;  /* RAL 5017 traffic blue, tinted */
-    --accent-dim: #7aa7ff1f;
-    --accent-text: #8fb5ff;
-    --on-accent: #171916;
+    --accent: #4ea8ff;
+    --accent-dim: #4ea8ff1f;
+    --accent-text: #6cb8ff;
+    --on-accent: #1f1f1f;
     --ok: #a0d8a7;      /* RAL 6002 leaf green, tinted */
     --ok-fill: #a0d8a7;
     --violet: var(--accent);
@@ -273,8 +283,12 @@
     --chat-hue-5: #6bad41;  /* RAL 6018 yellow green */
     --chat-hue-6: #e58079;  /* RAL 3001 signal red */
     --chat-hue-7: #c19a00;  /* RAL 1004 golden yellow */
-    --code-bg: #121411;
-    --code-fg: #e8eae5;
+    --code-bg: #1b1a19;
+    --code-fg: #faf9f8;
+    --rail-bg: #1b1a19;
+    --rail-hover: #292827;
+    --rail-active: #323130;
+    --rail-rule: #323130;
     --lift-low: 0 1px 2px rgba(0, 0, 0, 0.40);
     --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
     --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
@@ -299,11 +313,6 @@
 @source "./index.html";
 @source "./**/*.js";
 @source "../plugins/**/*.js";
-
-/* Preflight's `border-style` half. Without it `border` sets a width and
-   `border-rule` a colour, and no line is drawn because the initial style is
-   `none`. Width is zeroed, so a rule that sets only a colour stays inert. */
-*, ::before, ::after { border: 0 solid; }
 
 /* One component rule, because a utility cannot carry both of these: Firefox
    took `crisp-edges` before `pixelated` was standard, so the floor's canvas
@@ -335,6 +344,9 @@
   }
   #app-page { overflow-x: hidden; }
   #app-masthead {
+    background: var(--surface);
+    min-height: 3.5rem;
+    padding-inline: var(--space-4);
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -352,6 +364,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  #rail {
+    color-scheme: dark;
+    --bg: var(--rail-bg);
+    --paper: var(--rail-bg);
+    --surface: var(--rail-bg);
+    --surface-2: var(--rail-hover);
+    --surface-hover: var(--rail-hover);
+    --surface-raised: var(--rail-active);
+    --rule: var(--rail-rule);
+    --border: #8a8886;
+    --fg: var(--rail-fg);
+    --fg-muted: var(--rail-muted);
+    --accent-text: #6cb8ff;
+    --accent-dim: #6cb8ff1f;
+    background: var(--rail-bg);
+    color: var(--rail-fg);
+    border-color: var(--rail-rule);
+  }
+  .rail-tab > svg.icon { flex: none; opacity: 0.8; }
+  .rail-tab[aria-current="page"] > svg.icon { opacity: 1; }
   .rail-tab {
     min-width: 0;
     overflow: hidden;
@@ -549,8 +581,8 @@
     position: sticky; top: 0; z-index: 1;
     padding: var(--space-2) var(--space-3);
     background: var(--surface-2); border-bottom: 1px solid var(--border);
-    font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
+    color: var(--fg-muted);
   }.run-row {
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border);
@@ -594,7 +626,7 @@
   }.run-detail-title { color: var(--fg); font-weight: 700; }dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
   dd ul { list-style: none; margin: 0; padding: 0; }
   dd ul li + li { margin-top: var(--space-1); }
-  dt { font-family: var(--mono); font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); }
+  dt { font-family: var(--sans); font-size: var(--step-0); font-weight: 600; color: var(--fg-muted); }
   dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
   dd ul { margin: 0; padding-inline-start: 1.1rem; }
   a { color: var(--accent-text); overflow-wrap: anywhere; }
@@ -935,18 +967,15 @@
   /* The rail's channel tab and the engaged-channel lamp, and the fold's
      caret: pseudo-elements carrying a dome or a rotated border, which no
      utility composes. Everything else the rail wears is a utility string. */
-  .rail-tab[aria-selected="true"]::before {
+  .rail-tab[aria-current="page"]::before {
     content: "";
     position: absolute;
-    inset-inline-start: var(--space-2);
-    top: 50%;
-    transform: translateY(-50%);
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    color: var(--accent);
-    background: var(--lamp-dome);
-    box-shadow: var(--lamp-ring), var(--lamp-glow);
+    inset-inline-start: 0;
+    top: 0.3rem;
+    bottom: 0.3rem;
+    width: 3px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: var(--rail-mark);
   }
   .rail-fold > summary.rail-group::after {
     content: "";
@@ -1068,8 +1097,8 @@
     tab-size: 2;
   }
   .code-lang {
-    font-family: var(--mono); font-size: var(--step-0); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--mono); font-size: var(--step-0);
+    color: var(--fg-muted);
   }
   .code-block .copy-code-btn { opacity: 0; transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease; }
   .code-block:hover .copy-code-btn, .code-block:focus-within .copy-code-btn { opacity: 1; }
@@ -1112,9 +1141,8 @@
      plate treatment the rest of the page already uses for section names, so the
      last two levels are distinguishable without inventing a type scale. */
   .md h5.md-h, .md h6.md-h {
-    font-family: var(--mono);
-    font-size: var(--step-0); letter-spacing: var(--track-label);
-    text-transform: uppercase; color: var(--fg-muted);
+    font-family: var(--sans); font-weight: 600;
+    font-size: var(--step-0); color: var(--fg-muted);
   }
   .md .md-h:first-child { margin-top: 0; }
   .md ul, .md ol {
@@ -1154,7 +1182,7 @@
     padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--rule);
     text-align: start; vertical-align: top; font-variant-numeric: tabular-nums;
   }
-  .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label); font-size: var(--step--1); background: var(--surface-2); }
+  .md-table th { color: var(--fg-muted); font-weight: 600; font-size: var(--step--1); background: var(--surface-2); }
   .md-img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
   .md-task { list-style: none; margin-inline-start: -1.2em; }
   .md-task input { margin-inline-end: var(--space-2); }
@@ -1195,21 +1223,28 @@
     border-top: 0;
     padding-top: 0;
   }
+  /* Each section of an operator view is its own sheet of paper on the grey
+     page, the way Headlamp boxes a section. Chat and Rooms are full-height
+     work surfaces and keep their own layout. */
+  [data-view="true"]:not(#view-chat, #view-rooms) > section {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    box-shadow: var(--lift-low);
+  }
+  [data-view="true"]:not(#view-chat, #view-rooms) > section + section {
+    margin-top: var(--space-4);
+    border-top: 1px solid var(--rule);
+    padding-top: var(--space-4);
+  }
 
   /* The collapsed rail is a 3.5rem icon strip: each channel shows its
-     `data-short` stamp instead of its name, and the sections that are not
-     channels (the conversation list, the workspace picker, Set up) are gone.
-     A state rule reaching into descendants, which a utility on the sidebar
-     cannot express. */
-  [data-rail="sidebar"][data-collapsed="true"] [data-short] {
-    font-size: 0;
-    letter-spacing: 0;
-  }
-  [data-rail="sidebar"][data-collapsed="true"] [data-short]::after {
-    content: attr(data-short);
-    font-size: var(--step-0);
-  }
-  [data-rail="sidebar"][data-collapsed="true"] [data-rail-section] { display: none; }
+     icon alone, and the conversation list and workspace picker are hidden
+     by an `in-data-[collapsed=true]` utility on their own section. */
+  [data-rail="sidebar"][data-collapsed="true"] .rail-label,
+  [data-rail="sidebar"][data-collapsed="true"] .rail-tab .tab-count { display: none; }
+  [data-rail="sidebar"][data-collapsed="true"] .rail-tab { justify-content: center; padding-inline: 0; }
 
   /* The chrome vocabulary the whole page — and every plugin — writes by name:
    `meta`, `section-head`, `toast`, `overlay`, `settings-panel`, the run picker,
@@ -1336,8 +1371,8 @@
     position: sticky; top: 0; z-index: 1;
     padding: var(--space-2) var(--space-3);
     background: var(--surface-2); border-bottom: 1px solid var(--border);
-    font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
+    color: var(--fg-muted);
   }
 
   .run-row {

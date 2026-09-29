@@ -154,7 +154,7 @@ clanker.registerView({
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
-    var hiddenBtn = mk("button", "secondary font-mono tracking-label data-[active=1]:border-accent data-[active=1]:text-accent", "Hidden");
+    var hiddenBtn = mk("button", "secondary font-sans data-[active=1]:border-accent data-[active=1]:text-accent", "Hidden");
     hiddenBtn.type = "button";
     hiddenBtn.title = "Show hidden files";
     hiddenBtn.setAttribute("aria-pressed","false");
@@ -336,13 +336,11 @@ clanker.registerView({
         row.appendChild(iconCell);
 
         var nameCell = mk("span", "min-w-0 wrap-anywhere");
-        var btn = mk("button", OPEN_CLASS);
-        btn.type = "button";
-        btn.textContent = e.name;
-        btn.setAttribute("aria-label",(e.is_dir?"Open folder ":"Open file ")+e.name);
-        btn.setAttribute("tabindex","-1");
-        btn.addEventListener("click", function(ev) { ev.stopPropagation(); activate(e, i); });
-        nameCell.appendChild(btn);
+        /* The option is the control: a button inside it was a second focus target
+           for the same action, which an option may not contain. */
+        var name = mk("span", OPEN_CLASS);
+        name.textContent = e.name;
+        nameCell.appendChild(name);
         row.appendChild(nameCell);
 
         var sizeCell = mk("span", CELL_CLASS);

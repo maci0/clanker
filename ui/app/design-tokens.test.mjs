@@ -175,7 +175,7 @@ test("the scale the sheets reference is the scale the source declares", () => {
   for (const token of ["--radius-sm", "--radius", "--radius-lg", "--radius-pill"]) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
-  assert.match(appCss, /\n\s*--track-label\s*:\s*0\.06em\s*;/, "--track-label is the 0.06em DESIGN.md names");
+  assert.match(appCss, /\n\s*--track-label\s*:\s*0\s*;/, "--track-label is the 0 DESIGN.md names: labels are sentence case, untracked");
 });
 
 // Engraved labels are one tracking. Headings are untracked. The SaaS pair

@@ -497,10 +497,10 @@ clanker.registerView({
 
     function drawOffice(o, ox, oy) {
       var L = o.layout;
-      var wall = cssVar("--border", "#7b7971");
-      var floor = cssVar("--surface-2", "#e2dfd6");
-      var ink = cssVar("--fg", "#1b1c18");
-      var muted = cssVar("--fg-muted", "#4f534b");
+      var wall = cssVar("--border", "#8a8886");
+      var floor = cssVar("--surface-2", "#f3f2f1");
+      var ink = cssVar("--fg", "#242424");
+      var muted = cssVar("--fg-muted", "#605e5c");
 
       if (sheetReady) {
         for (var ty = 0; ty < L.h; ty++) {
@@ -607,7 +607,7 @@ clanker.registerView({
       // diagonal is the one thing on this floor that is not pixel art. Held
       // out past the sprite's shoulder, because a handle crossing his torso
       // is a dark line on dark cloth and disappears.
-      ctx2d.fillStyle = cssVar("--fg-muted", "#4f534b");
+      ctx2d.fillStyle = cssVar("--fg-muted", "#605e5c");
       var x0 = cx + janitor.dir * 15, x1 = cx + janitor.dir * 9;
       for (var s = 0; s <= 12; s++) {
         var t = s / 12;
@@ -616,7 +616,7 @@ clanker.registerView({
           Math.round((foot + (hand - foot) * t) / 2) * 2,
           2, 2);
       }
-      ctx2d.fillStyle = cssVar("--ok", "#117a3a");
+      ctx2d.fillStyle = cssVar("--ok", "#107c10");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
       if (spinning || squashed) ctx2d.restore();
       if (janitor.dragging) dragShadow(px + TILE / 2, py);
@@ -695,13 +695,13 @@ clanker.registerView({
       var L = o.layout;
       var wx = ox + L.whiteboard.x * TILE;
       var wy = oy + L.whiteboard.y * TILE;
-      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
+      ctx2d.fillStyle = cssVar("--surface", "#ffffff");
       ctx2d.fillRect(wx, wy, L.whiteboard.w * TILE, L.whiteboard.h * TILE);
-      ctx2d.strokeStyle = cssVar("--border", "#7b7971");
+      ctx2d.strokeStyle = cssVar("--border", "#8a8886");
       ctx2d.lineWidth = 2;
       ctx2d.strokeRect(wx + 1, wy + 1, L.whiteboard.w * TILE - 2, L.whiteboard.h * TILE - 2);
       // Tray along the bottom, so it reads as a whiteboard and not a window.
-      ctx2d.fillStyle = cssVar("--rule", "#cdc9bf");
+      ctx2d.fillStyle = cssVar("--rule", "#e1dfdd");
       ctx2d.fillRect(wx + 2, wy + L.whiteboard.h * TILE - 4, L.whiteboard.w * TILE - 4, 3);
       // Goals as lines of "writing": the text itself is in the Goals view.
       // Each line carries an IEC lamp for its status — green working (and
@@ -710,16 +710,16 @@ clanker.registerView({
       // Those are the cabinet's own signal tokens, so a lamp here means what
       // it means everywhere else; they were a borrowed green/amber/red whose
       // three reds and two greens appeared nowhere in the palette.
-      ctx2d.fillStyle = cssVar("--fg-muted", "#4f534b");
+      ctx2d.fillStyle = cssVar("--fg-muted", "#605e5c");
       ctx2d.font = "9px ui-monospace, monospace";
       var live = goals.filter(function (g) { return g.status === "active"; }).length;
       ctx2d.fillText("GOALS" + (live ? " · " + live + " live" : ""), wx + 8, wy + 11);
       var now2 = performance.now();
       goals.slice(0, 4).forEach(function (g, i) {
         var ly = wy + 20 + i * 12;
-        var lamp = g.status === "active" ? cssVar("--ok", "#117a3a")
+        var lamp = g.status === "active" ? cssVar("--ok", "#107c10")
           : g.status === "review" ? cssVar("--warn", "#8a6d00")
-            : cssVar("--danger", "#a72920");
+            : cssVar("--danger", "#a4262c");
         // The breath: a working goal's lamp swells, unless motion is reduced.
         var r = 2.5;
         if (g.status === "active" && !reduced) r += 0.8 * Math.abs(Math.sin(now2 / 600 + i));
@@ -728,7 +728,7 @@ clanker.registerView({
         ctx2d.arc(wx + 10, ly + 1, r, 0, Math.PI * 2);
         ctx2d.fill();
         var lineW = Math.min(L.whiteboard.w * TILE - 24, 20 + (hashString(g.objective || "") % 40));
-        ctx2d.fillStyle = g.status === "active" ? cssVar("--accent", "#1d5c9e") : cssVar("--rule", "#cdc9bf");
+        ctx2d.fillStyle = g.status === "active" ? cssVar("--accent", "#0072c9") : cssVar("--rule", "#e1dfdd");
         ctx2d.fillRect(wx + 16, ly, lineW, 3);
       });
     }
@@ -795,17 +795,17 @@ clanker.registerView({
       var cy = oy + 0.55 * TILE;
       var ringing = performance.now() < o.ringUntil;
       var jx = ringing && !reduced ? Math.round(Math.sin(performance.now() / 30) * 2) : 0;
-      ctx2d.fillStyle = cssVar("--danger", "#a72920");
+      ctx2d.fillStyle = cssVar("--danger", "#a4262c");
       ctx2d.fillRect(cx + jx - 7, cy - 9, 4, 3); // bells
       ctx2d.fillRect(cx + jx + 3, cy - 9, 4, 3);
       ctx2d.beginPath();
       ctx2d.arc(cx + jx, cy, 7, 0, Math.PI * 2);
       ctx2d.fill();
-      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
+      ctx2d.fillStyle = cssVar("--surface", "#ffffff");
       ctx2d.beginPath();
       ctx2d.arc(cx + jx, cy, 5, 0, Math.PI * 2);
       ctx2d.fill();
-      ctx2d.strokeStyle = cssVar("--fg", "#1b1c18");
+      ctx2d.strokeStyle = cssVar("--fg", "#242424");
       ctx2d.lineWidth = 1;
       var d = new Date();
       var mins = d.getMinutes() / 60 * Math.PI * 2 - Math.PI / 2;
@@ -817,7 +817,7 @@ clanker.registerView({
       ctx2d.lineTo(cx + jx + Math.cos(hrs) * 2.5, cy + Math.sin(hrs) * 2.5);
       ctx2d.stroke();
       if (ringing) {
-        ctx2d.fillStyle = cssVar("--danger", "#a72920");
+        ctx2d.fillStyle = cssVar("--danger", "#a4262c");
         ctx2d.font = "bold 10px " + cssVar("--sans", "ui-sans-serif, system-ui, sans-serif");
         ctx2d.fillText("RRRING", cx - 18, cy - 13);
       }
@@ -831,12 +831,12 @@ clanker.registerView({
       var roomRight = ox + tilesWide * TILE;
       var bx = px + TILE * 0.75;
       if (bx + w > roomRight) bx = Math.max(ox + 4, px - w);
-      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
+      ctx2d.fillStyle = cssVar("--surface", "#ffffff");
       ctx2d.fillRect(bx, py - 18, w, 16);
-      ctx2d.strokeStyle = cssVar("--border", "#7b7971");
+      ctx2d.strokeStyle = cssVar("--border", "#8a8886");
       ctx2d.lineWidth = 1;
       ctx2d.strokeRect(bx + 0.5, py - 17.5, w - 1, 15);
-      ctx2d.fillStyle = cssVar("--fg", "#1b1c18");
+      ctx2d.fillStyle = cssVar("--fg", "#242424");
       ctx2d.fillText(text, bx + 5, py - 6);
     }
 

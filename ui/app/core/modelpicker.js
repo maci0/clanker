@@ -200,7 +200,7 @@ export var PICKER_SEARCH_CLASS = "m-0 w-full box-border flex-none rounded-none b
 export var PICKER_LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain p-2";
 export var PICKER_EMPTY_CLASS = "m-4 text-center font-mono text-sm text-fg-muted";
 export var PICKER_GROUP_CLASS = "mt-1 first:mt-0";
-export var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-mono text-2xs font-semibold uppercase tracking-label text-fg-muted";
+export var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-sans text-2xs font-semibold text-fg-muted";
 export var PICKER_OPTION_BASE = "m-0 flex w-full cursor-pointer gap-0.5 rounded-plate border border-transparent bg-transparent px-3 py-1 text-start font-sans text-fg shadow-none hover:border-rule hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 data-[active=true]:border-rule data-[active=true]:bg-surface-2 data-[current=true]:border-[color-mix(in_srgb,var(--accent)_35%,var(--rule))] data-[current=true]:bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface-2))]";
 export var PICKER_OPTION_CLASS = PICKER_OPTION_BASE + " flex-col items-start";
 export var PICKER_OPTION_LABEL_CLASS = "text-sm font-semibold text-fg";

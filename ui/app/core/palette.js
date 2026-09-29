@@ -21,7 +21,7 @@ var paletteIndex = 0;
    directly by a suite that has no page import map, so reaching into ui.js
    (which imports the vendored signals module) would make it unimportable. */
 export const PALETTE_ITEM_CLASS = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-selected:border aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-medium";
-export const PALETTE_KIND_CLASS = "min-w-18 flex-none text-sm uppercase tracking-label text-fg-muted";
+export const PALETTE_KIND_CLASS = "min-w-18 flex-none text-sm text-fg-muted";
 export const PALETTE_LABEL_CLASS = "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
 
 export function paletteEntries() {

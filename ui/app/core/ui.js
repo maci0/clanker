@@ -355,8 +355,8 @@ export var VIEW_CLASS = "[&:focus]:outline-none [&:focus-visible]:-outline-offse
 /* The jump palette's rows: a kind stamp, a label, and the empty line that
    stands in for no match. app.js builds the prompt and action rows, palette.js
    the view and conversation ones. */
-export var paletteItem = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-selected:border aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-medium";
-export var paletteKind = "min-w-18 flex-none text-sm uppercase tracking-label text-fg-muted";
+export var paletteItem = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-[current=page]:border aria-[current=page]:border-rule aria-[current=page]:bg-surface-2 aria-[current=page]:font-medium";
+export var paletteKind = "min-w-18 flex-none text-sm text-fg-muted";
 export var paletteLabel = "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
 
 /* The gauge chip: a reading in mono behind a lamp, worn by the masthead's
@@ -368,13 +368,13 @@ export var chip = "chip inline-flex items-center gap-1 [&::before]:hidden rounde
 /* The rail's channel tab: the eight static ones in the markup and every tab a
    plugin registers wear one class list, so the strip cannot drift into two
    looks. The engaged-channel lamp is a component rule in the sheet. */
-export var RAIL_TAB_CLASS = "rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none";
+export var RAIL_TAB_CLASS = "rail-tab relative flex min-h-10 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-[current=page]:border-rule aria-[current=page]:bg-surface-2 aria-[current=page]:font-semibold aria-[current=page]:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none";
 
 /* The tool-row family: the Tools view, the Fleet roster and the run header
    all show a row of name, description and tags, so the strings live here
    rather than in each of them. */
 export var toolRow = {
-  group: "mt-4 mb-1 flex w-full cursor-pointer items-center gap-2 border-0 border-t border-rule bg-transparent px-0 py-1 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg first:mt-0 first:border-t-0",
+  group: "mt-4 mb-1 flex w-full cursor-pointer items-center gap-2 border-0 border-t border-rule bg-transparent px-0 py-1 text-left font-sans text-xs font-semibold text-fg-muted hover:text-fg first:mt-0 first:border-t-0",
   groupCaret: "w-[1em] flex-none",
   groupName: "min-w-0 flex-1 truncate",
   groupCount: "font-mono tabular-nums",

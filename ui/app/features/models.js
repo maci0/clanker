@@ -9,14 +9,14 @@ import { paintTomlInto, reducedMotion } from "../core/vendor.js";
    core/usage.js spells them: the two tables are one presentation. */
 var WRAP_CLASS = "overflow-x-auto";
 var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
-var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted uppercase tracking-label whitespace-nowrap";
+var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted whitespace-nowrap";
 var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
 var NUM_CLASS = "text-right tabular-nums";
 var EMPTY_CLASS = "mt-4 font-mono text-sm text-fg-muted";
 /* A variant row is indented under the row it belongs to, and hidden until its
    group is unfolded. */
 var VARIANT_ROW_CLASS = "hidden [&>td:nth-child(3)]:pl-6";
-var UNCALLABLE_CLASS = "opacity-55";
+var UNCALLABLE_CLASS = "text-fg-muted";
 var ENABLED_TOGGLE_CLASS = "inline-grid w-8 min-h-8 cursor-pointer place-items-center [&_input]:m-0 [&_input]:h-4 [&_input]:w-4 [&_input]:accent-accent has-[:focus-visible]:rounded-plate-sm has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent has-[:focus-visible]:outline-offset-1";
 var GROUP_TOGGLE_CLASS = "secondary min-h-7 cursor-pointer rounded-none border-0 bg-transparent px-0 py-0.5 font-semibold text-fg hover:text-accent";
 var SNIPPET_BTN_CLASS = "whitespace-nowrap";
@@ -41,7 +41,16 @@ function table(headers, rows) {
   headers.forEach(function (h, i) {
     var th = document.createElement("th");
     th.className = i === 0 ? TH_CLASS : TH_CLASS + " " + NUM_CLASS;
-    th.textContent = h;
+    // A column with no visible heading still names itself to a screen reader.
+    if (h.sr) {
+      const label = document.createElement("span");
+
+      label.className = "sr-only";
+      label.textContent = h.sr;
+      th.append(label);
+    } else {
+      th.textContent = h;
+    }
     hr.appendChild(th);
   });
   thead.appendChild(hr);
@@ -449,7 +458,7 @@ function loadConfigured() {
           return p.name + ": " + providerUnusableReason(p);
         }).join("; ") + ". Still listed below; the chat picker hides them."));
       }
-      box.appendChild(table(["enabled", "provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
+      box.appendChild(table(["enabled", "provider", "model", "category", "ctx", "in $/1M", "out $/1M", { sr: "Default" }, { sr: "Actions" }], rows));
       // Fold pass: hide variant rows behind their group's toggle row, and
       // dim the rows of a provider the server marked not callable.
       var trs = box.querySelectorAll("tbody tr");
@@ -834,7 +843,7 @@ function loadLive() {
         status("The provider listed no models.", "live");
         return;
       }
-      out.appendChild(table(["id", "ctx", ""], rows));
+      out.appendChild(table(["id", "ctx", { sr: "Actions" }], rows));
       status(rows.length + " models from " + sel.value + ".", "live");
     })
     .catch(function (err) {
@@ -895,7 +904,7 @@ function searchCatalog() {
         status("No catalog entry matches \"" + query + "\".", "catalog");
         return;
       }
-      out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", ""], rows));
+      out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", { sr: "Actions" }], rows));
       status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.", "catalog");
       if (d.truncated) {
         out.appendChild(empty("Showing the first " + rows.length + " matches; narrow the query for more specific results."));

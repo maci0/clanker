@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 227 48" width="227" height="48" role="img" aria-label="clanker">
 <g transform="scale(1.5)">
 <defs>
-  <radialGradient id="dome" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/><stop offset="0.6" stop-color="#121411" stop-opacity="0"/><stop offset="1" stop-color="#121411" stop-opacity="0.5"/></radialGradient>
+  <radialGradient id="dome" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/><stop offset="0.6" stop-color="#1b1a19" stop-opacity="0"/><stop offset="1" stop-color="#1b1a19" stop-opacity="0.5"/></radialGradient>
 </defs>
-<rect width="32" height="32" rx="6" fill="#171916"/>
-<rect x="2.75" y="2.75" width="26.5" height="26.5" rx="4" fill="none" stroke="#6e726c" stroke-width="1.5"/>
-<circle cx="16" cy="14" r="7.25" fill="#121411"/>
-<circle cx="16" cy="14" r="6" fill="#117a3a"/>
+<rect width="32" height="32" rx="6" fill="#1f1f1f"/>
+<rect x="2.75" y="2.75" width="26.5" height="26.5" rx="4" fill="none" stroke="#8a8886" stroke-width="1.5"/>
+<circle cx="16" cy="14" r="7.25" fill="#1b1a19"/>
+<circle cx="16" cy="14" r="6" fill="#107c10"/>
 <circle cx="16" cy="14" r="6" fill="url(#dome)"/>
-<rect x="10" y="24" width="12" height="2.5" rx="1" fill="#a3aaa1"/>
+<rect x="10" y="24" width="12" height="2.5" rx="1" fill="#c8c6c4"/>
 </g>
-<path d="M13.14 12.87A8 8 0 1 0 13.14 25.13M20.14 1V27M43.14 19A8 8 0 1 0 27.14 19A8 8 0 1 0 43.14 19M43.14 11V27M50.14 11V27M50.14 19A8 8 0 0 1 66.14 19V27M73.14 1V27M85.64 11L73.14 21.5M78.14 17.5L86.14 27M93.14 19H109.14A8 8 0 1 0 106.8 24.66M116.14 11V27M116.14 18.5A7.5 7.5 0 0 1 123.64 11H126.14" transform="translate(66.1875 4) scale(1.25)" fill="none" stroke="#e8eae5" stroke-width="3.5" stroke-linecap="square"/>
+<path d="M13.14 12.87A8 8 0 1 0 13.14 25.13M20.14 1V27M43.14 19A8 8 0 1 0 27.14 19A8 8 0 1 0 43.14 19M43.14 11V27M50.14 11V27M50.14 19A8 8 0 0 1 66.14 19V27M73.14 1V27M85.64 11L73.14 21.5M78.14 17.5L86.14 27M93.14 19H109.14A8 8 0 1 0 106.8 24.66M116.14 11V27M116.14 18.5A7.5 7.5 0 0 1 123.64 11H126.14" transform="translate(66.1875 4) scale(1.25)" fill="none" stroke="#faf9f8" stroke-width="3.5" stroke-linecap="square"/>
 </svg>

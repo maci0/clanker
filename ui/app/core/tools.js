@@ -32,12 +32,12 @@ var SKILL_DESC_CLASS = "mt-1 font-sans text-sm text-fg-muted wrap-anywhere";
 var TOOL_CONFIG_CLASS = "my-1 basis-full";
 var TOOL_CONFIG_SUMMARY_CLASS = "disclosure-caret cursor-pointer list-none py-0.5 font-mono text-sm text-fg-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 var TOOL_CONFIG_BODY_CLASS = "ml-4 flex flex-wrap items-end gap-x-2 gap-y-2 border-l border-dashed border-rule pl-3 pt-1";
-var TOOL_FIELD_CLASS = "flex flex-col gap-1 [&_input]:min-h-8 [&_input]:min-w-32 [&_input]:rounded-plate-sm [&_input]:border [&_input]:border-border [&_input]:bg-surface [&_input]:px-2 [&_input]:py-0.5 [&_input]:font-mono [&_input]:text-sm [&_input]:text-fg [&_input:focus]:border-accent [&_label]:m-0 [&_label]:text-sm [&_label]:uppercase [&_label]:tracking-label [&_label]:text-fg-muted";
+var TOOL_FIELD_CLASS = "flex flex-col gap-1 [&_input]:min-h-8 [&_input]:min-w-32 [&_input]:rounded-plate-sm [&_input]:border [&_input]:border-border [&_input]:bg-surface [&_input]:px-2 [&_input]:py-0.5 [&_input]:font-mono [&_input]:text-sm [&_input]:text-fg [&_input:focus]:border-accent [&_label]:m-0 [&_label]:text-sm [&_label]:text-fg-muted";
 var TOOL_CONFIG_SAVE_CLASS = "min-h-8 cursor-pointer rounded-plate-sm border border-border bg-surface px-3 py-0.5 font-mono text-sm font-semibold text-fg-muted enabled:hover:border-accent enabled:hover:text-fg";
 var TOOL_TOGGLE_CLASS = "min-h-8 cursor-pointer rounded-plate-sm border border-border bg-surface px-3 py-0.5 font-mono text-sm font-semibold text-fg-muted shadow-[var(--bevel-raised)] enabled:hover:border-accent enabled:hover:text-fg enabled:active:translate-y-px enabled:active:shadow-[var(--bevel-pressed)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 motion-reduce:active:transform-none data-[on=true]:border-ok data-[on=true]:text-ok data-[on=true]:before:mr-2 data-[on=true]:before:inline-block data-[on=true]:before:h-[0.5em] data-[on=true]:before:w-[0.5em] data-[on=true]:before:rounded-full data-[on=true]:before:bg-lamp-dome data-[on=true]:before:align-middle data-[on=true]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[on=true]:before:content-['']";
 var TOOL_DETAIL_DESC_CLASS = "mt-1 mb-3 max-w-measure font-mono text-sm text-fg wrap-anywhere";
 var TOOL_DETAIL_LLM_DESC_CLASS = "-mt-1 mb-3 max-w-measure font-mono text-xs text-fg-muted wrap-anywhere [&_strong]:font-bold [&_strong]:text-fg-muted";
-var TOOL_DETAIL_H_CLASS = "mt-3 mb-1 font-mono text-sm font-bold uppercase tracking-label text-fg-muted";
+var TOOL_DETAIL_H_CLASS = "mt-3 mb-1 font-sans text-sm font-bold text-fg-muted";
 var TOOL_PARAMS_CLASS = "m-0 grid grid-cols-[10rem_1fr] gap-x-4 gap-y-0.5 font-mono text-sm max-[40rem]:grid-cols-1 [&_dd]:m-0 [&_dd]:text-fg-muted [&_dd]:wrap-anywhere [&_dt]:font-bold [&_dt]:normal-case [&_dt]:tracking-normal [&_dt]:text-fg [&_dt]:wrap-anywhere max-[40rem]:[&_dt]:mt-2";
 var TOOL_REQ_CLASS = "font-normal text-danger";
 var TOOL_NONE_CLASS = "italic";
@@ -475,6 +475,7 @@ function loadSkills() {
         check.type = "checkbox";
         check.checked = sk.enabled !== false;
         check.title = check.checked ? "Included in the system prompt" : "Off: not sent to the model";
+        check.setAttribute("aria-label", `Include ${sk.name} in the system prompt`);
         check.addEventListener("change", function () {
           check.disabled = true;
           fetch("/api/skills", {

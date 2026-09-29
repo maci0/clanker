@@ -82,17 +82,17 @@ control boundary). A FAIL here is a defect in the token, not an exception.
 <!-- contrast:start -->
 | Pair | Used for | Day | Night | AA minimum |
 |---|---|---|---|---|
-| `--fg` on `--bg` | body text on the page | 12.15:1 pass | 14.60:1 pass | 4.5:1 |
-| `--fg` on `--surface` | body text on a panel | 14.39:1 pass | 12.63:1 pass | 4.5:1 |
-| `--fg` on `--surface-2` | body text in a well | 12.86:1 pass | 10.76:1 pass | 4.5:1 |
-| `--fg-muted` on `--bg` | metadata on the page | 5.57:1 pass | 7.43:1 pass | 4.5:1 |
-| `--fg-muted` on `--surface` | metadata on a panel | 6.60:1 pass | 6.43:1 pass | 4.5:1 |
-| `--accent-text` on `--surface` | links on a panel | 5.73:1 pass | 7.45:1 pass | 4.5:1 |
-| `--on-accent` on `--accent` | primary button label | 6.83:1 pass | 7.41:1 pass | 4.5:1 |
-| `--ok` on `--surface` | healthy state text | 4.56:1 pass | 9.39:1 pass | 4.5:1 |
-| `--warn-text` on `--surface` | warning text | 6.23:1 pass | 9.94:1 pass | 4.5:1 |
-| `--danger` on `--surface` | fault text | 5.92:1 pass | 5.61:1 pass | 4.5:1 |
-| `--border` on `--surface` | control boundary (non-text) | 3.66:1 pass | 3.12:1 pass | 3:1 |
+| `--fg` on `--bg` | body text on the page | 14.24:1 pass | 15.67:1 pass | 4.5:1 |
+| `--fg` on `--surface` | body text on a panel | 15.52:1 pass | 13.99:1 pass | 4.5:1 |
+| `--fg` on `--surface-2` | body text in a well | 13.88:1 pass | 12.35:1 pass | 4.5:1 |
+| `--fg-muted` on `--bg` | metadata on the page | 5.92:1 pass | 9.68:1 pass | 4.5:1 |
+| `--fg-muted` on `--surface` | metadata on a panel | 6.46:1 pass | 8.64:1 pass | 4.5:1 |
+| `--accent-text` on `--surface` | links on a panel | 5.98:1 pass | 6.96:1 pass | 4.5:1 |
+| `--on-accent` on `--accent` | primary button label | 4.94:1 pass | 6.57:1 pass | 4.5:1 |
+| `--ok` on `--surface` | healthy state text | 5.37:1 pass | 9.02:1 pass | 4.5:1 |
+| `--warn-text` on `--surface` | warning text | 7.42:1 pass | 9.56:1 pass | 4.5:1 |
+| `--danger` on `--surface` | fault text | 7.26:1 pass | 5.39:1 pass | 4.5:1 |
+| `--border` on `--surface` | control boundary (non-text) | 3.53:1 pass | 4.17:1 pass | 3:1 |
 <!-- contrast:end -->
 
 ## Type

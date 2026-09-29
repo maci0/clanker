@@ -323,7 +323,7 @@ export function renderBoard(next) {
    class, because the class is what the port keeps rewriting. */
 var COL_CLASS = "group flex-none basis-[272px] min-w-[272px] max-w-[272px] flex max-h-[calc(100vh-14rem)] flex-col rounded-plate-lg bg-surface-2 pt-0 transition-colors transition-shadow transition-opacity duration-200 data-[collapsed=true]:basis-[40px] data-[collapsed=true]:min-w-[40px] data-[collapsed=true]:max-w-[40px] data-[collapsed=true]:cursor-pointer data-[collapsed=true]:opacity-80 data-[collapsed=true]:hover:opacity-100 data-[drop=true]:bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))] data-[drop=true]:shadow-[inset_0_0_0_2px_var(--accent)] data-[over=true]:shadow-[inset_0_0_0_1.5px_var(--warn)] max-[640px]:basis-full max-[640px]:min-w-0 max-[640px]:max-w-none";
 var COL_HEAD_CLASS = "flex cursor-pointer select-none items-center justify-between gap-2 px-3 pb-2 pt-3 font-sans text-sm font-semibold tracking-wide group-data-[collapsed=true]:justify-center group-data-[collapsed=true]:px-2 group-data-[collapsed=true]:py-3";
-var COL_TITLE_CLASS = "min-w-0 flex-1 text-sm font-bold uppercase tracking-label text-fg group-data-[collapsed=true]:overflow-hidden group-data-[collapsed=true]:text-ellipsis group-data-[collapsed=true]:whitespace-nowrap group-data-[collapsed=true]:[writing-mode:vertical-rl] group-data-[collapsed=true]:rotate-180";
+var COL_TITLE_CLASS = "min-w-0 flex-1 text-sm font-bold text-fg group-data-[collapsed=true]:overflow-hidden group-data-[collapsed=true]:text-ellipsis group-data-[collapsed=true]:whitespace-nowrap group-data-[collapsed=true]:[writing-mode:vertical-rl] group-data-[collapsed=true]:rotate-180";
 var COL_COUNT_CLASS = "tabular-nums text-fg-muted data-[over=true]:text-warn-text";
 var COL_HEAD_ACTIONS_CLASS = "flex items-center gap-1";
 var COL_ACTIONS_CLASS = "flex items-center gap-1 group-data-[collapsed=true]:hidden";
@@ -338,7 +338,7 @@ var ADD_CANCEL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-p
 var LANE_CONTROL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 /* The board's detail rows, goal row and subtask checklist: one row vocabulary
    shared by the card detail, the goal card and the checklist tree. */
-var DETAIL_HEAD_CLASS = "mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted first:mt-3";
+var DETAIL_HEAD_CLASS = "mt-4 mb-1 font-sans text-xs font-semibold text-fg-muted first:mt-3";
 var DETAIL_ROW_CLASS = "flex min-w-0 flex-1 basis-full items-center gap-x-3 gap-y-2 [&_input[type=date]]:min-w-0 [&_input[type=date]]:flex-1 [&_input[type=text]]:min-w-0 [&_input[type=text]]:flex-1 [&_label]:flex-none [&_label]:basis-22 [&_label]:font-sans [&_label]:text-sm [&_label]:font-medium [&_label]:text-fg-muted [&_select]:min-w-0 [&_select]:flex-1 [&_textarea]:min-w-0 [&_textarea]:flex-1";
 var GOAL_ROW_CLASS = "flex min-w-0 flex-col items-stretch gap-1 [&_.secondary]:w-full [&_input[type=number]]:box-border [&_input[type=number]]:w-full [&_input[type=number]]:min-w-0";
 var CHECKLIST_ADD_CLASS = DETAIL_ROW_CLASS + " [&_button]:flex-none [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-auto";
@@ -350,7 +350,7 @@ var CHECKLIST_DEP_ADD_CLASS = "mb-1 ml-4 flex gap-1 [&_select]:min-w-0 [&_select
 
 var MENU_BTN_CLASS = "secondary min-w-auto rounded-plate px-1 text-base leading-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 var MENU_CLASS = "absolute right-0 top-full z-50 hidden min-w-[220px] rounded-plate-lg border border-border bg-surface px-0 py-1 shadow-[var(--lift)] data-[open=true]:block";
-var MENU_TITLE_CLASS = "px-3 py-2 text-sm font-bold uppercase tracking-label text-fg-muted";
+var MENU_TITLE_CLASS = "px-3 py-2 text-sm font-bold text-fg-muted";
 var MENU_SEP_CLASS = "my-px border-0 border-t border-border";
 var MENU_ITEM_CLASS = "block w-full cursor-pointer rounded-none border-0 bg-transparent px-3 py-2 text-left text-sm text-fg enabled:cursor-pointer enabled:hover:bg-surface-hover enabled:hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 disabled:cursor-default";
 var MENU_BACKDROP_CLASS = "fixed inset-0 z-40";
@@ -689,7 +689,7 @@ var LABEL_NAME_ROW_CLASS = "col-span-full flex gap-1 py-1";
 var LABEL_NAME_INPUT_CLASS = "min-w-0 flex-1 rounded-plate-lg border border-rule bg-surface px-2 py-0.5 text-sm text-fg";
 var LABEL_NAME_CONFIRM_CLASS = "flex-none cursor-pointer rounded-plate-lg border-0 bg-accent px-2 py-0.5 text-sm text-on-accent";
 var WIP_BANNER_CLASS = "mx-2 my-1 rounded-plate border border-warn bg-[color-mix(in_srgb,var(--warn)_12%,var(--surface))] px-2 py-1 text-center text-xs font-semibold text-warn-text";
-var DETAIL_META_LABEL_CLASS = "text-2xs font-semibold uppercase tracking-label text-fg-muted";
+var DETAIL_META_LABEL_CLASS = "text-2xs font-semibold text-fg-muted";
 var DETAIL_META_VALUE_CLASS = "inline-flex items-center gap-1 rounded-plate-lg bg-surface-2 px-2 py-1 text-sm text-fg";
 var DETAIL_DESC_AREA_CLASS = "max-h-[300px] min-h-20 w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-3 font-sans text-sm leading-normal transition-colors focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[var(--ring)]";
 var ACTIVITY_CLASS = "flex flex-col gap-0";
@@ -1284,7 +1284,7 @@ var DETAIL_HEADER_COL_CLASS = "ml-2 text-sm text-fg-muted";
 var DETAIL_LAYOUT_CLASS = "grid grid-cols-[1fr_168px] gap-4 px-4 pb-4 pt-3";
 var DETAIL_MAIN_CLASS = "flex min-w-0 flex-col gap-3";
 var DETAIL_SIDEBAR_CLASS = "flex flex-col gap-2";
-var DETAIL_SIDEBAR_TITLE_CLASS = "mb-px text-xs font-semibold uppercase tracking-label text-fg-muted";
+var DETAIL_SIDEBAR_TITLE_CLASS = "mb-px text-xs font-semibold text-fg-muted";
 var DETAIL_SIDEBAR_BTN_CLASS = "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-plate-lg border border-transparent bg-surface-2 px-3 py-1 text-left text-sm text-fg transition duration-150 hover:translate-x-px hover:bg-[color-mix(in_srgb,var(--fg)_12%,var(--surface-2))] focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-accent";
 var DETAIL_SECTION_HEAD_CLASS = "mb-2 flex items-center gap-2 text-base font-semibold text-fg [&_.icon]:text-base [&_.icon]:opacity-60";
 var DETAIL_META_CLASS = "mb-2 flex flex-wrap gap-2";

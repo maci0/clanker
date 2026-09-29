@@ -1,6 +1,6 @@
 import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
-import { icon as iconFn } from "./core/icons.js";
+import { decorateRailTab, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
@@ -721,11 +721,10 @@ function applyRailCollapsed(collapsed) {
       applyRailCollapsed(!cur);
     });
   }
-  // populate data-short for collapsed rail labels from existing tab text
-  document.querySelectorAll("#rail [role=tab]").forEach(function (t) {
-    var txt = (t.textContent || "").trim();
-    if (!t.getAttribute("data-short") && txt) t.setAttribute("data-short", txt.slice(0, 2));
-  });
+  // Each rail tab wears its icon, which is all the collapsed rail shows.
+  for (const tab of document.querySelectorAll("#rail .rail-tab")) {
+    decorateRailTab(tab);
+  }
 })();
 
 /* Phone More hosts the same Fork/Rename/Delete nodes and the transcript
@@ -1583,13 +1582,13 @@ var RAIL_ITEM_CLASS = "block min-h-8 w-full cursor-pointer rounded-plate border 
 var RAIL_ITEM_TITLE_CLASS = "block truncate";
 var RAIL_ITEM_META_CLASS = "block tabular-nums text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))]";
 var RAIL_PIN_CLASS = "min-h-8 min-w-8 flex-none cursor-pointer rounded-plate-sm border-0 bg-transparent px-2 font-mono text-sm text-fg-muted shadow-none hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-pressed:text-accent data-[on=true]:text-accent";
-var RAIL_GROUP_CLASS = "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg";
+var RAIL_GROUP_CLASS = "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold text-fg-muted hover:text-fg";
 var RAIL_GROUP_CARET_CLASS = "w-[1em] flex-none";
 var RAIL_GROUP_NAME_CLASS = "flex-1 truncate";
 var RAIL_GROUP_COUNT_CLASS = "font-mono tabular-nums";
 var RAIL_EMPTY_CLASS = "font-mono text-sm text-fg-muted";
 var RAIL_EMPTY_ACTION_CLASS = "inline min-h-0 min-w-0 cursor-pointer border-0 bg-transparent p-0 [font:inherit] text-accent-text underline decoration-dotted underline-offset-2 hover:text-accent focus-visible:text-accent";
-var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted in-aria-selected:text-accent-text";
+var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted";
 
 /* The idle chat's job buttons: one per saved prompt, sized to a thumb. */
 var SUGGESTION_CLASS = "min-h-11 cursor-pointer rounded-plate border border-border bg-surface px-4 py-2 text-start font-sans text-sm leading-snug text-fg shadow-none hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
@@ -2460,7 +2459,7 @@ function paintRunMetrics() {
     el.runMetrics.textContent = "";
     cells.forEach(function (p) {
       var s = document.createElement("span");
-      s.className = "whitespace-nowrap" + (p.key === "scope" ? " font-bold uppercase tracking-label" : "");
+      s.className = "whitespace-nowrap" + (p.key === "scope" ? "font-bold" : "");
       s.setAttribute("data-m", p.key);
       s.textContent = p.text;
       el.runMetrics.appendChild(s);
@@ -2535,7 +2534,7 @@ el.form.addEventListener("submit", function (e) {
        so a reader scanning back knows this answer never touched anything. */
     turn.root.setAttribute("data-plan", "true");
     var planBadge = document.createElement("span");
-    planBadge.className = "ml-1 rounded-plate-sm border border-accent px-2 py-0.5 font-mono text-xs uppercase tracking-label whitespace-nowrap text-accent-text";
+    planBadge.className = "ml-1 rounded-plate-sm border border-accent px-2 py-0.5 font-sans text-xs whitespace-nowrap text-accent-text";
     planBadge.textContent = "plan";
     var youHead = turn.root.querySelector(".turn-you-head");
     (youHead || turn.root.querySelector("[data-turn=you]")).appendChild(planBadge);
@@ -3338,10 +3337,10 @@ var CHAT_REACTION_CLASS = "cursor-pointer rounded-capsule border border-rule bg-
 var CHAT_THREAD_BAR_CLASS = "mt-2 flex flex-wrap items-center gap-2 text-sm [&_button]:min-h-6 [&_button]:rounded-capsule [&_button]:px-2 [&_button]:text-xs";
 var CHAT_THREAD_LIST_CLASS = "mt-1 flex basis-full flex-col gap-0.5 pl-3";
 var CHAT_THREAD_REPLY_CLASS = "py-0.5 text-sm text-fg";
-var CHAT_DAY_CLASS = "mt-2 flex items-center gap-3 border-t-0 pt-2 pb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted before:h-px before:flex-1 before:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] before:content-[''] after:h-px after:flex-1 after:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] after:content-['']";
+var CHAT_DAY_CLASS = "mt-2 flex items-center gap-3 border-t-0 pt-2 pb-1 font-sans text-xs font-semibold text-fg-muted before:h-px before:flex-1 before:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] before:content-[''] after:h-px after:flex-1 after:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] after:content-['']";
 var CHAT_UNREAD_CLASS = "my-1 flex items-center gap-3 py-1 before:h-px before:flex-1 before:bg-danger before:content-[''] after:h-px after:flex-1 after:bg-danger after:content-['']";
 var CHAT_EDITED_CLASS = "text-xs italic text-fg-muted";
-var CHAT_UNREAD_LABEL_CLASS = "font-sans text-xs font-bold whitespace-nowrap text-danger uppercase tracking-label";
+var CHAT_UNREAD_LABEL_CLASS = "font-sans text-xs font-bold whitespace-nowrap text-danger";
 var CHAT_EDIT_INPUT_CLASS = "w-full rounded-plate-lg border border-accent bg-surface px-2 py-1 text-sm text-fg [font:inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 var TYPING_INDICATOR_CLASS = "min-h-5 flex-none px-4 py-1 text-xs text-fg-muted";
 var TYPING_DOTS_CLASS = "ml-1 inline-flex gap-0.5 align-middle";
@@ -4578,9 +4577,11 @@ function showView(name, focusPanel) {
     var panel = document.getElementById("view-" + v);
     var on = v === name;
     panel.hidden = !on;
-    tab.setAttribute("aria-selected", String(on));
-    // Roving tabindex: the tablist is one stop, arrows move within it.
-    tab.tabIndex = on ? 0 : -1;
+    if (on) {
+      tab.setAttribute("aria-current", "page");
+    } else {
+      tab.removeAttribute("aria-current");
+    }
   });
   // Preserve callgraph filter state in the URL (shareable/bookmarkable) — search/kind from either deep link or active graph
   var _qs = []; try{ if(deepSearch) _qs.push("search="+encodeURIComponent(deepSearch)); if(deepKind) _qs.push("kind="+encodeURIComponent(deepKind)); }catch(_){}
@@ -4682,7 +4683,7 @@ function showView(name, focusPanel) {
    whatever `VIEWS` happened to hold before it and `End` selected the
    last-registered plugin rather than the bottom tab. */
 function railOrder() {
-  var tabs = document.querySelectorAll("#rail [role='tab'][data-view]");
+  var tabs = document.querySelectorAll("#rail .rail-tab[data-view]");
   var out = [];
   for (var i = 0; i < tabs.length; i++) {
     var v = tabs[i].getAttribute("data-view");
@@ -4695,9 +4696,8 @@ function wireTab(tab, i) {
   var v = tab.getAttribute("data-view");
   tab.addEventListener("click", function () { showView(v, false); });
   tab.addEventListener("keydown", function (e) {
-    // The tablist is a column now, so it answers to Up and Down. Left and
-    // Right keep working: a tablist that ignored them would be a regression
-    // for anyone who learned them here.
+    // The rail is a column, so it answers to Up and Down. Left and Right keep
+    // working for anyone who learned them when it was a row.
     var step = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 :
       (e.key === "ArrowUp" || e.key === "ArrowLeft") ? -1 : 0;
     if (!step && e.key !== "Home" && e.key !== "End") return;

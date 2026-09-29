@@ -201,7 +201,10 @@ test("eager JS stays inside its weight budget", function () {
   // them, which is what ui/plugins/capabilities.test.mjs now pins. Paying that
   // on a chat-only visit is the same trade kit.js already makes, for the same
   // reason.
-  assert.ok(eagerJsGz <= 158, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 158K`);
+  /* 160, raised from 158 for the rail's icons: every destination, built-in
+     or plugin, wears one drawn on the icons.js grid, and the collapsed rail
+     shows nothing else, so the paths are needed on the first paint of any view. */
+  assert.ok(eagerJsGz <= 160, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 160K`);
 });
 
 test("first paint stays inside its weight budget", function () {

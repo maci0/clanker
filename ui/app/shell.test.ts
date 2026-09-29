@@ -188,6 +188,6 @@ test("the rail scrolls as a whole before the conversation list collapses", async
   const html = await read("index.html");
 
   expect(html).toMatch(/<aside class="rail [^"]*\boverflow-y-auto\b/u);
-  expect(html).toContain('class="mt-2 flex min-h-fit flex-1 flex-col border-t border-rule pt-2" data-rail-section="context" id="rail-context"');
+  expect(html).toMatch(/<div class="[^"]*\bmin-h-fit\b[^"]*" data-rail-section="context" id="rail-context"/u);
   expect(html).toMatch(/<ul class="mt-4 flex min-h-24 flex-1 list-none/u);
 });

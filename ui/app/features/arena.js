@@ -701,7 +701,7 @@ function renderCombatants(m) {
   var pal = arenaTheme();
   (m.combatants || []).forEach(function (c, i) {
     var chip = document.createElement("div");
-    chip.className = "group flex items-center gap-2 text-sm data-[out=true]:opacity-55";
+    chip.className = "group flex items-center gap-2 text-sm data-[out=true]:text-fg-muted data-[out=true]:line-through";
     if (c.eliminated || c.conceded) chip.dataset.out = "true";
     if (m.verdict && m.verdict.winner === i) chip.dataset.winner = "true";
     var dot = document.createElement("span");
