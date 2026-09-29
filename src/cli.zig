@@ -1626,6 +1626,19 @@ pub fn commandName(c: Command) []const u8 {
     return spec.usage[0..end];
 }
 
+/// What a usage hint should look up after a parse refusal: the command the
+/// parser actually resolved. The argv token was the stand-in for it, and a
+/// global flag may sit in that position (`clanker --verbose stats --worktree`),
+/// where it resolves to no page and the hint falls back to the whole command
+/// list. `.plugin` is a placeholder whose canonical name is `<plugin-command>`,
+/// so the token is the better of the two there.
+pub fn usageHintTarget(cmd: Command, argv_token: []const u8) []const u8 {
+    return switch (cmd) {
+        .help, .plugin => argv_token,
+        else => commandName(cmd),
+    };
+}
+
 /// The whole command list, grouped. Rendered from `specs` so a new command
 /// cannot be added without appearing here.
 ///
@@ -18125,6 +18138,9 @@ test "parseWithCommand resolves the real command when a global flag precedes it"
         try std.testing.expectError(error.BadSubcommand, parseWithCommand(&.{ "clanker", case[0], "bogus" }, &d, &c));
         try std.testing.expectEqual(case[1], c);
         try std.testing.expect(commandName(c).len > 0);
+        // The hint has to name the command even when a global flag took the
+        // argv slot a bare token would have filled.
+        try std.testing.expectEqualStrings(case[0], usageHintTarget(c, "--model"));
     }
 }
 
@@ -19116,6 +19132,14 @@ test "parse reports the offending token via the diag out-param" {
 
     try std.testing.expectError(error.BadIters, parse(&.{ "clanker", "improve-self", "--iters", "abc", "x" }, &diag));
     try std.testing.expectEqualStrings("abc", diag);
+
+    // Both port flags share one diagnostic (main.zig), so both have to reach
+    // it: a message that named only --webui-port sent a --proxy-port caller
+    // to the flag they never typed.
+    try std.testing.expectError(error.BadPort, parse(&.{ "clanker", "serve", "--webui-port", "70000" }, &diag));
+    try std.testing.expectEqualStrings("70000", diag);
+    try std.testing.expectError(error.BadPort, parse(&.{ "clanker", "serve", "--proxy-port", "http" }, &diag));
+    try std.testing.expectEqualStrings("http", diag);
 }
 
 test "config takes a subcommand, a key and a value positionally" {

@@ -352,7 +352,9 @@ pub fn main(init: std.process.Init) !void {
             error.BadBackend => cli.printUsageError(init.io, "--backend wants grok, claude, or codex, got '{s}'", .{shown}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{shown}),
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{shown}),
-            error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{shown}),
+            // Both port flags parse the same way, so naming only one of them
+            // sent a `--proxy-port` caller to the flag they never typed.
+            error.BadPort => cli.printUsageError(init.io, "--webui-port and --proxy-port want a 16-bit port number, got '{s}'", .{shown}),
             error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{shown}),
             error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{shown}),
             error.BadSessionId => cli.printUsageError(init.io, "invalid session id '{s}'; use 1-64 letters, numbers, dashes, or underscores", .{shown}),
@@ -369,7 +371,7 @@ pub fn main(init: std.process.Init) !void {
             if (err == error.UnknownCommand or arg_list.items.len < 2) {
                 cli.printUsageHint(init.io);
             } else {
-                cli.printUsageHintFor(init.io, arg_list.items[1]);
+                cli.printUsageHintFor(init.io, cli.usageHintTarget(cmd_out, arg_list.items[1]));
             }
         }
         // Usage errors (bad/missing args) are the caller's fault, not

@@ -70,13 +70,21 @@ pub const Cache = struct {
     entries: std.ArrayList(Entry) = .empty,
     bytes: usize = 0,
 
+    fn lock(self: *Cache) void {
+        self.mutex.lock();
+    }
+
+    fn unlock(self: *Cache) void {
+        self.mutex.unlock();
+    }
+
     pub fn init(gpa: std.mem.Allocator) Cache {
         return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *Cache) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
         for (self.entries.items) |e| {
             if (e.body) |b| self.gpa.free(b);
             self.gpa.free(e.id);
@@ -129,8 +137,8 @@ pub const Cache = struct {
 
     /// Registers interest in `key`. See `Begin`.
     pub fn begin(self: *Cache, key: []const u8, now: i64) Begin {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
         self.sweep(now);
         if (self.find(key)) |i| {
             if (self.entries.items[i].body) |b| return .{ .replay = b };
@@ -152,8 +160,8 @@ pub const Cache = struct {
     /// caller's buffer is a stack frame that is gone by the time a retry lands.
     /// Swept at the entry's own stamp, so a long run does not expire itself.
     pub fn finish(self: *Cache, key: []const u8, body: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         const copy = self.gpa.dupe(u8, body) catch return;
@@ -165,8 +173,8 @@ pub const Cache = struct {
     /// Drops a claim whose run failed, so the peer's retry runs the agent
     /// instead of replaying a failure as a success.
     pub fn release(self: *Cache, key: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.lock();
+        defer self.unlock();
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         self.removeAt(i);
