@@ -1,71 +1,71 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1452 206" width="1452" height="206" role="img" aria-label="clanker colour tokens">
-<rect width="100%" height="100%" fill="#eeebe4"/>
-<text x="0" y="14" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#4f534b" letter-spacing="0.72">DAY SHIFT</text>
-<rect x="0.5" y="22.5" width="123" height="39" rx="3" fill="#dcd9d1" stroke="#7b7971"/>
-<text x="0" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--bg</text>
-<text x="0" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#dcd9d1</text>
-<rect x="132.5" y="22.5" width="123" height="39" rx="3" fill="#eeebe4" stroke="#7b7971"/>
-<text x="132" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--surface</text>
-<text x="132" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#eeebe4</text>
-<rect x="264.5" y="22.5" width="123" height="39" rx="3" fill="#e2dfd6" stroke="#7b7971"/>
-<text x="264" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--surface-2</text>
-<text x="264" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#e2dfd6</text>
-<rect x="396.5" y="22.5" width="123" height="39" rx="3" fill="#7b7971" stroke="#7b7971"/>
-<text x="396" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--border</text>
-<text x="396" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#7b7971</text>
-<rect x="528.5" y="22.5" width="123" height="39" rx="3" fill="#cdc9bf" stroke="#7b7971"/>
-<text x="528" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--rule</text>
-<text x="528" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#cdc9bf</text>
-<rect x="660.5" y="22.5" width="123" height="39" rx="3" fill="#1b1c18" stroke="#7b7971"/>
-<text x="660" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--fg</text>
-<text x="660" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#1b1c18</text>
-<rect x="792.5" y="22.5" width="123" height="39" rx="3" fill="#4f534b" stroke="#7b7971"/>
-<text x="792" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--fg-muted</text>
-<text x="792" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#4f534b</text>
-<rect x="924.5" y="22.5" width="123" height="39" rx="3" fill="#1d5c9e" stroke="#7b7971"/>
-<text x="924" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--accent</text>
-<text x="924" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#1d5c9e</text>
-<rect x="1056.5" y="22.5" width="123" height="39" rx="3" fill="#117a3a" stroke="#7b7971"/>
-<text x="1056" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--ok</text>
-<text x="1056" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#117a3a</text>
-<rect x="1188.5" y="22.5" width="123" height="39" rx="3" fill="#8a6d00" stroke="#7b7971"/>
-<text x="1188" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--warn</text>
-<text x="1188" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#8a6d00</text>
-<rect x="1320.5" y="22.5" width="123" height="39" rx="3" fill="#a72920" stroke="#7b7971"/>
-<text x="1320" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--danger</text>
-<text x="1320" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#a72920</text>
-<text x="0" y="118" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#4f534b" letter-spacing="0.72">NIGHT SHIFT</text>
-<rect x="0.5" y="126.5" width="123" height="39" rx="3" fill="#171916" stroke="#7b7971"/>
-<text x="0" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--bg</text>
-<text x="0" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#171916</text>
-<rect x="132.5" y="126.5" width="123" height="39" rx="3" fill="#232622" stroke="#7b7971"/>
-<text x="132" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--surface</text>
-<text x="132" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#232622</text>
-<rect x="264.5" y="126.5" width="123" height="39" rx="3" fill="#2e322d" stroke="#7b7971"/>
-<text x="264" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--surface-2</text>
-<text x="264" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#2e322d</text>
-<rect x="396.5" y="126.5" width="123" height="39" rx="3" fill="#6e726c" stroke="#7b7971"/>
-<text x="396" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--border</text>
-<text x="396" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#6e726c</text>
-<rect x="528.5" y="126.5" width="123" height="39" rx="3" fill="#353934" stroke="#7b7971"/>
-<text x="528" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--rule</text>
-<text x="528" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#353934</text>
-<rect x="660.5" y="126.5" width="123" height="39" rx="3" fill="#e8eae5" stroke="#7b7971"/>
-<text x="660" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--fg</text>
-<text x="660" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#e8eae5</text>
-<rect x="792.5" y="126.5" width="123" height="39" rx="3" fill="#a3aaa1" stroke="#7b7971"/>
-<text x="792" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--fg-muted</text>
-<text x="792" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#a3aaa1</text>
-<rect x="924.5" y="126.5" width="123" height="39" rx="3" fill="#7aa7ff" stroke="#7b7971"/>
-<text x="924" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--accent</text>
-<text x="924" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#7aa7ff</text>
-<rect x="1056.5" y="126.5" width="123" height="39" rx="3" fill="#a0d8a7" stroke="#7b7971"/>
-<text x="1056" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--ok</text>
-<text x="1056" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#a0d8a7</text>
-<rect x="1188.5" y="126.5" width="123" height="39" rx="3" fill="#c19a00" stroke="#7b7971"/>
-<text x="1188" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--warn</text>
-<text x="1188" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#c19a00</text>
-<rect x="1320.5" y="126.5" width="123" height="39" rx="3" fill="#e58079" stroke="#7b7971"/>
-<text x="1320" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#1b1c18">--danger</text>
-<text x="1320" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#4f534b">#e58079</text>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="0" y="14" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#605e5c" letter-spacing="0.72">DAY SHIFT</text>
+<rect x="0.5" y="22.5" width="123" height="39" rx="3" fill="#f5f5f5" stroke="#8a8886"/>
+<text x="0" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--bg</text>
+<text x="0" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#f5f5f5</text>
+<rect x="132.5" y="22.5" width="123" height="39" rx="3" fill="#ffffff" stroke="#8a8886"/>
+<text x="132" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--surface</text>
+<text x="132" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#ffffff</text>
+<rect x="264.5" y="22.5" width="123" height="39" rx="3" fill="#f3f2f1" stroke="#8a8886"/>
+<text x="264" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--surface-2</text>
+<text x="264" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#f3f2f1</text>
+<rect x="396.5" y="22.5" width="123" height="39" rx="3" fill="#8a8886" stroke="#8a8886"/>
+<text x="396" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--border</text>
+<text x="396" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#8a8886</text>
+<rect x="528.5" y="22.5" width="123" height="39" rx="3" fill="#e1dfdd" stroke="#8a8886"/>
+<text x="528" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--rule</text>
+<text x="528" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#e1dfdd</text>
+<rect x="660.5" y="22.5" width="123" height="39" rx="3" fill="#242424" stroke="#8a8886"/>
+<text x="660" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--fg</text>
+<text x="660" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#242424</text>
+<rect x="792.5" y="22.5" width="123" height="39" rx="3" fill="#605e5c" stroke="#8a8886"/>
+<text x="792" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--fg-muted</text>
+<text x="792" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#605e5c</text>
+<rect x="924.5" y="22.5" width="123" height="39" rx="3" fill="#0072c9" stroke="#8a8886"/>
+<text x="924" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--accent</text>
+<text x="924" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#0072c9</text>
+<rect x="1056.5" y="22.5" width="123" height="39" rx="3" fill="#107c10" stroke="#8a8886"/>
+<text x="1056" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--ok</text>
+<text x="1056" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#107c10</text>
+<rect x="1188.5" y="22.5" width="123" height="39" rx="3" fill="#8a6d00" stroke="#8a8886"/>
+<text x="1188" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--warn</text>
+<text x="1188" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#8a6d00</text>
+<rect x="1320.5" y="22.5" width="123" height="39" rx="3" fill="#a4262c" stroke="#8a8886"/>
+<text x="1320" y="76" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--danger</text>
+<text x="1320" y="90" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#a4262c</text>
+<text x="0" y="118" font-family="ui-monospace, monospace" font-size="12" font-weight="600" fill="#605e5c" letter-spacing="0.72">NIGHT SHIFT</text>
+<rect x="0.5" y="126.5" width="123" height="39" rx="3" fill="#1f1f1f" stroke="#8a8886"/>
+<text x="0" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--bg</text>
+<text x="0" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#1f1f1f</text>
+<rect x="132.5" y="126.5" width="123" height="39" rx="3" fill="#292827" stroke="#8a8886"/>
+<text x="132" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--surface</text>
+<text x="132" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#292827</text>
+<rect x="264.5" y="126.5" width="123" height="39" rx="3" fill="#323130" stroke="#8a8886"/>
+<text x="264" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--surface-2</text>
+<text x="264" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#323130</text>
+<rect x="396.5" y="126.5" width="123" height="39" rx="3" fill="#8a8886" stroke="#8a8886"/>
+<text x="396" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--border</text>
+<text x="396" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#8a8886</text>
+<rect x="528.5" y="126.5" width="123" height="39" rx="3" fill="#3b3a39" stroke="#8a8886"/>
+<text x="528" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--rule</text>
+<text x="528" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#3b3a39</text>
+<rect x="660.5" y="126.5" width="123" height="39" rx="3" fill="#faf9f8" stroke="#8a8886"/>
+<text x="660" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--fg</text>
+<text x="660" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#faf9f8</text>
+<rect x="792.5" y="126.5" width="123" height="39" rx="3" fill="#c8c6c4" stroke="#8a8886"/>
+<text x="792" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--fg-muted</text>
+<text x="792" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#c8c6c4</text>
+<rect x="924.5" y="126.5" width="123" height="39" rx="3" fill="#4ea8ff" stroke="#8a8886"/>
+<text x="924" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--accent</text>
+<text x="924" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#4ea8ff</text>
+<rect x="1056.5" y="126.5" width="123" height="39" rx="3" fill="#a0d8a7" stroke="#8a8886"/>
+<text x="1056" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--ok</text>
+<text x="1056" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#a0d8a7</text>
+<rect x="1188.5" y="126.5" width="123" height="39" rx="3" fill="#c19a00" stroke="#8a8886"/>
+<text x="1188" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--warn</text>
+<text x="1188" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#c19a00</text>
+<rect x="1320.5" y="126.5" width="123" height="39" rx="3" fill="#e58079" stroke="#8a8886"/>
+<text x="1320" y="180" font-family="ui-monospace, monospace" font-size="11" fill="#242424">--danger</text>
+<text x="1320" y="194" font-family="ui-monospace, monospace" font-size="11" fill="#605e5c">#e58079</text>
 </svg>

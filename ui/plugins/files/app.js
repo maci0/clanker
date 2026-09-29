@@ -336,13 +336,11 @@ clanker.registerView({
         row.appendChild(iconCell);
 
         var nameCell = mk("span", "min-w-0 wrap-anywhere");
-        var btn = mk("button", OPEN_CLASS);
-        btn.type = "button";
-        btn.textContent = e.name;
-        btn.setAttribute("aria-label",(e.is_dir?"Open folder ":"Open file ")+e.name);
-        btn.setAttribute("tabindex","-1");
-        btn.addEventListener("click", function(ev) { ev.stopPropagation(); activate(e, i); });
-        nameCell.appendChild(btn);
+        /* The option is the control: a button inside it was a second focus target
+           for the same action, which an option may not contain. */
+        var name = mk("span", OPEN_CLASS);
+        name.textContent = e.name;
+        nameCell.appendChild(name);
         row.appendChild(nameCell);
 
         var sizeCell = mk("span", CELL_CLASS);

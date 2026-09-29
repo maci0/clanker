@@ -1,6 +1,6 @@
 import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
-import { icon as iconFn } from "./core/icons.js";
+import { decorateRailTab, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
@@ -721,11 +721,10 @@ function applyRailCollapsed(collapsed) {
       applyRailCollapsed(!cur);
     });
   }
-  // populate data-short for collapsed rail labels from existing tab text
-  document.querySelectorAll("#rail [role=tab]").forEach(function (t) {
-    var txt = (t.textContent || "").trim();
-    if (!t.getAttribute("data-short") && txt) t.setAttribute("data-short", txt.slice(0, 2));
-  });
+  // Each rail tab wears its icon, which is all the collapsed rail shows.
+  for (const tab of document.querySelectorAll("#rail .rail-tab")) {
+    decorateRailTab(tab);
+  }
 })();
 
 /* Phone More hosts the same Fork/Rename/Delete nodes and the transcript
@@ -1589,7 +1588,7 @@ var RAIL_GROUP_NAME_CLASS = "flex-1 truncate";
 var RAIL_GROUP_COUNT_CLASS = "font-mono tabular-nums";
 var RAIL_EMPTY_CLASS = "font-mono text-sm text-fg-muted";
 var RAIL_EMPTY_ACTION_CLASS = "inline min-h-0 min-w-0 cursor-pointer border-0 bg-transparent p-0 [font:inherit] text-accent-text underline decoration-dotted underline-offset-2 hover:text-accent focus-visible:text-accent";
-var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted in-aria-selected:text-accent-text";
+var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted";
 
 /* The idle chat's job buttons: one per saved prompt, sized to a thumb. */
 var SUGGESTION_CLASS = "min-h-11 cursor-pointer rounded-plate border border-border bg-surface px-4 py-2 text-start font-sans text-sm leading-snug text-fg shadow-none hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
@@ -4578,9 +4577,11 @@ function showView(name, focusPanel) {
     var panel = document.getElementById("view-" + v);
     var on = v === name;
     panel.hidden = !on;
-    tab.setAttribute("aria-selected", String(on));
-    // Roving tabindex: the tablist is one stop, arrows move within it.
-    tab.tabIndex = on ? 0 : -1;
+    if (on) {
+      tab.setAttribute("aria-current", "page");
+    } else {
+      tab.removeAttribute("aria-current");
+    }
   });
   // Preserve callgraph filter state in the URL (shareable/bookmarkable) — search/kind from either deep link or active graph
   var _qs = []; try{ if(deepSearch) _qs.push("search="+encodeURIComponent(deepSearch)); if(deepKind) _qs.push("kind="+encodeURIComponent(deepKind)); }catch(_){}
@@ -4682,7 +4683,7 @@ function showView(name, focusPanel) {
    whatever `VIEWS` happened to hold before it and `End` selected the
    last-registered plugin rather than the bottom tab. */
 function railOrder() {
-  var tabs = document.querySelectorAll("#rail [role='tab'][data-view]");
+  var tabs = document.querySelectorAll("#rail .rail-tab[data-view]");
   var out = [];
   for (var i = 0; i < tabs.length; i++) {
     var v = tabs[i].getAttribute("data-view");
@@ -4695,9 +4696,8 @@ function wireTab(tab, i) {
   var v = tab.getAttribute("data-view");
   tab.addEventListener("click", function () { showView(v, false); });
   tab.addEventListener("keydown", function (e) {
-    // The tablist is a column now, so it answers to Up and Down. Left and
-    // Right keep working: a tablist that ignored them would be a regression
-    // for anyone who learned them here.
+    // The rail is a column, so it answers to Up and Down. Left and Right keep
+    // working for anyone who learned them when it was a row.
     var step = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 :
       (e.key === "ArrowUp" || e.key === "ArrowLeft") ? -1 : 0;
     if (!step && e.key !== "Home" && e.key !== "End") return;

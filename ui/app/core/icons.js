@@ -94,7 +94,38 @@ export var ICON_PATHS = {
   mute: ["M5 9.5h3l4-3.5v12l-4-3.5H5z", "M15.5 10l4 4", "M19.5 10l-4 4"],
   // A note: the collapsed dock's handle.
   note: ["M10 17.5V6l8-1.5V16", "M8 15.5a2 2 0 100 4 2 2 0 000-4z", "M16 14a2 2 0 100 4 2 2 0 000-4z"],
+  // Three lanes of unequal depth: the Kanban board.
+  board: ["M4.5 5h4v14h-4z", "M10 5h4v9h-4z", "M15.5 5h4v11.5h-4z"],
+  // A folder tab: the file browser.
+  folder: ["M3.5 6.5h6l2 2.5h9v10h-17z"],
+  // Staggered bars on a time axis: recorded runs.
+  timeline: ["M4.5 6.5h7", "M8.5 12h8", "M12.5 17.5h7"],
+  // Two racked machines: the fleet of instances.
+  servers: ["M4.5 5h15v5h-15z", "M4.5 14h15v5h-15z", "M8 7.5h.01", "M8 16.5h.01"],
+  // Two crossed blades: the debate arena.
+  swords: ["M4.5 4.5l10 10", "M12 17l5-5", "M19.5 4.5l-10 10", "M7 12l5 5"],
+  // A hash: channels and direct messages.
+  hash: ["M9.5 4.5l-2 15", "M16.5 4.5l-2 15", "M5 9h14", "M4 15h14"],
+  // Two sheets side by side: a blind comparison.
+  compare: ["M4.5 5h6v14h-6z", "M13.5 5h6v14h-6z", "M12 3.5v17"],
+  // Three nodes joined to a hub: the mesh.
+  mesh: ["M12 10a2 2 0 110 4 2 2 0 010-4z", "M5.5 4.5a2 2 0 110 4 2 2 0 010-4z", "M18.5 4.5a2 2 0 110 4 2 2 0 010-4z", "M12 17.5a2 2 0 110 4 2 2 0 010-4z", "M7 7.7l3.4 2.9", "M17 7.7l-3.4 2.9", "M12 14v3.5"],
+  // An isometric cube: a model.
+  cube: ["M12 3.5l7.5 4.25v8.5L12 20.5l-7.5-4.25v-8.5z", "M4.5 7.75L12 12l7.5-4.25", "M12 12v8.5"],
+  // An open book: knowledge collections.
+  book: ["M4.5 5.5H10a2 2 0 012 2V19a1.5 1.5 0 00-1.5-1.5h-6z", "M19.5 5.5H14a2 2 0 00-2 2V19a1.5 1.5 0 011.5-1.5h6z"],
+  // A shell prompt: saved prompts.
+  prompt: ["M5 7l4.5 4.5L5 16", "M11.5 17h7.5"],
+  // A spanner: tools.
+  wrench: ["M15 4.5a4.5 4.5 0 00-4.2 6.1L4.5 16.9l2.6 2.6 6.3-6.3A4.5 4.5 0 0019.5 9l-3 1.5-2-2L16 5.5z"],
+  // Three sliders: system settings.
+  sliders: ["M5 7h14", "M5 12h14", "M5 17h14", "M9 5v4", "M15 10v4", "M11 15v4"],
+  // A trace: health.
+  pulse: ["M3.5 12h4l2-5 4 10 2-5h5"],
+  // A building: the office floor.
+  office: ["M4.5 19.5v-13l7.5-3 7.5 3v13", "M9.5 19.5v-5h5v5", "M3 19.5h18"],
 };
+
 
 export function icon(name, size) {
   var paths = ICON_PATHS[name];
@@ -123,3 +154,47 @@ export function icon(name, size) {
 }
 
 
+/* The icon each rail destination wears, built-in views and bundled plugins alike; any other plugin gets `grid`. */
+const RAIL_ICONS = new Map([
+  ["activity", "activity"],
+  ["arena", "swords"],
+  ["chat", "activity"],
+  ["compare", "compare"],
+  ["files", "folder"],
+  ["fleet", "servers"],
+  ["health", "pulse"],
+  ["kanban", "board"],
+  ["knowledge", "book"],
+  ["mesh", "mesh"],
+  ["models", "cube"],
+  ["music", "note"],
+  ["office", "office"],
+  ["prompts", "prompt"],
+  ["rooms", "hash"],
+  ["runs", "timeline"],
+  ["schedule", "calendar"],
+  ["search", "find"],
+  ["system", "sliders"],
+  ["tools", "wrench"],
+]),
+  /**
+   * Gives a rail tab its icon and wraps its words in `.rail-label`, so the
+   * collapsed rail can show the icon alone. A tab that already has one is left
+   * as it is, since plugin tabs and the static ones both pass through here.
+   * @param {HTMLElement} tab The rail button, carrying `data-view`.
+   * @returns {void}
+   */
+  decorateRailTab = (tab) => {
+    if (!(tab instanceof HTMLElement) || tab.querySelector(":scope > svg.icon") !== null) {
+      return;
+    }
+
+    const label = document.createElement("span"),
+      name = RAIL_ICONS.get(tab.dataset.view ?? "") ?? "grid";
+
+    label.className = "rail-label min-w-0 flex-1 truncate";
+    label.append(...[...tab.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE));
+    tab.prepend(icon(name, 18), label);
+  };
+
+export { RAIL_ICONS, decorateRailTab };

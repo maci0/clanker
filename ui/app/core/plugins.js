@@ -7,7 +7,7 @@ import { closeOverlay, openOverlay, trapOverlayTab } from "./overlay.js";
 import { copyText, loadD3, paintTomlInto, reducedMotion, scrollTo } from "./vendor.js";
 import { goalFields, goalPinnedColumn, goalSortKey, goalStatusLabel, goalWorktreeTitle } from "./goals.js";
 import { runLabel } from "./labels.js";
-import { icon } from "./icons.js";
+import { decorateRailTab, icon } from "./icons.js";
 import {
   clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
   fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
@@ -245,26 +245,13 @@ export function pluginApi(spec) {
   };
 }
 
-/* `aria-owns` is the order a screen reader reads the tablist in, and the Set up
-   group's tabs sit outside the tablist element and are members of it only
-   through this attribute. Appending each new id put a Work group plugin after
-   System, so rebuild the whole list from the rail's own order instead. */
-function syncTablistOwns(tablist) {
-  var tabs = document.querySelectorAll("#rail [role='tab'][data-view]");
-  var ids = [];
-  for (var i = 0; i < tabs.length; i++) {
-    if (tabs[i].id) ids.push(tabs[i].id);
-  }
-  if (ids.length) tablist.setAttribute("aria-owns", ids.join(" "));
-}
-
 /* One row per plugin in the Set up list, and the row's parts. */
 var PLUGIN_ROW_CLASS = "mt-1 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-plate-sm border border-rule bg-surface-2 p-2";
 var PLUGIN_NAME_CLASS = "font-sans text-sm font-bold text-fg";
 var PLUGIN_GROUP_CLASS = "font-mono text-xs uppercase tracking-label text-fg-muted";
 var PLUGIN_DESC_CLASS = "min-w-56 flex-1 font-sans text-sm text-fg-muted";
 
-/* Every addon view's chrome: the panel, the rail tab, and the tablist wiring.
+/* Every addon view's chrome: the panel, the rail tab, and its keyboard wiring.
    Built from name/title/group alone, which is all `/api/webui/plugins` answers
    with, so a deferred addon gets a working tab before its script exists.
    Returns the <section> the addon's `mount` is handed. */
@@ -272,7 +259,7 @@ function makeViewShell(id, title, group) {
   var panel = document.createElement("div");
   panel.setAttribute("data-view", "true");
   panel.id = "view-" + id;
-  panel.setAttribute("role", "tabpanel");
+  panel.setAttribute("role", "region");
   panel.setAttribute("aria-labelledby", "tab-" + id);
   panel.tabIndex = -1;
   panel.hidden = true;
@@ -292,13 +279,11 @@ function makeViewShell(id, title, group) {
   var tab = document.createElement("button");
   tab.type = "button";
   tab.className = RAIL_TAB_CLASS;
-  tab.setAttribute("role", "tab");
   tab.id = "tab-" + id;
   tab.setAttribute("aria-controls", "view-" + id);
-  tab.setAttribute("aria-selected", "false");
-  tab.tabIndex = -1;
   tab.setAttribute("data-view", id);
   tab.textContent = title;
+  decorateRailTab(tab);
   /* Each rail list names its group (`data-rail-group` in index.html); a
      group no list names lands in Set up, the rail's catch-all. */
   const item = document.createElement("li"),
@@ -306,8 +291,6 @@ function makeViewShell(id, title, group) {
 
   item.append(tab);
   list.append(item);
-  var tablist = document.querySelector("#rail [role='tablist']");
-  if (tablist && tab.id) syncTablistOwns(tablist);
   _VIEWS.push(id);
   _wireTab(tab, _VIEWS.length - 1);
   return section;

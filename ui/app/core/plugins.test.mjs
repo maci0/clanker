@@ -291,6 +291,7 @@ function loadHost(page, extras) {
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
     showLoading: (el, msg) => { el.appendChild(makeText(msg)); return el; },
+    decorateRailTab: () => {},
     requireText: () => true,
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
@@ -623,21 +624,6 @@ test("a key the tablist does not own is left alone", () => {
   assert.equal(press(boot.page.tabs.chat, "PageDown"), 0);
   assert.deepEqual(shown, []);
 });
-
-test("aria-owns is rebuilt in rail order, so a screen reader reads the rail", () => {
-  const boot = bootHost();
-  boot.clanker.registerView({ id: "files", title: "Files", group: "Work", mount: function () {} });
-  boot.clanker.registerView({ id: "mesh", title: "Mesh", group: "Watch", mount: function () {} });
-  assert.deepEqual(
-    boot.page.tablist.getAttribute("aria-owns").split(" "),
-    ["tab-chat", "tab-kanban", "tab-files", "tab-runs", "tab-fleet", "tab-arena",
-     "tab-rooms", "tab-mesh", "tab-models", "tab-knowledge", "tab-prompts",
-     "tab-tools", "tab-system"],
-    "appending the new id put a Work group plugin after System"
-  );
-});
-
-/* --------------------------------------- 4. a failed script load can retry */
 
 test("Retry after a failed script load fetches the script again", async () => {
   // The error panel's retry resets the promise cache and calls the loader

@@ -475,6 +475,7 @@ function loadSkills() {
         check.type = "checkbox";
         check.checked = sk.enabled !== false;
         check.title = check.checked ? "Included in the system prompt" : "Off: not sent to the model";
+        check.setAttribute("aria-label", `Include ${sk.name} in the system prompt`);
         check.addEventListener("change", function () {
           check.disabled = true;
           fetch("/api/skills", {
