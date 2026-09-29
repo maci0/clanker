@@ -70,7 +70,14 @@ done
 AVAILABLE=()
 while IFS= read -r name; do
   AVAILABLE+=("$name")
-done < <(find "$PROMPT_DIR" -maxdepth 1 -name '*-review.md' -exec basename {} \; | sed 's/-review\.md$//' | sort)
+# A depth-1 glob, not `find -maxdepth 1`: `-maxdepth` is a GNU extension and
+# macOS's BSD find rejects it and prints nothing, so the prompt list came back
+# empty on macOS and the script died with "no *-review.md prompts" over a
+# directory full of them.
+done < <(for f in "$PROMPT_DIR"/*-review.md; do
+           [ -f "$f" ] || continue
+           printf '%s\n' "${f##*/}"
+         done | sed 's/-review\.md$//' | sort)
 [ ${#AVAILABLE[@]} -gt 0 ] || die "no *-review.md prompts in $PROMPT_DIR"
 
 if [ "$LIST" -eq 1 ]; then

@@ -374,6 +374,27 @@ ln -sfn "${snapshot##*/}" "$latest"
 # a failed prune. CLANKER_BACKUP_RETENTION_DAYS (default 30) is the age after
 # which a snapshot is deleted; 0 keeps every snapshot.
 prune_old_snapshots() {
+    # Depth-1 directories under the backup root matching a glob pattern. This
+    # is the portable spelling of `find -maxdepth 1`: `-maxdepth` is a GNU
+    # extension, and macOS's BSD find rejects it and prints nothing, so both
+    # sweeps below silently found no candidates on a platform this script runs
+    # on, leaving stale staging dirs and expired snapshots forever.
+    depth1_dirs() {
+        local pattern=$1 entry
+        for entry in "$backup_root"/$pattern; do
+            [ -d "$entry" ] || continue
+            printf '%s\n' "$entry"
+        done
+    }
+
+    # Seconds since the epoch for a path's mtime, or nothing when neither stat
+    # spelling answers. `stat -c` is GNU, `stat -f` is BSD; one of the two is
+    # present on every platform this runs on, and an unknown age leaves the
+    # candidate alone rather than deleting a tree it cannot date.
+    mtime_epoch() {
+        stat -c %Y -- "$1" 2>/dev/null || stat -f %m -- "$1" 2>/dev/null || true
+    }
+
     # Stale staging dirs first: they are the remains of runs that died before
     # the EXIT trap existed, so nothing else reclaims them, and each carries a
     # full copy of the store. This used to sit below the retention guards, so
@@ -388,10 +409,16 @@ prune_old_snapshots() {
     # (a backup of this store takes minutes, not an hour), so the age bound
     # separates garbage from work in progress instead of guessing from the
     # name.
-    local stale
+    local stale stale_cutoff stale_mtime
+    stale_cutoff=$(( $(date +%s) - staging_stale_minutes * 60 ))
     while IFS= read -r stale; do
+        stale_mtime=$(mtime_epoch "$stale")
+        case "$stale_mtime" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        [ "$stale_mtime" -lt "$stale_cutoff" ] || continue
         rm -rf -- "$stale"
-    done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete.*' -mmin "+$staging_stale_minutes" 2>/dev/null)
+    done < <(depth1_dirs '.*.incomplete.*')
 
     local keep_days=${CLANKER_BACKUP_RETENTION_DAYS:-30}
     case "$keep_days" in
@@ -421,7 +448,7 @@ prune_old_snapshots() {
             rm -rf -- "$snapshot"
             printf 'pruned %s (older than %s days)\n' "$name" "$keep_days" >&2
         fi
-    done < <(find "$backup_root" -maxdepth 1 -type d -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z' 2>/dev/null | sort)
+    done < <(depth1_dirs '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z' | sort)
 }
 
 prune_old_snapshots || printf 'warning: snapshot pruning failed; backups are intact\n' >&2

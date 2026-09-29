@@ -90,11 +90,20 @@ for name in "${order[@]}"; do
 
     dir=""
     for root in "${roots[@]}"; do
-        found="$(find "$root" -maxdepth 2 -type d -name "$hash" 2>/dev/null | head -1 || true)"
-        if [ -n "$found" ]; then
-            dir="$found"
-            break
-        fi
+        # A depth-2 glob, not `find -maxdepth 2`: `-maxdepth` is a GNU
+        # extension, and macOS's BSD find answers "unknown primary or
+        # operator" and prints nothing, so the search below found no tree on a
+        # platform this script runs on (CI applies these patches on macOS too)
+        # and every patch was reported as skipped. The project-local cache
+        # spells a package directory `<name>-<hash>`; the Zig global cache
+        # spells it `<name>/<hash>`. Both are the two globs here.
+        for candidate in "$root"/"$hash" "$root"/*/"$hash"; do
+            if [ -d "$candidate" ]; then
+                dir="$candidate"
+                break
+            fi
+        done
+        [ -n "$dir" ] && break
     done
 
     # A missing tree is fatal, not a skip: the documented order is
