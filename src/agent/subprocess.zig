@@ -346,7 +346,7 @@ pub const Registry = struct {
     fn killAtLocked(self: *Registry, i: usize) void {
         var h = self.items.orderedRemove(i);
         if (h.child) |*c| {
-            c.kill(self.io);
+            killChildBounded(self.io, c);
         } else {
             // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(h.pid, std.posix.SIG.TERM) catch {};
@@ -354,6 +354,56 @@ pub const Registry = struct {
         self.destroyHandle(&h);
     }
 };
+
+/// How long a SIGTERMed child gets to die before escalating to SIGKILL.
+/// Every caller of this holds a registry mutex across the release, so a
+/// child that traps SIGTERM and stalls (a language server that installs a
+/// handler and hangs is the ordinary case, not an exotic one) parked the
+/// thread inside an uncancelable `wait4` with the mutex held, and every
+/// later `ck_debug`, `ck_kernel` and session end in the process blocked
+/// behind it. SIGKILL is not catchable, so the wait it bounds is the reap.
+const kill_term_grace_ns: i96 = 2 * std.time.ns_per_s;
+
+/// SIGTERM, then SIGKILL after `kill_term_grace_ns`, then reap. `Child.kill`
+/// signals SIGTERM and blocks in an uncancelable `wait4` with no ceiling.
+///
+/// The pid is only signalled while the waiter has not stored `done`: the flag
+/// is set after the reap, so `done` unset still means the pid names this
+/// child (the same guard `waitChildBelow` uses). `cancel` joins the waiter, so
+/// nothing is left touching `child` (caller stack) once this returns.
+fn killChildBounded(io: std.Io, child: *std.process.Child) void {
+    // Residual posix: signal delivery has no std.Io equivalent.
+    std.posix.kill(child.id orelse return, std.posix.SIG.TERM) catch {};
+    var done: std.Io.Event = .unset;
+    var fut = io.concurrent(childWaitWorker, .{ io, child, &done }) catch {
+        // No spare unit of concurrency for the wait; fall back to the
+        // unbounded reap, which still reaps.
+        child.kill(io);
+        return;
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = kill_term_grace_ns },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too; the deadline decides.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                fut.cancel(io);
+                return;
+            },
+            error.Canceled => {
+                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                fut.cancel(io);
+                return;
+            },
+        };
+    }
+    fut.await(io);
+}
 
 fn childWaitWorker(io: std.Io, child: *std.process.Child, done: *std.Io.Event) void {
     defer done.set(io);

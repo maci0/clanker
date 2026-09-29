@@ -2214,6 +2214,60 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     return h.writeResult(bytes, out);
 }
 
+/// How long a SIGTERMed exec child gets to die before escalating to SIGKILL.
+const kill_term_grace_ns: i96 = 2 * std.time.ns_per_s;
+
+fn childWaitWorker(io: std.Io, child: *std.process.Child, done: *std.Io.Event) void {
+    defer done.set(io);
+    _ = child.wait(io) catch {};
+}
+
+/// The release for an exec child this host has not reaped: SIGTERM, then
+/// SIGKILL after `kill_term_grace_ns`, then reap. `Child.kill` signals SIGTERM
+/// and blocks in an uncancelable `wait4`, so a child that installs a handler
+/// and stalls (a wedged language server is the ordinary case) parked the
+/// calling tool worker thread for the life of the process, holding its three
+/// pipes with it.
+///
+/// The pid is only signalled while the waiter has not stored `done`, which is
+/// the guard `waitChildWithin` in `agent/subprocess.zig` uses: the flag is
+/// set after the reap, so `done` unset still means the pid names this child.
+/// `cancel` joins the waiter, so nothing is left touching `child` (caller
+/// stack) once this returns.
+fn killChildBounded(io: std.Io, child: *std.process.Child) void {
+    // Residual posix: signal delivery has no std.Io equivalent.
+    std.posix.kill(child.id orelse return, std.posix.SIG.TERM) catch {};
+    var done: std.Io.Event = .unset;
+    var fut = io.concurrent(childWaitWorker, .{ io, child, &done }) catch {
+        // No spare unit of concurrency for the wait; fall back to the
+        // unbounded reap, which still reaps.
+        child.kill(io);
+        return;
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = kill_term_grace_ns },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too; the deadline decides.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                fut.cancel(io);
+                return;
+            },
+            error.Canceled => {
+                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                fut.cancel(io);
+                return;
+            },
+        };
+    }
+    fut.await(io);
+}
+
 const python_cell_harness =
     \\import ast, io, json, sys, traceback
     \\src = sys.stdin.read()
@@ -2303,7 +2357,7 @@ fn runPythonCellUnsandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cell: 
     // runs, so a kill on the success path would signal a stranger. Same
     // `waited` guard as `tui/clipboard.zig` and `acp/fallback_spawn.zig`.
     var waited = false;
-    defer if (!waited) child.kill(sb.io);
+    defer if (!waited) killChildBounded(sb.io, &child);
     if (child.stdin) |stdin_file| {
         var wbuf: [4096]u8 = undefined;
         var writer = stdin_file.writer(sb.io, &wbuf);
@@ -6304,7 +6358,10 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
             // the admission check above already refused a saturated harness
             // before the thread existed. A live thread cannot be reclaimed
             // from here (joining would park the caller for the subagent's
-            // whole runtime), so its copies are the worker's.
+            // whole runtime), so its copies are the worker's. Detach it: no
+            // jobs row will ever name it, so nothing else can join it either,
+            // and an unjoined handle is a leaked one when the worker returns.
+            th.detach();
             gpa.free(task_row);
             gpa.free(id_row);
             return Err.invalid;
@@ -6397,7 +6454,7 @@ pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             .string => |s| s,
             else => return Err.invalid,
         };
-        _ = jobs_mod.kill(reg, sid, id);
+        _ = jobs_mod.kill(h.sandbox.io, reg, sid, id);
         return h.writeResult(bytes, "{\"ok\":true}");
     }
     if (std.mem.eql(u8, op, "wait")) {
@@ -7026,7 +7083,7 @@ pub fn execUnderPolicyInput(
     // that exits cleanly would otherwise have its pid signalled after the
     // fact, landing on whatever inherited it.
     var waited = false;
-    defer if (!waited) child.kill(sb.io);
+    defer if (!waited) killChildBounded(sb.io, &child);
 
     if (child.stdin) |stdin_file| {
         var buffer: [4096]u8 = undefined;
@@ -7135,7 +7192,7 @@ fn execWithStdin(
     // free for reuse, so signalling it again would reach an unrelated
     // process.
     var waited = false;
-    defer if (!waited) child.kill(io);
+    defer if (!waited) killChildBounded(io, &child);
 
     // Write everything, then close: a server reading framed messages waits for
     // EOF (or a shutdown message) before exiting, and an open pipe would hang

@@ -770,7 +770,7 @@ pub fn listJson(arena: std.mem.Allocator, reg: ?*subprocess.Registry, session_id
     return w.written();
 }
 
-pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) bool {
+pub fn kill(io: std.Io, reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) bool {
     var found: ?*ExecJob = null;
     var thread: ?std.Thread = null;
     {
@@ -797,7 +797,20 @@ pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) 
             // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(job.pid, std.posix.SIG.TERM) catch {};
         }
-        if (thread) |th| th.join();
+        if (thread) |th| {
+            // The waiter is parked in an uncancelable `wait4`, so a child
+            // that ignores SIGTERM held this tool worker thread, and the
+            // turn's parallelism with it, for the life of the process.
+            // Escalate once the grace lapses: SIGKILL is not catchable, so
+            // the join below is what the signal bounds, not the grace. Only
+            // with the thread in hand, since `done` is the only thing that
+            // says the pid was reaped and another process may own it now.
+            std.Io.sleep(io, .{ .nanoseconds = deinit_term_grace_ns }, .awake) catch {};
+            if (!job.done.load(.acquire)) {
+                std.posix.kill(job.pid, std.posix.SIG.KILL) catch {};
+            }
+            th.join();
+        }
         if (reg) |r| r.forget(session_id, id);
         return true;
     }
@@ -974,15 +987,15 @@ test "wait and kill answer only the session that owns the job" {
     // caller scope owns nothing either.
     try std.testing.expectError(error.NotFound, waitExec(io, arena, "beta", "job-aaaa"));
     try std.testing.expectError(error.NotFound, waitSub(io, arena, "beta", "sub-bbbb"));
-    try std.testing.expect(!kill(null, "beta", "job-aaaa"));
-    try std.testing.expect(!kill(null, "", "job-aaaa"));
+    try std.testing.expect(!kill(io, null, "beta", "job-aaaa"));
+    try std.testing.expect(!kill(io, null, "", "job-aaaa"));
 
     // The owning session still waits and kills its own job.
     const got = try waitExec(io, arena, "alpha", "job-aaaa");
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     const sub_text = try waitSub(io, arena, "alpha", "sub-bbbb");
     try std.testing.expect(std.mem.find(u8, sub_text, "parent-only answer") != null);
-    try std.testing.expect(kill(null, "alpha", "job-aaaa"));
+    try std.testing.expect(kill(io, null, "alpha", "job-aaaa"));
 }
 
 test "completed background jobs are reaped past the retention cap" {

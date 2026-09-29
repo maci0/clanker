@@ -806,6 +806,7 @@ pub fn join(gpa: std.mem.Allocator, address: []const u8) !void {
 
 fn spawnRead(rt: *Runtime, stream: std.Io.net.Stream) !void {
     const arg = try rt.gpa.create(Conn);
+    errdefer rt.gpa.destroy(arg);
     arg.* = .{ .rt = rt, .stream = stream };
     const th = try std.Thread.spawn(.{}, struct {
         fn run(a: *Conn) void {
@@ -916,6 +917,14 @@ pub fn resolvePending(id: []const u8, allow: bool) !void {
     remember(rt, id_buf[0..id_len], name_buf[0..name_len], st.socket.handle);
     rt.mu.unlock();
     spawnRead(rt, st) catch {
+        // The member row is registered and no reader owns the socket, so this
+        // path must retire the row the way `acceptOne`'s post-join drain
+        // failure does. Left behind it burns a `max_members` slot for the
+        // life of the process, and once the OS reissues the fd a later
+        // teardown closes an unrelated connection.
+        rt.mu.lock();
+        unregisterFdLocked(rt, st.socket.handle);
+        rt.mu.unlock();
         st.close(rt.io);
         return error.JoinWrite;
     };
