@@ -73,6 +73,28 @@ this guide:
 None of the four is decoration. Named themes in `themes/` change the
 neutrals and the lamps' tint; the roles stay.
 
+### Contrast
+
+Every pair the UI sets for text or a control edge, measured from the tokens
+by `scripts/brand.ts` against WCAG 2.2 AA (4.5:1 for text, 3:1 for a
+control boundary). A FAIL here is a defect in the token, not an exception.
+
+<!-- contrast:start -->
+| Pair | Used for | Day | Night | AA minimum |
+|---|---|---|---|---|
+| `--fg` on `--bg` | body text on the page | 12.15:1 pass | 14.60:1 pass | 4.5:1 |
+| `--fg` on `--surface` | body text on a panel | 14.39:1 pass | 12.63:1 pass | 4.5:1 |
+| `--fg` on `--surface-2` | body text in a well | 12.86:1 pass | 10.76:1 pass | 4.5:1 |
+| `--fg-muted` on `--bg` | metadata on the page | 5.57:1 pass | 7.43:1 pass | 4.5:1 |
+| `--fg-muted` on `--surface` | metadata on a panel | 6.60:1 pass | 6.43:1 pass | 4.5:1 |
+| `--accent-text` on `--surface` | links on a panel | 5.73:1 pass | 7.45:1 pass | 4.5:1 |
+| `--on-accent` on `--accent` | primary button label | 6.83:1 pass | 7.41:1 pass | 4.5:1 |
+| `--ok` on `--surface` | healthy state text | 4.56:1 pass | 9.39:1 pass | 4.5:1 |
+| `--warn-text` on `--surface` | warning text | 6.23:1 pass | 9.94:1 pass | 4.5:1 |
+| `--danger` on `--surface` | fault text | 5.92:1 pass | 5.61:1 pass | 4.5:1 |
+| `--border` on `--surface` | control boundary (non-text) | 3.66:1 pass | 3.12:1 pass | 3:1 |
+<!-- contrast:end -->
+
 ## Type
 
 The system sans for prose, the system mono for measurements, code, IDs and
@@ -86,7 +108,8 @@ engraved labels. No web fonts. Labels are uppercase mono at `0.75rem` with
 One 24-unit grid, a 1.75 stroke, square caps and mitred joins, in
 `currentColor`. The source is `ICON_PATHS` in `ui/app/core/icons.js`, which
 the web UI draws from at runtime; each icon is also exported as its own file
-under [`icons/`](icons/) for documents and slides.
+under [`icons/`](icons/) for documents and slides, and
+[`icons.html`](icons.html) is a browsable index of all of them.
 
 Adding an icon: add its paths to `ICON_PATHS` with a one-line comment saying
 what it depicts, run `bun scripts/brand.ts`, and commit the new file under

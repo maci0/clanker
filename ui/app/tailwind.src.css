@@ -40,7 +40,7 @@
   --surface-2: #e2dfd6;
   --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
   --surface-raised: var(--surface-2);
-  --border: #b9b5aa;
+  --border: #7b7971;
   --rule: #cdc9bf;
   --fg: #1b1c18;
   --fg-muted: #4f534b;
@@ -246,7 +246,7 @@
     --surface-2: #2e322d;
     --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
     --surface-raised: var(--surface-2);
-    --border: #454a44;
+    --border: #6e726c;
     --rule: #353934;
     --fg: #e8eae5;
     --fg-muted: #a3aaa1;

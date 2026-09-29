@@ -426,6 +426,10 @@ pub fn build(b: *std.Build) void {
     const shell_js_test = b.addSystemCommand(&.{ "bun", "test" });
     shell_js_test.addFileArg(b.path("ui/app/shell.test.ts"));
     test_step.dependOn(&shell_js_test.step);
+    // WCAG AA contrast for the cabinet palettes and every named theme.
+    const contrast_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    contrast_js_test.addFileArg(b.path("ui/app/contrast.test.ts"));
+    test_step.dependOn(&contrast_js_test.step);
     const markdown_js_test = b.addSystemCommand(&.{ "bun", "test" });
     markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
     test_step.dependOn(&markdown_js_test.step);

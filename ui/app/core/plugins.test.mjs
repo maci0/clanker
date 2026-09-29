@@ -293,7 +293,6 @@ function loadHost(page, extras) {
     showLoading: (el, msg) => { el.appendChild(makeText(msg)); return el; },
     requireText: () => true,
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
-    requireText: () => true, showLoading: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
     liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},
     copyText: () => {}, scrollTo: () => {}, paintTomlInto: () => {},

@@ -87,6 +87,12 @@ fi
 # over the whole tree (about 3s) and fails when a file's count for a rule moves
 # off tools/oxlint/baseline.json, or a disable directive silences nothing.
 if [ -n "$(staged '*.js' '*.mjs' '*.ts' 'tools/oxlint/baseline.json' '.oxlintrc.json' 'tsconfig.json' | tr -d '\0')" ]; then
+    # A fresh clone or worktree has no node_modules; the lint toolchain is a
+    # declared, lockfile-pinned dependency, so install it rather than skip:
+    # skipping let commits from dependency-less worktrees reach CI unlinted.
+    if [ ! -x node_modules/.bin/oxlint ] && command -v bun >/dev/null 2>&1; then
+        bun install --frozen-lockfile >/dev/null || fail "bun install --frozen-lockfile failed; the JS lint toolchain is not available"
+    fi
     if [ -x node_modules/.bin/oxlint ]; then
         bun run lint || fail "lint ratchet failed (fix the finding; bun run lint:baseline records paid-down debt)"
         # The same check CI runs, on the whole program tsconfig.json names (a
@@ -95,11 +101,7 @@ if [ -n "$(staged '*.js' '*.mjs' '*.ts' 'tools/oxlint/baseline.json' '.oxlintrc.
         # question than CI's answer to the same tree).
         bun run typecheck || fail "tsc --noEmit failed"
     else
-        # The other skips here are a missing tool off PATH and say so; this one
-        # is a declared dependency that was never installed, and CI installs it
-        # itself, so a clone that has not run `bun install` used to commit
-        # unlinted JS and meet oxlint for the first time on push.
-        echo "pre-commit: skipping JavaScript lint, node_modules/.bin/oxlint is absent (fix: bun install)" >&2
+        echo "pre-commit: skipping JavaScript lint, bun is not installed (CI runs it)" >&2
     fi
 fi
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>clanker</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%20width='32'%20height='32'%20role='img'%20aria-label='clanker'%3E%3Cdefs%3E%3CradialGradient%20id='dome'%20cx='35%25'%20cy='30%25'%20r='70%25'%3E%3Cstop%20offset='0'%20stop-color='%23ffffff'%20stop-opacity='0.85'/%3E%3Cstop%20offset='0.5'%20stop-color='%23ffffff'%20stop-opacity='0'/%3E%3Cstop%20offset='0.6'%20stop-color='%23121411'%20stop-opacity='0'/%3E%3Cstop%20offset='1'%20stop-color='%23121411'%20stop-opacity='0.5'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect%20width='32'%20height='32'%20rx='6'%20fill='%23171916'/%3E%3Crect%20x='2.75'%20y='2.75'%20width='26.5'%20height='26.5'%20rx='4'%20fill='none'%20stroke='%23454a44'%20stroke-width='1.5'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='7.25'%20fill='%23121411'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='6'%20fill='%23117a3a'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='6'%20fill='url(%23dome)'/%3E%3Crect%20x='10'%20y='24'%20width='12'%20height='2.5'%20rx='1'%20fill='%23a3aaa1'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%20width='32'%20height='32'%20role='img'%20aria-label='clanker'%3E%3Cdefs%3E%3CradialGradient%20id='dome'%20cx='35%25'%20cy='30%25'%20r='70%25'%3E%3Cstop%20offset='0'%20stop-color='%23ffffff'%20stop-opacity='0.85'/%3E%3Cstop%20offset='0.5'%20stop-color='%23ffffff'%20stop-opacity='0'/%3E%3Cstop%20offset='0.6'%20stop-color='%23121411'%20stop-opacity='0'/%3E%3Cstop%20offset='1'%20stop-color='%23121411'%20stop-opacity='0.5'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect%20width='32'%20height='32'%20rx='6'%20fill='%23171916'/%3E%3Crect%20x='2.75'%20y='2.75'%20width='26.5'%20height='26.5'%20rx='4'%20fill='none'%20stroke='%236e726c'%20stroke-width='1.5'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='7.25'%20fill='%23121411'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='6'%20fill='%23117a3a'/%3E%3Ccircle%20cx='16'%20cy='14'%20r='6'%20fill='url(%23dome)'/%3E%3Crect%20x='10'%20y='24'%20width='12'%20height='2.5'%20rx='1'%20fill='%23a3aaa1'/%3E%3C/svg%3E">
 <!-- The one stylesheet: the cabinet's tokens and element layer, the port's
      utilities and the component rules. Compiled from ui/app/tailwind.src.css
      by `bun run css:build`; see ui/app/tailwind.css. -->
@@ -97,7 +97,7 @@ lamps carry further). The seven named palettes ride the same tokens.
   <radialGradient id="brand-dome" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/><stop offset="0.6" stop-color="#121411" stop-opacity="0"/><stop offset="1" stop-color="#121411" stop-opacity="0.5"/></radialGradient>
 </defs>
 <rect width="32" height="32" rx="6" fill="#171916"/>
-<rect x="2.75" y="2.75" width="26.5" height="26.5" rx="4" fill="none" stroke="#454a44" stroke-width="1.5"/>
+<rect x="2.75" y="2.75" width="26.5" height="26.5" rx="4" fill="none" stroke="#6e726c" stroke-width="1.5"/>
 <circle cx="16" cy="14" r="7.25" fill="#121411"/>
 <circle cx="16" cy="14" r="6" fill="#117a3a"/>
 <circle cx="16" cy="14" r="6" fill="url(#brand-dome)"/>
@@ -127,7 +127,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
 <div class="hidden max-[640px]:[&[data-open=true]]:fixed max-[640px]:[&[data-open=true]]:inset-0 max-[640px]:[&[data-open=true]]:z-14 max-[640px]:[&[data-open=true]]:block max-[640px]:[&[data-open=true]]:bg-[color-mix(in_srgb,var(--bg)_60%,transparent)]" id="rail-scrim" data-open="false"></div>
-<aside class="rail row-start-2 flex h-full w-60 max-w-none flex-none flex-col overflow-hidden overscroll-contain border-e border-rule bg-surface px-3 py-3 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent] max-[640px]:fixed max-[640px]:inset-y-0 max-[640px]:left-0 max-[640px]:z-15 max-[640px]:h-auto max-[640px]:w-[min(20rem,85vw)] max-[640px]:bg-bg max-[640px]:shadow-[var(--lift-high)] max-[640px]:transition-transform max-[640px]:duration-150 max-[640px]:data-[open=false]:invisible max-[640px]:data-[open=false]:-translate-x-full min-[769px]:data-[collapsed=true]:w-14 min-[769px]:data-[collapsed=true]:max-w-14 min-[769px]:data-[collapsed=true]:px-1 motion-reduce:transition-none" data-rail="sidebar" id="rail" aria-label="Navigation">
+<aside class="rail row-start-2 flex h-full w-60 max-w-none flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-e border-rule bg-surface px-3 py-3 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent] max-[640px]:fixed max-[640px]:inset-y-0 max-[640px]:left-0 max-[640px]:z-15 max-[640px]:h-auto max-[640px]:w-[min(20rem,85vw)] max-[640px]:bg-bg max-[640px]:shadow-[var(--lift-high)] max-[640px]:transition-transform max-[640px]:duration-150 max-[640px]:data-[open=false]:invisible max-[640px]:data-[open=false]:-translate-x-full min-[769px]:data-[collapsed=true]:w-14 min-[769px]:data-[collapsed=true]:max-w-14 min-[769px]:data-[collapsed=true]:px-1 motion-reduce:transition-none" data-rail="sidebar" id="rail" aria-label="Navigation">
   <div class="flex min-h-0 flex-1 flex-col">
   <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
        Work destinations stay visible, conversations fill the column,
@@ -166,7 +166,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </details>
   </nav>
 
-  <div class="mt-2 flex min-h-32 flex-1 flex-col border-t border-rule pt-2" data-rail-section="context" id="rail-context">
+  <div class="mt-2 flex min-h-fit flex-1 flex-col border-t border-rule pt-2" data-rail-section="context" id="rail-context">
     <div class="flex flex-none flex-col gap-2">
       <div class="flex items-stretch gap-1 [&_select]:min-h-8 [&_select]:min-w-0 [&_select]:flex-1 [&_select]:font-sans [&_select]:text-sm [&_select]:max-[640px]:[font-size:16px]">
         <label class="sr-only" for="workspace-pick">Workspace</label>
@@ -183,7 +183,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <input type="checkbox" id="archived-toggle"> Show archived
       </label>
     </div>
-    <ul class="mt-4 flex min-h-0 flex-1 list-none flex-col gap-px overflow-y-auto overscroll-contain p-0 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent]" id="rail-list" aria-label="Conversations"></ul>
+    <ul class="mt-4 flex min-h-24 flex-1 list-none flex-col gap-px overflow-y-auto overscroll-contain p-0 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent]" id="rail-list" aria-label="Conversations"></ul>
   </div>
 
   <nav class="mt-auto flex-none border-t border-rule pt-2" data-rail-section="settings" aria-label="Set up">

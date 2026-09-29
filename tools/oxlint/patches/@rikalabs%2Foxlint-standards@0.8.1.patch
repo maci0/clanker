@@ -1,3 +1,19 @@
+diff --git a/node_modules/@rikalabs/oxlint-standards/.bun-tag-b387c798df311878 b/.bun-tag-b387c798df311878
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/plugin/rules/no-unlisted-external-imports.js b/dist/plugin/rules/no-unlisted-external-imports.js
+index 6623039d56813757eace5d26e17233226da94730..b9428dd96c4d44d26da7b5082faa0275015d2b35 100644
+--- a/dist/plugin/rules/no-unlisted-external-imports.js
++++ b/dist/plugin/rules/no-unlisted-external-imports.js
+@@ -145,7 +145,7 @@ const maybeReportImport = (context, source, node) => {
+     if (isInternalSpecifier(source))
+         return;
+     const packageName = source.startsWith("node:") ? source.replace(/^node:/, "") : toPackageName(source);
+-    if (BUILTIN_MODULES.has(source) || BUILTIN_MODULES.has(packageName))
++    if (source.startsWith("node:") || BUILTIN_MODULES.has(source) || BUILTIN_MODULES.has(packageName))
+         return;
+     const allowedDependencies = loadAllowedDependencies(context.filename);
+     if (allowedDependencies.has(packageName))
 diff --git a/presets/core-clean.json b/presets/core-clean.json
 index 0d4771856d4250b4293e918d74ee6cf21765e693..99c9ea72fbd308691528d99e62cd1f457fb6528c 100644
 --- a/presets/core-clean.json
