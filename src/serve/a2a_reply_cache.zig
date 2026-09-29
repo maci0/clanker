@@ -65,7 +65,7 @@ pub const Cache = struct {
     /// Connections are handled one thread each, so two retries of one id can
     /// arrive together and both reach `begin` before either has stored
     /// anything. The lock is what makes the second one see the first's claim.
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.c.pthread_mutex_t = .{},
     entries: std.ArrayList(Entry) = .empty,
     bytes: usize = 0,
 
@@ -74,8 +74,8 @@ pub const Cache = struct {
     }
 
     pub fn deinit(self: *Cache) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
         for (self.entries.items) |e| {
             if (e.body) |b| self.gpa.free(b);
             self.gpa.free(e.id);
@@ -128,8 +128,8 @@ pub const Cache = struct {
 
     /// Registers interest in `key`. See `Begin`.
     pub fn begin(self: *Cache, key: []const u8, now: i64) Begin {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
         self.sweep(now);
         if (self.find(key)) |i| {
             if (self.entries.items[i].body) |b| return .{ .replay = b };
@@ -151,8 +151,8 @@ pub const Cache = struct {
     /// caller's buffer is a stack frame that is gone by the time a retry lands.
     /// Swept at the entry's own stamp, so a long run does not expire itself.
     pub fn finish(self: *Cache, key: []const u8, body: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         const copy = self.gpa.dupe(u8, body) catch return;
@@ -164,8 +164,8 @@ pub const Cache = struct {
     /// Drops a claim whose run failed, so the peer's retry runs the agent
     /// instead of replaying a failure as a success.
     pub fn release(self: *Cache, key: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        _ = std.c.pthread_mutex_lock(&self.mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.mutex);
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         self.removeAt(i);

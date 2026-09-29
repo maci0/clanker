@@ -6,8 +6,8 @@
 //! body so a test can assert on what the real agent loop actually sent back
 //! (e.g. that a tool's real output made it into the next turn's messages).
 //!
-//! Network plumbing (bind-with-retry, accept loop, self-connect to unblock a
-//! pending accept on stop) mirrors mock_server.zig's proven approach.
+//! Network plumbing (kernel-assigned port, accept loop, self-connect to unblock
+//! a pending accept on stop) mirrors mock_server.zig's proven approach.
 
 const std = @import("std");
 const raw_http = @import("raw_http");
@@ -36,24 +36,22 @@ pub const Server = struct {
 
     pub fn start(io: std.Io, gpa: std.mem.Allocator, script: []const []const u8) !*Server {
         std.debug.assert(script.len > 0);
-        var seed_ctr: std.atomic.Value(u64) = .init(0);
-        const seed = std.hash.Wyhash.hash(0x9E3779B97F4A7C15, std.mem.asBytes(&@intFromPtr(&seed_ctr))) +% seed_ctr.fetchAdd(1, .monotonic);
-        var rng = std.Random.DefaultPrng.init(seed);
-        var server: ?std.Io.net.Server = null;
-        var port: u16 = 0;
-        for (0..64) |_| {
-            port = 20000 + @as(u16, @intCast(rng.random().intRangeLessThan(u32, 0, 30000)));
-            const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-            server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch continue;
-            break;
-        }
-        if (server == null) return error.CannotBindMockPort;
+        // Port 0: the kernel picks a free ephemeral port, so concurrent test
+        // processes cannot collide on a probed range. The old code walked a
+        // 64-port range seeded from the address of a stack local, so the walk
+        // itself moved with the stack layout: two runs of one journey probed
+        // different ports and a failure could not be replayed against the
+        // port the run under test had already written into its config.
+        // `src/llm/mock_server.zig` dropped the same walk for the same reason.
+        const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+        const server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch return error.CannotBindMockPort;
+        const port = server.socket.address.getPort();
 
         const self = try gpa.create(Server);
         self.* = .{
             .io = io,
             .gpa = gpa,
-            .server = server.?,
+            .server = server,
             .thread = undefined,
             .script = script,
             .port = port,
