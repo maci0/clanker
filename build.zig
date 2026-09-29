@@ -541,6 +541,16 @@ pub fn build(b: *std.Build) void {
     const modelpicker_js_test = b.addSystemCommand(&.{ "bun", "test" });
     modelpicker_js_test.addFileArg(b.path("ui/app/core/modelpicker.test.mjs"));
     test_step.dependOn(&modelpicker_js_test.step);
+    // Reduced motion as a setting: which rules in the only first-party sheet
+    // move something, and whether the one unlayered guard names every one.
+    const motion_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    motion_js_test.addFileArg(b.path("ui/app/motion.test.mjs"));
+    test_step.dependOn(&motion_js_test.step);
+    // The overlay focus trap: what it counts as a tab stop, so a disclosure fold
+    // inside a dialog cannot walk Tab off the end of the dialog.
+    const overlay_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    overlay_js_test.addFileArg(b.path("ui/app/core/overlay.test.mjs"));
+    test_step.dependOn(&overlay_js_test.step);
     // The Jump palette has to answer on the first Ctrl+K, before any lazy view
     // module has loaded, so the shipped stand-in refs are part of its contract.
     const palette_js_test = b.addSystemCommand(&.{ "bun", "test" });

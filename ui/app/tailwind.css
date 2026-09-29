@@ -4700,11 +4700,6 @@
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .skip-link {
-      transition: none;
-    }
-  }
   #app-page, #app-masthead, #rail, #task-form {
     min-width: 0;
     max-width: 100%;
@@ -5268,11 +5263,6 @@
     transform: translateY(1px);
     box-shadow: var(--bevel-pressed);
   }
-  @media (prefers-reduced-motion: reduce) {
-    button:active:not(:disabled) {
-      transform: none;
-    }
-  }
   @media (forced-colors: active) {
     button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag, .code-block, .code-head, .copy-code-btn, .run-node-incomplete {
       border: 1px solid ButtonText;
@@ -5303,11 +5293,6 @@
     padding: 0.15em 0.2em;
     box-decoration-break: clone;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .scroll-bottom:active:not(:disabled) {
-      transform: none;
-    }
-  }
   @media (max-width: 520px) {
     .suggestions {
       grid-template-columns: 1fr;
@@ -5327,11 +5312,6 @@
     to {
       opacity: 1;
       transform: none;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .toast {
-      animation: none;
     }
   }
   .shell {
@@ -5385,21 +5365,6 @@
     }
     50% {
       opacity: 0.92;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .fleet-card, .card {
-      transition: none;
-    }
-    .turn[data-phase="ask"]::before, .turn[data-phase="llm"]::before {
-      animation: none;
-    }
-    .card:hover {
-      transform: none;
-      box-shadow: var(--lift);
-    }
-    .card[data-dragging="true"] {
-      transform: none;
     }
   }
   @media (max-width: 56.25rem) {
@@ -6748,6 +6713,24 @@
     body:has(#music-dock:not([data-collapsed="true"])) {
       padding-bottom: 8rem;
     }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skip-link, .toast, .rail-fold > summary.rail-group::after, .disclosure-caret > summary::before, .code-block .copy-code-btn, .fleet-card, .card {
+    transition: none;
+    animation: none;
+  }
+  .turn[data-phase="ask"]::before, .turn[data-phase="llm"]::before {
+    animation: none;
+  }
+  button:active:not(:disabled), .scroll-bottom:active:not(:disabled), .card:hover, .card[data-dragging="true"] {
+    transform: none;
+  }
+  .card:hover {
+    box-shadow: var(--lift);
+  }
+  #board-grid {
+    scroll-behavior: auto;
   }
 }
 @property --tw-translate-x {

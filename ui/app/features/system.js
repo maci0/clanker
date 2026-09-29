@@ -5,7 +5,7 @@
    and a GET /api/mcp/servers it never read. They load with the System view now,
    like every other feature view. */
 import { readJson, postJson, wireRefresh } from "../core/utils.js";
-import { paintTomlInto } from "../core/vendor.js";
+import { paintTomlInto, reducedMotion } from "../core/vendor.js";
 import { uiConfirm, showLoadError } from "../core/ui.js";
 
 /* ---- config editor (System view) ----------------------------------------
@@ -184,7 +184,7 @@ function bindMcpServers() {
     note("");
     syncMcpTransportFields();
     host.hidden = false;
-    try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+    try { host.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "nearest" }); } catch (_) {}
   }
 
   function buildBlock(name) {

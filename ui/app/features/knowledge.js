@@ -1,6 +1,7 @@
 // Knowledge view — single-user. Collections of documents.
 import { uiConfirm, uiPrompt, toast, showLoadError, requireText, runDetail as chrome } from "../core/ui.js";
 import * as kit from "../core/kit.js";
+import { reducedMotion } from "../core/vendor.js";
 import { readJson, fmtBytes, wireRefresh, plural, showLoading } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
@@ -52,7 +53,7 @@ export function loadKnowledge(){
         var start=kit.button({variant:"primary"}, "Add collection");
         start.addEventListener("click",function(){
           var title=document.getElementById("knowledge-title");
-          if(title){ title.focus(); title.scrollIntoView({behavior:"smooth",block:"center"}); }
+          if(title){ title.focus(); title.scrollIntoView({behavior:reducedMotion.matches?"auto":"smooth",block:"center"}); }
         });
         empty.appendChild(start); list.appendChild(empty);
       } else cols.forEach(function(c){
@@ -241,7 +242,7 @@ function openCollection(id, docId){
       fillPreview(row, d.content || "");
       if(docId && d.id===docId){
         row.setAttribute("data-found","true");
-        try{ row.scrollIntoView({behavior:"smooth",block:"center"}); }catch(_){}
+        try{ row.scrollIntoView({behavior:reducedMotion.matches?"auto":"smooth",block:"center"}); }catch(_){}
       }
       detail.appendChild(row);
     });
@@ -276,7 +277,7 @@ function openCollection(id, docId){
     });
     detail.appendChild(addForm);
     if(!docId){
-      try{ detail.scrollIntoView({behavior:"smooth",block:"nearest"}); }catch(_){}
+      try{ detail.scrollIntoView({behavior:reducedMotion.matches?"auto":"smooth",block:"nearest"}); }catch(_){}
     }
   }).catch(function(err){
     var detail=document.getElementById("knowledge-detail");

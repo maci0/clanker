@@ -2,7 +2,7 @@
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
 import * as kit from "../core/kit.js";
 import { readJson, wireRefresh, searchFold, formatChatTime, showLoading } from "../core/utils.js";
-import { copyText } from "../core/vendor.js";
+import { copyText, reducedMotion } from "../core/vendor.js";
 
 /* The prompt cards, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). A card is a name-and-meta line with the body
@@ -95,7 +95,7 @@ function renderPrompts(prompts){
     start.addEventListener("click",function(){
       var title=document.getElementById("prompts-title");
       if(title){
-        try{ title.scrollIntoView({behavior:"smooth",block:"center"}); }catch(_){}
+        try{ title.scrollIntoView({behavior:reducedMotion.matches?"auto":"smooth",block:"center"}); }catch(_){}
         title.focus();
       }
     });

@@ -8,6 +8,7 @@ import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, w
 import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError, requireText } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
+import { reducedMotion } from "../core/vendor.js";
 /* An empty field on a form that just `return`s is a button that looks broken
    from the other side: nothing tells the operator their text was dropped, and
    the press did nothing at all. `requireText` (core/ui.js) is that refusal, and
@@ -2379,7 +2380,7 @@ export function bindBoard(deps) {
     if (fold) fold.open = true;
     var obj = document.getElementById("goal-objective");
     if (obj) {
-      try { obj.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      try { obj.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "center" }); } catch (_) {}
       obj.focus();
     }
   });

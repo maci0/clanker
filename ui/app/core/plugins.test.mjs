@@ -305,6 +305,7 @@ function loadHost(page, extras) {
     cssColorAlpha: () => "", cssColorMix: () => "", peerColor: () => "",
     themeToken: (n) => String(n), providerUnusableReason: () => "",
     fmtMs: () => "", fmtPct: () => "", fmtUsd: () => "", fmtDeadline: () => "",
+    requireText: () => true, showLoading: () => {},
     uiConfirm: () => Promise.resolve(false),
     uiPrompt: () => Promise.resolve(null),
     toast: () => {},

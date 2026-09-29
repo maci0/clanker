@@ -324,7 +324,6 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
   /* The shell is one viewport wide. The masthead, rail, and composer shrink
      instead of widening the page, and a label clips inside its control. */
   #app-page,
@@ -654,8 +653,6 @@
     transform: translateY(1px);
     box-shadow: var(--bevel-pressed);
   }
-  @media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none; } }
-
   @media (forced-colors: active) {
   button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag,
     .code-block, .code-head, .copy-code-btn, .run-node-incomplete { border: 1px solid ButtonText; }
@@ -703,8 +700,6 @@
      happens to be beneath it, and moving it only changes which button that is.
      It lives in the composer's toolbar, which is where "latest" is, and is shown
      only while the latest turn is off screen. */
-  @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
-
   /* Transcript empty — idle legend plate, not a chat-product hero */
   @media (max-width: 520px) { .suggestions { grid-template-columns: 1fr; } }
   /* Chat docks a composer at the bottom of the main column, and the composer's
@@ -716,7 +711,6 @@
   :root { --composer-docked-height: 10rem; }
   body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(--composer-docked-height)); }
   @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
   /* The one checkbox among text boxes. The global `input[type="checkbox"]` rule
      already sizes it, but `.goal-form input`'s `flex: 1 1 16rem` matches at the
@@ -836,13 +830,6 @@
   @keyframes lamp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
   @keyframes lamp-steady { 0%, 100% { opacity: 0.7; } 50% { opacity: 0.92; } }
 
-  @media (prefers-reduced-motion: reduce) {
-    .fleet-card, .card { transition: none; }
-    .turn[data-phase="ask"]::before,
-    .turn[data-phase="llm"]::before { animation: none; }
-    .card:hover { transform: none; box-shadow: var(--lift); }
-    .card[data-dragging="true"] { transform: none; }
-  }
   @media (max-width: 56.25rem) {
     #view-fleet   .fleet-card { flex-direction: column; align-items: flex-start; }
     .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
@@ -1874,4 +1861,48 @@
   --shadow-lamp-glow: var(--lamp-glow);
 
   --background-image-lamp-dome: var(--lamp-dome);
+}
+
+/* Reduced motion, in one place, and deliberately unlayered.
+   A cascade layer outranks an earlier rule of equal specificity wherever either
+   sits in the file, so every `@media (prefers-reduced-motion: reduce)` block
+   this sheet used to carry inside `@layer base` was dead: the component or
+   utility rule it corrected won on layer order, so `.toast` slid in, the turn
+   lamps breathed, the skip link dropped, and a pressed button still travelled,
+   for a reader who asked for none of it. An unlayered rule outranks every
+   layered one, and this one is last in the file, so it outranks the unlayered
+   rules above it too.
+   The selectors here are the whole set of rules in this sheet (and in the
+   utilities the views put on these elements) that move something, so a new
+   animation or transition is a diff that has to be added here as well.
+   `ui/app/motion.test.mjs` pins that pairing: a moving rule the guard does not
+   name fails the suite.
+   `.lit[data-state="running"]` is the one rule that answers at the property
+   instead, under `prefers-reduced-motion: no-preference` above, because a lamp
+   that stops pulsing still has to read as lit. */
+@media (prefers-reduced-motion: reduce) {
+  .skip-link,
+  .toast,
+  .rail-fold > summary.rail-group::after,
+  .disclosure-caret > summary::before,
+  .code-block .copy-code-btn,
+  .fleet-card,
+  .card {
+    transition: none;
+    animation: none;
+  }
+  .turn[data-phase="ask"]::before,
+  .turn[data-phase="llm"]::before { animation: none; }
+  /* A press travels, a card lifts and a drag offset is a position: all three
+     are movement, and a lifted card under a reduce setting was a card that
+     jumped instead of settling. */
+  button:active:not(:disabled),
+  .scroll-bottom:active:not(:disabled),
+  .card:hover,
+  .card[data-dragging="true"] { transform: none; }
+  .card:hover { box-shadow: var(--lift); }
+  /* `scroll-smooth` on the board grid is a Tailwind utility, so there is no
+     reduce variant of it to reach for. The lanes still scroll; they arrive at
+     once. */
+  #board-grid { scroll-behavior: auto; }
 }

@@ -2,7 +2,7 @@
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh, showLoading } from "../core/utils.js";
-import { paintTomlInto } from "../core/vendor.js";
+import { paintTomlInto, reducedMotion } from "../core/vendor.js";
 
 /* The Models view's own shapes, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). The grid strings are spelled the same way
@@ -207,7 +207,7 @@ function showSnippet(m) {
   resetSaveButtons();
   setSnippetNote("");
   status("config.local.toml entry for " + m.provider + "/" + m.id + ".");
-  try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+  try { host.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "nearest" }); } catch (_) {}
 }
 
 function resetSaveButtons() {
@@ -588,7 +588,7 @@ function showEditPanel(entry, isNew) {
   setTomlMode(false);
   setEditNote("");
   host.hidden = false;
-  try { host.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_) {}
+  try { host.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "nearest" }); } catch (_) {}
 }
 
 function hideEditPanel() {
