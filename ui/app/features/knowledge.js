@@ -1,7 +1,7 @@
 // Knowledge view — single-user. Collections of documents.
-import { uiConfirm, uiPrompt, toast, showLoadError, runDetail as chrome } from "../core/ui.js";
+import { uiConfirm, uiPrompt, toast, showLoadError, requireText, runDetail as chrome } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { readJson, fmtBytes, wireRefresh, plural } from "../core/utils.js";
+import { readJson, fmtBytes, wireRefresh, plural, showLoading } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){
@@ -39,6 +39,7 @@ function updateHint(){
 export function loadKnowledge(){
   var status=document.getElementById("knowledge-status");
   if(status) status.textContent="Loading…";
+  showLoading(document.getElementById("knowledge-list"), "Loading collections…");
   return fetch("/api/knowledge").then(readJson).then(function(data){
     var cols=(data&&data.collections)||[];
     var list=document.getElementById("knowledge-list");
@@ -233,7 +234,7 @@ function openCollection(id, docId){
         uiConfirm("Delete \""+d.name+"\"? This cannot be undone.", { danger: true, confirmLabel: "Delete" }).then(function(yes){
           if(!yes) return;
           fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs/"+encodeURIComponent(d.id),{method:"DELETE"})
-            .then(readJson).then(function(){ openCollection(id); loadKnowledge(); }).catch(function(e){ toast(e.message); });
+            .then(readJson).then(function(){ toast("Deleted "+d.name+"."); openCollection(id); loadKnowledge(); }).catch(function(e){ toast(e.message); });
         });
       });
       row.appendChild(rm);
@@ -262,8 +263,12 @@ function openCollection(id, docId){
     addForm.appendChild(fileInput);
     var submit=kit.button({variant:"primary", type:"submit"}, "Add document"); addForm.appendChild(submit);
     addForm.addEventListener("submit",function(e){
-      e.preventDefault(); var name=nInput.value.trim(); var content=cInput.value;
-      if(!name||!content.trim()){ toast("Name and content are both required."); return; }
+      e.preventDefault();
+      // A toast cannot say which of the two fields is the empty one, and the
+      // dialog stays open either way; the browser points at the field.
+      if(!requireText(nInput, "Name the document.")) return;
+      if(!requireText(cInput, "Give the document its content.")) return;
+      var name=nInput.value.trim(); var content=cInput.value;
       submit.disabled=true;
       fetch("/api/knowledge/"+encodeURIComponent(id)+"/docs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name,content:content})})
         .then(readJson)
@@ -294,7 +299,7 @@ function deleteCollection(id,title){
     if(!yes) return;
     fetch("/api/knowledge/"+encodeURIComponent(id),{method:"DELETE"})
       .then(readJson)
-      .then(function(){ var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); if(syncOpenId===id) closeCollection(); loadKnowledge(); updateHint(); refreshBadge(); })
+      .then(function(){ toast("Deleted \""+title+"\"."); var at=selectedKnowledge.indexOf(id); if(at!==-1) selectedKnowledge.splice(at,1); if(syncOpenId===id) closeCollection(); loadKnowledge(); updateHint(); refreshBadge(); })
       .catch(function(err){ toast(err.message); });
   });
 }

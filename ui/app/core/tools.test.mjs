@@ -49,3 +49,9 @@ test("buildToolConfig types its inputs through configFieldKind", function () {
   // The old rule is gone: nothing types a field off typeof current directly.
   assert.doesNotMatch(src, /input\.dataset\.kind = typeof current/);
 });
+
+test("a boolean setting is chosen, not typed", function () {
+  assert.match(src, /kind === "boolean"/);
+  assert.match(src, /document\.createElement\("select"\)/);
+  assert.match(src, /input\.value = current === true \? "true" : "false"/);
+});

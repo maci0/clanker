@@ -146,6 +146,18 @@ export function toast(msg, kind) {
   return node;
 }
 
+/* A required field holding only spaces passes the browser's `required`, so a
+   handler that only checks for an empty value returns silently: the form does
+   nothing and says nothing. This is the one refusal every text field makes,
+   in the browser's own bubble on the field that needs filling. */
+export function requireText(input, message) {
+  if (input.value.trim()) { input.setCustomValidity(""); return true; }
+  input.setCustomValidity(message);
+  input.reportValidity();
+  input.setCustomValidity("");
+  return false;
+}
+
 /* A failed list fetch used to write only the sr-only status line (mirrored
    to a toast that then vanished). The panel looked empty, which reads as
    "nothing here" rather than "could not load". Put the reason and a retry

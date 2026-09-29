@@ -1,5 +1,5 @@
 import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError } from "./core/ui.js";
+import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
@@ -215,7 +215,8 @@ var el = {
   textPromptInput: document.getElementById("text-prompt-input"),
   textPromptOptions: document.getElementById("text-prompt-options"),
   textPromptHint: document.getElementById("text-prompt-hint"),
-  textPromptCancel: document.getElementById("text-prompt-cancel")
+  textPromptCancel: document.getElementById("text-prompt-cancel"),
+  textPromptSave: document.getElementById("text-prompt-save")
 };
 
 /* ---------- components ----------
@@ -1189,7 +1190,10 @@ if (el.workspaceNewForm) {
     e.preventDefault();
     var name = el.workspaceNewName ? el.workspaceNewName.value.trim() : "";
     var path = el.workspaceNewPath ? el.workspaceNewPath.value.trim() : "";
-    if (!name || !path) return;
+    // Both fields are `required`, which a box of spaces passes; a bare return
+    // closed nothing and said nothing, so the press looked broken.
+    if (el.workspaceNewName && !requireText(el.workspaceNewName, "Name the workspace.")) return;
+    if (el.workspaceNewPath && !requireText(el.workspaceNewPath, "Give the folder this workspace covers.")) return;
     fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1246,7 +1250,7 @@ el.sessionMove.addEventListener("click", function () {
     : "Leave empty for this folder, or type a name. Use + to attach a directory.";
   textPrompt({
     title: "Move to workspace", label: "Workspace", value: meta.workspace || "",
-    hint: hint, suggestions: existing
+    hint: hint, suggestions: existing, confirmLabel: "Move"
   }).then(function (next) {
     if (next === null) return;
     el.sessionMove.disabled = true;
@@ -1340,7 +1344,7 @@ el.sessionFork.addEventListener("click", function () {
 
 el.sessionRename.addEventListener("click", function () {
   withSessionMeta(function (meta) {
-    textPrompt({ title: "Rename conversation", label: "Title", value: meta.title || "" }).then(function (next) {
+    textPrompt({ title: "Rename conversation", label: "Title", value: meta.title || "", confirmLabel: "Rename" }).then(function (next) {
       if (next === null) return;
       next = next.trim();
       if (!next) {
@@ -3345,6 +3349,24 @@ var _lastChatFrom = null;
 var _lastChatTs = 0;
 function _chatDayKey(ts){ try{ var d=new Date(ts*1000); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }catch(_){ return ""; } }
 var _lastChatDay = "";
+/* The transcript is a rolling window (the poll asks `after=chatLastTs`), so a
+   search or pin hit can name a message no longer in the DOM. Both callers hold
+   that message already: render it rather than close the panel and do nothing. */
+function revealChatMessage(m) {
+  var node = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
+  if (!node) {
+    rememberChatId(chatMessageKey(m));
+    if ((m.ts || 0) > chatLastTs) chatLastTs = m.ts;
+    node = buildChatMessage(m);
+    if (node._daySep) el.chatLog.appendChild(node._daySep);
+    el.chatLog.appendChild(node);
+    syncChatLogEmpty(el.chatRoom ? el.chatRoom.value : "");
+  }
+  node.scrollIntoView({ block: "center" });
+  node.classList.add(...CHAT_HIGHLIGHT_CLASS.split(" "));
+  setTimeout(function () { node.classList.remove(...CHAT_HIGHLIGHT_CLASS.split(" ")); }, 1500);
+}
+
 function buildChatMessage(m) {
   var grouped = (m.from === _lastChatFrom) && (m.ts - _lastChatTs < 300) && (_chatDayKey(m.ts) === _lastChatDay);
   var wrap = document.createElement("div");
@@ -3829,11 +3851,7 @@ function loadChatPins(room) {
             textEl.className = PIN_TEXT_CLASS;
             textEl.textContent = text;
             row.appendChild(textEl);
-            function jump() {
-              closeChatPins();
-              var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(id) + '"]');
-              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(...CHAT_HIGHLIGHT_CLASS.split(" ")); setTimeout(function () { target.classList.remove(...CHAT_HIGHLIGHT_CLASS.split(" ")); }, 1500); }
-            }
+            function jump() { closeChatPins(); revealChatMessage(m); }
             row.addEventListener("click", jump);
             row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
             el.chatPinsList.appendChild(row);
@@ -3882,11 +3900,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
           row.className = SEARCH_RESULT_CLASS;
           row.textContent = m.from + ": " + m.text;
           row.title = m.text; // the row is one ellipsized line
-          row.addEventListener("click", function () {
-            closeChatSearch();
-            var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
-            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(...CHAT_HIGHLIGHT_CLASS.split(" ")); setTimeout(function () { target.classList.remove(...CHAT_HIGHLIGHT_CLASS.split(" ")); }, 1500); }
-          });
+          row.addEventListener("click", function () { closeChatSearch(); revealChatMessage(m); });
           el.chatSearchResults.appendChild(row);
         });
       })

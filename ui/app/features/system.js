@@ -159,6 +159,9 @@ function bindMcpServers() {
     var isNew = !s;
     s = s || {};
     f("mcp-edit-title").textContent = isNew ? "Add an MCP server" : "mcp_servers." + s.name;
+    // The Models view labels the same control "Add model" / "Save changes";
+    // one "Save" in both states said nothing about which one it was.
+    f("mcp-edit-save").textContent = isNew ? "Add server" : "Save changes";
     f("mcp-edit-name").value = s.name || "";
     f("mcp-edit-name").disabled = !isNew;
     f("mcp-edit-transport").value = s.transport || "stdio";

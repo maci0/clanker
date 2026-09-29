@@ -251,6 +251,19 @@ export function fmtDeadline(ts) {
    that provider", "an image exceeds the 4 MB limit" — and the page used to
    replace all of it with a status code, so a switched-off module read as a
    broken page. Every response goes through here. */
+/* The in-flight half of showLoadError. A list that reports "Loading…" on its
+   sr-only status line is still a blank panel for as long as the fetch takes,
+   which reads as "nothing here". Put the line where the rows will land. */
+export function showLoading(container, message) {
+  if (!container) return null;
+  var p = document.createElement("p");
+  p.className = "run-empty";
+  p.textContent = message || "Loading…";
+  container.textContent = "";
+  container.appendChild(p);
+  return p;
+}
+
 export function readJson(r) {
   // The status rides along on the error: the reason string alone cannot tell
   // a switched-off module (404 with its own words) from a server that broke

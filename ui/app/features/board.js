@@ -5,9 +5,13 @@
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
 import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh, plural, searchFold } from "../core/utils.js";
-import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
+import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError, requireText } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
+/* An empty field on a form that just `return`s is a button that looks broken
+   from the other side: nothing tells the operator their text was dropped, and
+   the press did nothing at all. `requireText` (core/ui.js) is that refusal, and
+   it lives there so every form on the page makes it, not only the board's. */
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
 import { goalState, postGoal, goalIdForCard, mirrorCardForObjective, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
 
@@ -190,19 +194,6 @@ export function loadBoard() {
    change would ping-pong between the two stores. The flag is stripped before
    sending — the board tool has no business seeing it. Resolves with the
    server's response (truthy) or false on failure, so callers can gate on it. */
-/* An empty field on a form that just `return`s is a button that looks broken
-   from the other side: nothing tells the operator their text was dropped, and
-   the press did nothing at all. The browser's own bubble names the field and
-   what it wants, which is the pattern the other forms in this app already
-   use. Returns whether there was text to send. */
-export function requireText(input, message) {
-  if (input.value.trim()) { input.setCustomValidity(""); return true; }
-  input.setCustomValidity(message);
-  input.reportValidity();
-  input.setCustomValidity("");
-  return false;
-}
-
 export function postBoard(payload, status) {
   var skipGoalSync = payload.goal_sync === false;
   delete payload.goal_sync;
@@ -2240,9 +2231,11 @@ function showCardDetail(id) {
   var noteSend = document.createElement("button");
   noteSend.type = "button";
   noteSend.className = DETAIL_SAVE_BTN_CLASS + " " + COMMENT_SEND_CLASS;
-  noteSend.textContent = "Save";
+  // The description's own save sits above this one and writes a different
+  // thing; two Saves in one panel said nothing about which was which.
+  noteSend.textContent = "Post comment";
   noteSend.addEventListener("click", function() {
-    if (!requireText(noteIn, "Write a note before saving.")) return;
+    if (!requireText(noteIn, "Write a comment before posting.")) return;
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
   noteWrap.appendChild(noteSend);

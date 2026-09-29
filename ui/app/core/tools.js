@@ -157,10 +157,25 @@ function buildToolConfig(t) {
     label.setAttribute("for", id);
     label.textContent = key;
     field.appendChild(label);
-    var input = document.createElement("input");
+    var input;
+    if (kind === "boolean") {
+      /* A free-text box asked the user to spell a boolean: "yes", "on" and
+         "1" all read as typed text and saved as false. A boolean setting is
+         chosen, not typed. */
+      input = document.createElement("select");
+      [["false", "off"], ["true", "on"]].forEach(function (pair) {
+        var opt = document.createElement("option");
+        opt.value = pair[0];
+        opt.textContent = pair[1];
+        input.appendChild(opt);
+      });
+      input.value = current === true ? "true" : "false";
+    } else {
+      input = document.createElement("input");
+      input.type = kind === "number" ? "number" : "text";
+      input.value = current === undefined || current === null ? "" : String(current);
+    }
     input.id = id;
-    input.type = kind === "number" ? "number" : "text";
-    input.value = current === undefined || current === null ? "" : String(current);
     input.dataset.kind = kind;
     field.appendChild(input);
     inputs[key] = input;

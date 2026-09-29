@@ -34,6 +34,10 @@ export function textPrompt(opts) {
   _els.textPromptInput.value = opts.value || "";
   _els.textPromptHint.textContent = opts.hint || "";
   _els.textPromptOptions.textContent = "";
+  /* One dialog, several actions ("Move to workspace", "Rename conversation"),
+     so the confirm button names the one it is about to do. "Save" in both
+     told the user nothing about what was about to change. */
+  _els.textPromptSave.textContent = opts.confirmLabel || "Save";
   (opts.suggestions || []).forEach(function (s) {
     var o = document.createElement("option");
     o.value = s;

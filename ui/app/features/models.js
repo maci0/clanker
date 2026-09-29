@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh } from "../core/utils.js";
+import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh, showLoading } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
 /* The Models view's own shapes, as Tailwind utilities over the cabinet tokens
@@ -345,6 +345,9 @@ function loadConfigured() {
   // entry to the view and behind Refresh, so without this the choice was lost
   // both times and the next "List models" quietly asked a different provider.
   var chosen = providerSel ? providerSel.value : "";
+  // Inventory, not a live listing: without this the configured table is blank
+  // for as long as /api/providers takes, which reads as "nothing configured".
+  showLoading(box, "Loading configured models…");
   return fetch("/api/providers")
     .then(readJson)
     .then(function (d) {
@@ -707,8 +710,32 @@ function saveTomlEdit() {
     .finally(function () { if (btn) btn.disabled = false; });
 }
 
+/* The save control is a type=button outside the form, so the browser never
+   runs constraint validation on submit and a temperature of 5 was written to
+   config.local.toml after a green "Saved" note. Ask the fields themselves,
+   which already carry the min/max the ranges came from, and point at the one
+   that is out of range. */
+function firstInvalidEditField() {
+  var form = document.getElementById("models-edit-form");
+  if (!form) return null;
+  var fields = form.querySelectorAll("input, select, textarea");
+  for (var i = 0; i < fields.length; i++) {
+    if (!fields[i].checkValidity()) return fields[i];
+  }
+  return null;
+}
+
 function saveEdit() {
   if (tomlMode) return saveTomlEdit();
+  var invalid = firstInvalidEditField();
+  if (invalid) {
+    var owner = invalid.closest("label");
+    var name = owner ? owner.textContent.trim().split("\n")[0].trim() : "";
+    setEditNote(name ? name + " is out of range." : "One of the fields is out of range.");
+    invalid.reportValidity();
+    invalid.focus();
+    return;
+  }
   var payload = editPayload();
   if (!payload.provider || !payload.model) {
     setEditNote("Provider and model ID are both required.");

@@ -1,7 +1,7 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { readJson, wireRefresh, searchFold, formatChatTime } from "../core/utils.js";
+import { readJson, wireRefresh, searchFold, formatChatTime, showLoading } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
 
 /* The prompt cards, as Tailwind utilities over the cabinet tokens
@@ -15,6 +15,9 @@ var BODY_CLASS = "m-0 mt-3 max-h-36 overflow-auto p-0 font-mono text-sm text-fg-
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");
   if (status) status.textContent = "Loading…";
+  // The status line is sr-only, so on a first visit the list was blank until
+  // the fetch answered, which reads as "no prompts". Say so where the cards go.
+  showLoading(document.getElementById("prompts-list"), "Loading prompts…");
   return fetch("/api/prompts").then(readJson).then(function(data){
     var prompts = (data && data.prompts) || [];
     // renderPrompts ends in applyPromptFilter, which owns the status line: it
@@ -119,7 +122,7 @@ function renderPrompts(prompts){
         if(!yes) return;
         fetch("/api/prompts",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:p.id})})
           .then(readJson)
-          .then(function(){ loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
+          .then(function(){ toast("Deleted \""+(p.title||p.id)+"\"."); loadPromptsView(); try{ refreshLocalPrompts(); }catch(_){} })
           .catch(function(e){ toast(e.message); });
       });
     });
