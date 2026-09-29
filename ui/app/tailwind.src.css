@@ -161,7 +161,7 @@
   /* Engraved legend plates: one tracking, the 0.06em DESIGN.md names.
      Headings stay untracked; tight tracking is the SaaS default this page
      does not use. */
-  --track-label: 0.06em;
+  --track-label: 0;
 
   --space-1: 0.25rem;
   --space-2: 0.4rem;
@@ -581,8 +581,8 @@
     position: sticky; top: 0; z-index: 1;
     padding: var(--space-2) var(--space-3);
     background: var(--surface-2); border-bottom: 1px solid var(--border);
-    font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
+    color: var(--fg-muted);
   }.run-row {
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border);
@@ -626,7 +626,7 @@
   }.run-detail-title { color: var(--fg); font-weight: 700; }dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
   dd ul { list-style: none; margin: 0; padding: 0; }
   dd ul li + li { margin-top: var(--space-1); }
-  dt { font-family: var(--mono); font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); }
+  dt { font-family: var(--sans); font-size: var(--step-0); font-weight: 600; color: var(--fg-muted); }
   dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
   dd ul { margin: 0; padding-inline-start: 1.1rem; }
   a { color: var(--accent-text); overflow-wrap: anywhere; }
@@ -1097,8 +1097,8 @@
     tab-size: 2;
   }
   .code-lang {
-    font-family: var(--mono); font-size: var(--step-0); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--mono); font-size: var(--step-0);
+    color: var(--fg-muted);
   }
   .code-block .copy-code-btn { opacity: 0; transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease; }
   .code-block:hover .copy-code-btn, .code-block:focus-within .copy-code-btn { opacity: 1; }
@@ -1141,9 +1141,8 @@
      plate treatment the rest of the page already uses for section names, so the
      last two levels are distinguishable without inventing a type scale. */
   .md h5.md-h, .md h6.md-h {
-    font-family: var(--mono);
-    font-size: var(--step-0); letter-spacing: var(--track-label);
-    text-transform: uppercase; color: var(--fg-muted);
+    font-family: var(--sans); font-weight: 600;
+    font-size: var(--step-0); color: var(--fg-muted);
   }
   .md .md-h:first-child { margin-top: 0; }
   .md ul, .md ol {
@@ -1183,7 +1182,7 @@
     padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--rule);
     text-align: start; vertical-align: top; font-variant-numeric: tabular-nums;
   }
-  .md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label); font-size: var(--step--1); background: var(--surface-2); }
+  .md-table th { color: var(--fg-muted); font-weight: 600; font-size: var(--step--1); background: var(--surface-2); }
   .md-img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
   .md-task { list-style: none; margin-inline-start: -1.2em; }
   .md-task input { margin-inline-end: var(--space-2); }
@@ -1372,8 +1371,8 @@
     position: sticky; top: 0; z-index: 1;
     padding: var(--space-2) var(--space-3);
     background: var(--surface-2); border-bottom: 1px solid var(--border);
-    font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
-    letter-spacing: var(--track-label); color: var(--fg-muted);
+    font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
+    color: var(--fg-muted);
   }
 
   .run-row {

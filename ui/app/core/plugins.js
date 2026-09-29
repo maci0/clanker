@@ -248,7 +248,7 @@ export function pluginApi(spec) {
 /* One row per plugin in the Set up list, and the row's parts. */
 var PLUGIN_ROW_CLASS = "mt-1 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-plate-sm border border-rule bg-surface-2 p-2";
 var PLUGIN_NAME_CLASS = "font-sans text-sm font-bold text-fg";
-var PLUGIN_GROUP_CLASS = "font-mono text-xs uppercase tracking-label text-fg-muted";
+var PLUGIN_GROUP_CLASS = "font-sans text-xs text-fg-muted";
 var PLUGIN_DESC_CLASS = "min-w-56 flex-1 font-sans text-sm text-fg-muted";
 
 /* Every addon view's chrome: the panel, the rail tab, and its keyboard wiring.

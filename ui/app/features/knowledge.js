@@ -195,7 +195,7 @@ function runFolderSync(){
 var BADGE_CLASS = "meta mt-1.5 rounded-plate-lg border border-dashed border-rule bg-surface-2 px-2 py-1.5";
 var CLEAR_CLASS = "ml-2 px-1 py-0.5 text-xs";
 var EMPTY_CLASS = "mt-6 max-w-2xl border-t border-rule py-4 text-left";
-var EMPTY_HEAD_CLASS = "mt-0 mb-2 font-mono text-xs font-semibold text-fg-muted uppercase tracking-label";
+var EMPTY_HEAD_CLASS = "mt-0 mb-2 font-sans text-xs font-semibold text-fg-muted";
 var EMPTY_COPY_CLASS = "mt-0 mb-4 max-w-[52ch] leading-relaxed text-fg-muted";
 var CARD_CLASS = "border-b border-rule px-0.5 py-3";
 var TITLE_CLASS = "flex flex-wrap items-center gap-x-3 gap-y-2";

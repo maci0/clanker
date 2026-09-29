@@ -5,7 +5,7 @@ import { fmtPct, plural } from "./utils.js";
    Models view spells them the same way for its own columns. */
 var WRAP_CLASS = "overflow-x-auto";
 var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
-var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted uppercase tracking-label whitespace-nowrap";
+var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted whitespace-nowrap";
 var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
 var NUM_CLASS = "text-right tabular-nums";
 var FOOT_CLASS = "border-t border-border border-b-0 font-bold";

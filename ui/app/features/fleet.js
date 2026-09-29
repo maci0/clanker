@@ -24,10 +24,10 @@ var DMS_CLASS = "mt-4 min-w-0";
 var DM_LIST_CLASS = "mt-2 flex flex-col gap-2";
 var DM_CARD_CLASS = "gap-3";
 var DM_TITLE_ROW_CLASS = "flex min-w-0 flex-wrap items-center gap-2";
-var DM_BADGE_CLASS = "text-xs uppercase tracking-label";
+var DM_BADGE_CLASS = "text-xs";
 var DM_PREVIEW_CLASS = "mt-1 max-w-full overflow-hidden text-ellipsis whitespace-nowrap";
 var A2A_CLASS = "mt-4 rounded-plate-lg border border-rule bg-surface p-3";
-var A2A_HEAD_CLASS = "mb-2 font-sans text-xs font-semibold text-fg-muted uppercase tracking-label";
+var A2A_HEAD_CLASS = "mb-2 font-sans text-xs font-semibold text-fg-muted";
 var A2A_NAME_CLASS = "font-mono text-sm font-bold text-fg wrap-anywhere";
 var A2A_ID_CLASS = "font-mono text-xs text-fg-muted wrap-anywhere";
 var A2A_SKILLS_CLASS = "mt-1 font-mono text-xs text-fg-muted wrap-anywhere";
@@ -722,7 +722,7 @@ var NODE_CLASS = "group";
 var HALO_CLASS = "pointer-events-none fill-ok-fill opacity-0 [transform-box:fill-box] [transform-origin:center] group-data-[working=1]:animate-lamp-glow motion-reduce:animate-none motion-reduce:opacity-35";
 var LAMP_CLASS = "fill-[url(#mesh-lamp-idle)] stroke-[1.2] stroke-[color-mix(in_srgb,var(--fg)_18%,var(--surface))] group-data-[self=1]:fill-[url(#mesh-lamp-self)] group-data-[working=1]:fill-[url(#mesh-lamp-live)]";
 var LABEL_CLASS = "pointer-events-none fill-fg font-mono text-xs [text-anchor:middle]";
-var META_TEXT_CLASS = "pointer-events-none fill-fg-muted font-mono text-2xs uppercase tracking-label [text-anchor:middle]";
+var META_TEXT_CLASS = "pointer-events-none fill-fg-muted font-sans text-2xs [text-anchor:middle]";
 
 function meshPos(nodes, i, w, h) {
   if (i === 0) return { x: w / 2, y: h / 2 };

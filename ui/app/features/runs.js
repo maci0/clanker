@@ -68,7 +68,7 @@ var CRUMB_BTN_CLASS = "secondary text-sm aria-[current=true]:border-accent aria-
 var KIND_BAR_CLASS = "mb-2 flex flex-wrap gap-1";
 var KIND_BTN_CLASS = "secondary aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-on-accent";
 var MINIMAP_CLASS = "absolute bottom-2 right-2 h-[90px] w-[148px] cursor-pointer overflow-hidden rounded-plate border border-border bg-surface shadow-[var(--lift)] hover:border-accent";
-var MINIMAP_LABEL_CLASS = "pointer-events-none absolute left-1 top-0.5 font-mono text-2xs uppercase tracking-label text-fg-muted";
+var MINIMAP_LABEL_CLASS = "pointer-events-none absolute left-1 top-0.5 font-sans text-2xs text-fg-muted";
 var MINIMAP_VIEWPORT_CLASS = "pointer-events-auto absolute cursor-grab rounded-plate border-[1.5px] border-accent bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] active:cursor-grabbing";
 var MINIMAP_CANVAS_CLASS = "pointer-events-none absolute inset-0 h-full w-full";
 

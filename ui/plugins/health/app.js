@@ -37,7 +37,7 @@ import { fmtPct as fmtPctFmt, fmtUnit } from "/webui/core/utils.js";
    pseudo-element and the two-shadow lit state are not utilities), and the rest
    is utilities over the cabinet tokens. */
 var TILE_CLASS = "lamp relative flex flex-col gap-1 rounded-plate-lg border border-border bg-surface py-3 pe-4 ps-[1.8rem]";
-var HEAD_CELL_CLASS = "border-b border-border px-3 py-2 text-left align-middle text-xs font-semibold uppercase tracking-label text-fg-muted";
+var HEAD_CELL_CLASS = "border-b border-border px-3 py-2 text-left align-middle text-xs font-semibold text-fg-muted";
 var CELL_CLASS = "border-b border-rule px-3 py-2 text-left align-middle";
 /* One hue getting stronger as the band gets slower: an ordered magnitude, so
    the ramp rides the opacity scale rather than five hand-written values. */
@@ -197,7 +197,7 @@ clanker.registerView({
     function tile(label, value, note, stateKey) {
       var box = api.el("div", TILE_CLASS);
       if (stateKey) box.setAttribute("data-state", stateKey);
-      box.appendChild(api.el("span", "text-xs uppercase tracking-label text-fg-muted", label));
+      box.appendChild(api.el("span", "text-xs text-fg-muted", label));
       box.appendChild(api.el("strong", "font-mono text-xl font-semibold text-fg tabular-nums", value));
       box.appendChild(api.el("span", "text-xs text-fg-muted", note));
       return box;

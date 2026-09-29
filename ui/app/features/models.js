@@ -9,7 +9,7 @@ import { paintTomlInto, reducedMotion } from "../core/vendor.js";
    core/usage.js spells them: the two tables are one presentation. */
 var WRAP_CLASS = "overflow-x-auto";
 var TABLE_CLASS = "mt-4 w-full border-collapse font-mono text-sm";
-var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted uppercase tracking-label whitespace-nowrap";
+var TH_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-left font-bold text-fg-muted whitespace-nowrap";
 var TD_CLASS = "border-b border-rule py-2 pr-3 pl-0 text-fg";
 var NUM_CLASS = "text-right tabular-nums";
 var EMPTY_CLASS = "mt-4 font-mono text-sm text-fg-muted";

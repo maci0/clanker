@@ -154,7 +154,7 @@ clanker.registerView({
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
-    var hiddenBtn = mk("button", "secondary font-mono tracking-label data-[active=1]:border-accent data-[active=1]:text-accent", "Hidden");
+    var hiddenBtn = mk("button", "secondary font-sans data-[active=1]:border-accent data-[active=1]:text-accent", "Hidden");
     hiddenBtn.type = "button";
     hiddenBtn.title = "Show hidden files";
     hiddenBtn.setAttribute("aria-pressed","false");

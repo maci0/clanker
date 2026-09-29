@@ -1582,7 +1582,7 @@ var RAIL_ITEM_CLASS = "block min-h-8 w-full cursor-pointer rounded-plate border 
 var RAIL_ITEM_TITLE_CLASS = "block truncate";
 var RAIL_ITEM_META_CLASS = "block tabular-nums text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))]";
 var RAIL_PIN_CLASS = "min-h-8 min-w-8 flex-none cursor-pointer rounded-plate-sm border-0 bg-transparent px-2 font-mono text-sm text-fg-muted shadow-none hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-pressed:text-accent data-[on=true]:text-accent";
-var RAIL_GROUP_CLASS = "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg";
+var RAIL_GROUP_CLASS = "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold text-fg-muted hover:text-fg";
 var RAIL_GROUP_CARET_CLASS = "w-[1em] flex-none";
 var RAIL_GROUP_NAME_CLASS = "flex-1 truncate";
 var RAIL_GROUP_COUNT_CLASS = "font-mono tabular-nums";
@@ -2459,7 +2459,7 @@ function paintRunMetrics() {
     el.runMetrics.textContent = "";
     cells.forEach(function (p) {
       var s = document.createElement("span");
-      s.className = "whitespace-nowrap" + (p.key === "scope" ? " font-bold uppercase tracking-label" : "");
+      s.className = "whitespace-nowrap" + (p.key === "scope" ? "font-bold" : "");
       s.setAttribute("data-m", p.key);
       s.textContent = p.text;
       el.runMetrics.appendChild(s);
@@ -2534,7 +2534,7 @@ el.form.addEventListener("submit", function (e) {
        so a reader scanning back knows this answer never touched anything. */
     turn.root.setAttribute("data-plan", "true");
     var planBadge = document.createElement("span");
-    planBadge.className = "ml-1 rounded-plate-sm border border-accent px-2 py-0.5 font-mono text-xs uppercase tracking-label whitespace-nowrap text-accent-text";
+    planBadge.className = "ml-1 rounded-plate-sm border border-accent px-2 py-0.5 font-sans text-xs whitespace-nowrap text-accent-text";
     planBadge.textContent = "plan";
     var youHead = turn.root.querySelector(".turn-you-head");
     (youHead || turn.root.querySelector("[data-turn=you]")).appendChild(planBadge);
@@ -3337,10 +3337,10 @@ var CHAT_REACTION_CLASS = "cursor-pointer rounded-capsule border border-rule bg-
 var CHAT_THREAD_BAR_CLASS = "mt-2 flex flex-wrap items-center gap-2 text-sm [&_button]:min-h-6 [&_button]:rounded-capsule [&_button]:px-2 [&_button]:text-xs";
 var CHAT_THREAD_LIST_CLASS = "mt-1 flex basis-full flex-col gap-0.5 pl-3";
 var CHAT_THREAD_REPLY_CLASS = "py-0.5 text-sm text-fg";
-var CHAT_DAY_CLASS = "mt-2 flex items-center gap-3 border-t-0 pt-2 pb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted before:h-px before:flex-1 before:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] before:content-[''] after:h-px after:flex-1 after:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] after:content-['']";
+var CHAT_DAY_CLASS = "mt-2 flex items-center gap-3 border-t-0 pt-2 pb-1 font-sans text-xs font-semibold text-fg-muted before:h-px before:flex-1 before:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] before:content-[''] after:h-px after:flex-1 after:bg-[color-mix(in_srgb,var(--rule)_60%,transparent)] after:content-['']";
 var CHAT_UNREAD_CLASS = "my-1 flex items-center gap-3 py-1 before:h-px before:flex-1 before:bg-danger before:content-[''] after:h-px after:flex-1 after:bg-danger after:content-['']";
 var CHAT_EDITED_CLASS = "text-xs italic text-fg-muted";
-var CHAT_UNREAD_LABEL_CLASS = "font-sans text-xs font-bold whitespace-nowrap text-danger uppercase tracking-label";
+var CHAT_UNREAD_LABEL_CLASS = "font-sans text-xs font-bold whitespace-nowrap text-danger";
 var CHAT_EDIT_INPUT_CLASS = "w-full rounded-plate-lg border border-accent bg-surface px-2 py-1 text-sm text-fg [font:inherit] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 var TYPING_INDICATOR_CLASS = "min-h-5 flex-none px-4 py-1 text-xs text-fg-muted";
 var TYPING_DOTS_CLASS = "ml-1 inline-flex gap-0.5 align-middle";
