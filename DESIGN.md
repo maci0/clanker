@@ -150,7 +150,7 @@ Radii are `3px`, `4px` and `6px`; cards take the largest. Borders are one pixel,
 
 ### Sidebar
 
-A `<nav aria-label="Sections">` of buttons in three `<details>` groups (Work, Watch, Set up). Each destination is an 18px icon from `core/icons.js` plus a label; `decorateRailTab` adds the icon, including to plugin tabs. The current destination carries `aria-current="page"`, the active background, and the 3px `--rail-mark` bar on its leading edge. Collapsed, the sidebar shows icons only and hides labels and counts.
+A `<nav aria-label="Sections">` of buttons in three `<details>` groups (Work, Watch, Set up). Each destination is an 18px icon from `core/icons.js` plus a label; `setRailTabIcon` adds the icon, including to plugin tabs. The current destination carries `aria-current="page"`, the active background, and the 3px `--rail-mark` bar on its leading edge. Collapsed, the sidebar shows icons only and hides labels and counts.
 
 ### Buttons
 

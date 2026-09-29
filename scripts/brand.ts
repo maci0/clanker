@@ -113,7 +113,7 @@ const BRAND = "docs/brand",
 
     return { d: parts.join(""), width: x - GAP };
   },
-  iconFile = (paths: Array<string>): string =>
+  iconFile = (paths: ReadonlyArray<string>): string =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter">\n${paths.map((d) => `  <path d="${d}"/>`).join("\n")}\n</svg>\n`,
   /* A standalone page listing every icon at two sizes with its name and file, for browsing outside the repo viewer. */
   iconIndex = (day: Palette): string => {

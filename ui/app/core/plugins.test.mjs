@@ -329,7 +329,7 @@ function loadHost(page, extras) {
     // The stripped imports.
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
-    decorateRailTab: () => {},
+    setRailTabIcon: () => {},
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
     liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},

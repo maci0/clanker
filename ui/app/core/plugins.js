@@ -7,7 +7,7 @@ import { closeOverlay, openOverlay, trapOverlayTab } from "./overlay.js";
 import { copyText, loadD3, paintTomlInto, reducedMotion, scrollTo } from "./vendor.js";
 import { goalFields, goalPinnedColumn, goalSortKey, goalStatusLabel, goalWorktreeTitle } from "./goals.js";
 import { runLabel } from "./labels.js";
-import { decorateRailTab, icon } from "./icons.js";
+import { setRailTabIcon, icon } from "./icons.js";
 import {
   clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
   fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
@@ -283,7 +283,7 @@ function makeViewShell(id, title, group) {
   tab.setAttribute("aria-controls", "view-" + id);
   tab.setAttribute("data-view", id);
   tab.textContent = title;
-  decorateRailTab(tab);
+  setRailTabIcon(tab);
   /* Each rail list names its group (`data-rail-group` in index.html); a
      group no list names lands in Set up, the rail's catch-all. */
   const item = document.createElement("li"),

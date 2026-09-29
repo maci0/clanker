@@ -1,8 +1,8 @@
-// Drawn, not typed. One 24-grid, 1.75 stroke, square cap — so every
-// icon shares a stroke with every other, which a star glyph and a
-// multiplication sign (the previous "icon system") could not.
+/* Drawn, not typed. One 24-grid, 1.75 stroke, square cap, so every icon
+   shares a stroke with every other; a Unicode glyph cannot. */
 
-export var ICON_PATHS = {
+/** @type {Readonly<Record<string, ReadonlyArray<string>>>} */
+export const ICON_PATHS = {
   // A survey marker: the pin that says this layer matters.
   pin: ["M12 3.5v9", "M7.5 12.5h9l-1.5 3h-6z", "M12 15.5v5"],
   // Struck through: remove this entry.
@@ -72,24 +72,21 @@ export var ICON_PATHS = {
   star: ["M12 4l2.2 4.6 5 .7-3.6 3.5.9 5L12 15.8 7.5 17.8l.9-5L4.8 9.3l5-.7z"],
   // A panel with a rail: collapse or expand the sidebar.
   panel: ["M5 5h14v14H5z", "M10 5v14"],
-  // A trunk with a second line branching off it, each ending in a node: a
-  // git worktree, i.e. work that lives on its own branch beside the checkout.
+  /* A trunk with a second line branching off it, each ending in a node: a
+     git worktree, work that lives on its own branch beside the checkout. */
   worktree: ["M7 7.5v9", "M7 11.5h8",
     "M7 3.5a2 2 0 110 4 2 2 0 010-4z",
     "M7 16.5a2 2 0 110 4 2 2 0 010-4z",
     "M17 9.5a2 2 0 110 4 2 2 0 010-4z"],
   // A face: the rooms emoji picker trigger.
   smile: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M9 10v.5", "M15 10v.5", "M8.5 14c1.1 1.6 2.7 2.4 3.5 2.4s2.4-.8 3.5-2.4"],
-  // Transport. The music dock typed these from three Unicode blocks at once
-  // (U+23xx bars, U+25B6 triangle, U+1F50A speaker) -- and the last two are
-  // emoji, so a browser painted them in its own colours next to monochrome
-  // ones. Drawn here they share the grid and the stroke like everything else.
+  // Transport controls, drawn so they never fall back to emoji colours.
   play: ["M9 6.5l9 5.5-9 5.5z"],
   pause: ["M9.5 6.5v11", "M14.5 6.5v11"],
   prev: ["M7 6.5v11", "M18 6.5l-8.5 5.5L18 17.5z"],
   next: ["M17 6.5v11", "M6 6.5l8.5 5.5L6 17.5z"],
-  // A speaker cone; the muted variant strikes it rather than changing shape,
-  // so the two states read as one control.
+  /* A speaker cone; the muted variant strikes it rather than changing shape,
+     so the two states read as one control. */
   volume: ["M5 9.5h3l4-3.5v12l-4-3.5H5z", "M15 9.5a3.5 3.5 0 010 5"],
   mute: ["M5 9.5h3l4-3.5v12l-4-3.5H5z", "M15.5 10l4 4", "M19.5 10l-4 4"],
   // A note: the collapsed dock's handle.
@@ -124,70 +121,76 @@ export var ICON_PATHS = {
   pulse: ["M3.5 12h4l2-5 4 10 2-5h5"],
   // A building: the office floor.
   office: ["M4.5 19.5v-13l7.5-3 7.5 3v13", "M9.5 19.5v-5h5v5", "M3 19.5h18"],
-};
+},
+  /* The icon each rail destination wears, built-in views and bundled plugins
+     alike; any other plugin gets `grid`. */
+  /** @type {ReadonlyMap<string, string>} */
+  RAIL_ICONS = new Map([
+    ["activity", "activity"],
+    ["arena", "swords"],
+    ["chat", "activity"],
+    ["compare", "compare"],
+    ["files", "folder"],
+    ["fleet", "servers"],
+    ["health", "pulse"],
+    ["kanban", "board"],
+    ["knowledge", "book"],
+    ["mesh", "mesh"],
+    ["models", "cube"],
+    ["music", "note"],
+    ["office", "office"],
+    ["prompts", "prompt"],
+    ["rooms", "hash"],
+    ["runs", "timeline"],
+    ["schedule", "calendar"],
+    ["search", "find"],
+    ["system", "sliders"],
+    ["tools", "wrench"],
+  ]),
+  /**
+   * An icon from the grid as an SVG element, or an empty span for a name the
+   * grid lacks. Decorative in every use: each icon sits beside or inside a
+   * control that carries its own accessible name. `size` is the edge length
+   * in CSS pixels.
+   * @type {(name: string, size?: number) => Element}
+   */
+  icon = (name, size = 16) => {
+    if (!Object.hasOwn(ICON_PATHS, name)) {
+      return document.createElement("span");
+    }
 
+    const ns = "http://www.w3.org/2000/svg",
+      paths = ICON_PATHS[name],
+      svg = document.createElementNS(ns, "svg");
 
-export function icon(name, size) {
-  var paths = ICON_PATHS[name];
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", String(size));
+    svg.setAttribute("height", String(size));
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.75");
+    svg.setAttribute("stroke-linecap", "square");
+    svg.setAttribute("stroke-linejoin", "miter");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.classList.add("icon");
 
-  if (!paths) { return document.createElement("span"); }
+    for (const d of paths) {
+      const path = document.createElementNS(ns, "path");
 
-  var ns = "http://www.w3.org/2000/svg";
-  var svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", String(size || 16));
-  svg.setAttribute("height", String(size || 16));
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.75");
-  svg.setAttribute("stroke-linecap", "square");
-  svg.setAttribute("stroke-linejoin", "miter");
-  // Decorative in every use here: each icon sits beside or inside a control
-  // that already carries its own accessible name.
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  svg.classList.add("icon");
-  paths.forEach(function (d) {
-    var path = document.createElementNS(ns, "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-  });
+      path.setAttribute("d", d);
+      svg.append(path);
+    }
 
-  return svg;
-}
-
-
-/* The icon each rail destination wears, built-in views and bundled plugins alike; any other plugin gets `grid`. */
-const RAIL_ICONS = new Map([
-  ["activity", "activity"],
-  ["arena", "swords"],
-  ["chat", "activity"],
-  ["compare", "compare"],
-  ["files", "folder"],
-  ["fleet", "servers"],
-  ["health", "pulse"],
-  ["kanban", "board"],
-  ["knowledge", "book"],
-  ["mesh", "mesh"],
-  ["models", "cube"],
-  ["music", "note"],
-  ["office", "office"],
-  ["prompts", "prompt"],
-  ["rooms", "hash"],
-  ["runs", "timeline"],
-  ["schedule", "calendar"],
-  ["search", "find"],
-  ["system", "sliders"],
-  ["tools", "wrench"],
-]),
+    return svg;
+  },
   /**
    * Gives a rail tab its icon and wraps its words in `.rail-label`, so the
    * collapsed rail can show the icon alone. A tab that already has one is left
    * as it is, since plugin tabs and the static ones both pass through here.
-   * @param {HTMLElement} tab The rail button, carrying `data-view`.
-   * @returns {void}
+   * @type {(tab: unknown) => void}
    */
-  decorateRailTab = (tab) => {
+  setRailTabIcon = (tab) => {
     if (!(tab instanceof HTMLElement) || tab.querySelector(":scope > svg.icon") !== null) {
       return;
     }
@@ -199,5 +202,3 @@ const RAIL_ICONS = new Map([
     label.append(...[...tab.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE));
     tab.prepend(icon(name, 18), label);
   };
-
-export { RAIL_ICONS, decorateRailTab };

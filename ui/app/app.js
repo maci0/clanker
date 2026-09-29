@@ -1,6 +1,6 @@
 import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
-import { decorateRailTab, icon as iconFn } from "./core/icons.js";
+import { setRailTabIcon, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
@@ -722,7 +722,7 @@ function applyRailCollapsed(collapsed) {
   }
   // Each rail tab wears its icon, which is all the collapsed rail shows.
   for (const tab of document.querySelectorAll("#rail .rail-tab")) {
-    decorateRailTab(tab);
+    setRailTabIcon(tab);
   }
 })();
 

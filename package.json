@@ -14,12 +14,15 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "1.86.0",
+    "@preact/signals-core": "1.12.2",
     "@rikalabs/oxlint-standards": "0.8.1",
     "@shadcn/lint": "0.2.0",
     "@tailwindcss/cli": "4.3.3",
     "@types/bun": "1.4.2",
+    "htm": "3.1.1",
     "oxlint": "1.86.0",
     "oxlint-tsgolint": "7.0.2003",
+    "preact": "10.27.2",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "zod": "4.6.5"

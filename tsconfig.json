@@ -10,7 +10,14 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "/webui/vendor/preact.module.js": ["./node_modules/preact"],
+      "/webui/vendor/htm.module.js": ["./node_modules/htm"],
+      "/webui/vendor/signals-core.module.js": ["./node_modules/@preact/signals-core"],
+      "/webui/plugins/*": ["./ui/plugins/*"],
+      "/webui/*": ["./ui/app/*"]
+    }
   },
   "include": ["scripts/*.ts", "tools/oxlint/*.ts", "ui/**/*.js", "ui/**/*.mjs", "ui/**/*.ts"],
   "exclude": ["node_modules", "ui/vendor", "tools/oxlint/anti-slop"]

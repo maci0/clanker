@@ -102,11 +102,11 @@ test("music URL field is 16px on a phone so iOS does not zoom", () => {
 // the pair cannot drift again.
 test("every glyph name music asks for exists in the host's icon grid", () => {
   const icons = readFileSync(join(dir, "..", "..", "app", "core", "icons.js"), "utf8");
-  const table = icons.slice(icons.indexOf("ICON_PATHS = {"), icons.indexOf("export function icon("));
+  const table = icons.slice(icons.indexOf("ICON_PATHS = {"), icons.indexOf("\n},\n"));
   const known = new Set();
   for (const m of table.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*):\s*\[/gm)) known.add(m[1]);
   assert.ok(known.size > 20, "read the icon grid, not an empty slice");
-  assert.match(icons, /if \(!paths\) (?:\{ )?return document\.createElement\("span"\)/,
+  assert.match(icons, /if \(!Object\.hasOwn\(ICON_PATHS, name\)\) \{\s*return document\.createElement\("span"\)/,
     "an unknown name still renders as an empty span, so the check below still matters");
 
   const asked = new Set();

@@ -1,21 +1,27 @@
 /* Preact, htm, and signals ship as ES modules; app.js and the plugins are
    loaded as modules too, but plugin code receives its API at runtime rather
    than importing vendor paths itself. This boot module puts the primitives
-   on window so the plugin API (core/plugins.js) can hand them over. It is a
-   file rather than an inline script because the page's Content-Security-Policy
-   is `script-src 'self'` with no 'unsafe-inline'.
+   on the global object so the plugin API (core/plugins.js) can hand them
+   over. It is a file rather than an inline script because the page's
+   Content-Security-Policy is `script-src 'self'` with no 'unsafe-inline'.
 
-   The old VanJS globals are gone: first-party code imports T/state/bind/add
-   from core/ui.js (implemented on signals), and plugins get the same factory
-   through api.van for backward compatibility. */
+   First-party code imports T/state/bind/add from core/ui.js (implemented on
+   signals), and plugins get the same factory through api.van.
 
-import { h, render, Fragment } from "/webui/vendor/preact.module.js";
+   The vendor specifiers are absolute on purpose: the page's import map
+   (`webuiImportMapJson` in src/cli.zig) rewrites them to one tagged URL, so
+   every module shares a single Preact and a single signal graph. */
+
+// oxlint-disable-next-line import/no-absolute-path -- remapped by the page's import map
+import { Fragment, h, render } from "/webui/vendor/preact.module.js";
+// oxlint-disable-next-line import/no-absolute-path -- remapped by the page's import map
 import htm from "/webui/vendor/htm.module.js";
-import { signal, computed, effect, batch } from "/webui/vendor/signals-core.module.js";
+// oxlint-disable-next-line import/no-absolute-path -- remapped by the page's import map
+import { batch, computed, effect, signal } from "/webui/vendor/signals-core.module.js";
 
-window.preact = { h, render, Fragment };
+// oxlint-disable-next-line typescript/no-deprecated -- a reference, not the deprecated replaceNode overload
+globalThis.preact = { Fragment, h, render };
 
-window.html = htm.bind(h);
+globalThis.html = htm.bind(h);
 
-window.signals = { signal, computed, effect, batch };
-
+globalThis.signals = { batch, computed, effect, signal };
