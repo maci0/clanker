@@ -182,3 +182,12 @@ test("each folding rail group draws its caret", async () => {
     [true, true],
   ]);
 });
+
+test("the rail scrolls as a whole before the conversation list collapses", async () => {
+  /* With both folds open the list shrank to nothing and Set up drew over its only row. */
+  const html = await read("index.html");
+
+  expect(html).toMatch(/<aside class="rail [^"]*\boverflow-y-auto\b/u);
+  expect(html).toContain('class="mt-2 flex min-h-fit flex-1 flex-col border-t border-rule pt-2" data-rail-section="context" id="rail-context"');
+  expect(html).toMatch(/<ul class="mt-4 flex min-h-24 flex-1 list-none/u);
+});
