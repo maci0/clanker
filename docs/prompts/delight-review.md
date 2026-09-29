@@ -137,6 +137,22 @@ comparisons). **3-5:** the finding tier this review exists for — works but
 flat. **0-2:** actively breaks trust or flow (silent failure, no feedback on
 a multi-second wait, a control that looks interactive but does nothing).
 
+## Finding severity
+
+The rubric scores a moment; this orders it, on the same scale every other
+review in this set uses. Each row names the rubric band it draws from, so the
+two are read as one judgement and not as competing ones.
+
+| Sev | Meaning | Rubric | Examples |
+|---|---|---|---|
+| **P0** | A user is stuck or misled, not slowed | 0-2 | Silent failure on a multi-second wait; a control that looks interactive and does nothing; a failure state that reads as success |
+| **P1** | The moment is mechanical where it should read as a product | 3-5 | A provider's raw error text with no next step; a bare "no items" empty state; `--help` that lists flags without grouping them |
+| **P2** | Works, one step short of reading as considered | 3-5 | Generic "Loading..." copy; an error that is visible but names no recovery; a confirmation that takes a beat to arrive |
+| **P3** | Polish below the band this review exists for | 3-5, lower end | A transition whose timing could be tuned; a glyph that is technically legible but arbitrary |
+
+A 6-8 scores positive and is cited as the parity bar; it is not a finding and
+takes no severity.
+
 ## Candidate moments to check (all surfaces, not exhaustive)
 
 ### First impressions
@@ -153,8 +169,9 @@ a multi-second wait, a control that looks interactive but does nothing).
 
 ### Waiting (the moment most likely to be judged against ChatGPT/Claude.ai)
 - [ ] Streaming tokens: web UI's caret/typing indicator vs. the TUI's
-      50ms-tick spinner (`self.spinner_frame`) — drive both with a real
-      multi-second tool call and compare how long each takes to register
+      spinner (`self.spinner_frame`, advanced on `stream_tick_ms` = 33ms but
+      only every third frame, so one step per ~100ms). Drive both with a
+      real multi-second tool call and compare how long each takes to register
       before the state change reads as game over versus still working.
 - [ ] A tool call that runs for several seconds (`ck_exec`, `ck_http`): does
       either surface hint at *what* is running and roughly how long these

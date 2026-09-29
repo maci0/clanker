@@ -37,10 +37,13 @@ You are reviewing **concurrency correctness** in the repository in the current
 working directory: clanker, a self-improving AI agent harness in Zig 0.16 that
 serves HTTP on one thread pool while the REPL, the improve loop, sandbox jobs,
 mesh fan-out, and per-agent sub-agents all run on threads of their own. Roughly
-twenty modules call `std.Thread.spawn`, sixteen module-scope `threadlocal var`
-declarations carry per-request and per-stream state, and twenty modules take a
-mutex. None of that is a defect by itself; the findings are the places where
-the sharing is wrong.
+twenty modules call `std.Thread.spawn`, and the per-request and per-stream
+state the HTTP and streaming paths read rides on a handful of module-scope
+`threadlocal var` declarations plus the mutexes around them. None of that is a
+defect by itself; the findings are the places where the sharing is wrong.
+Measure those counts with the search recipes below rather than from this
+sentence: a count written into a prompt goes stale silently, and a reviewer
+who trusts it hunts for sixteen of something the tree now has twenty of.
 
 This is **not** the sandbox trust-boundary review
 (`sandbox-security-review.md`, which asks whether a *guest* may reach
