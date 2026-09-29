@@ -137,6 +137,27 @@ class SbomTest(unittest.TestCase):
         # Tailwind sheet are produced by the same project release.
         self.assertEqual(len(managers), 1)
 
+    def test_ast_grep_grammar_is_recorded_and_commit_pinned(self) -> None:
+        # grammars/build.sh clones a third-party repository, checks out a
+        # commit and compiles it into zig.so, and nothing named that component
+        # in the document or the license inventory. A branch name or a short
+        # SHA is not a fetchable ref, so the pin is a full commit id; this says
+        # so rather than trusting the comment that says it.
+        grammar = sbom.tree_sitter_grammar()
+        self.assertIsNotNone(grammar)
+        self.assertRegex(grammar["version"], sbom.GRAMMAR_COMMIT)
+        purl = f'pkg:github/tree-sitter-grammars/tree-sitter-zig@{grammar["version"]}'
+        component = self.components[purl]
+        self.assertEqual(component["scope"], "optional")
+        properties = {p["name"]: p["value"] for p in component["properties"]}
+        self.assertEqual(
+            properties["clanker:pin"], "grammars/build.sh:REF_ZIG"
+        )
+        self.assertEqual(
+            component["externalReferences"],
+            [{"type": "vcs", "url": grammar["url"]}],
+        )
+
     def test_build_toolchain_is_recorded(self) -> None:
         # Every dependency the binary links was named and no compiler was, so
         # the document could not say what built the artifact it ships. The pin
@@ -166,6 +187,9 @@ class SbomTest(unittest.TestCase):
         sqlite = sbom.vendored_sqlite()
         self.assertIsNotNone(sqlite)
         names += [sqlite["name"], sbom.vendored_toml()["name"]]
+        grammar = sbom.tree_sitter_grammar()
+        self.assertIsNotNone(grammar)
+        names += [grammar["name"]]
         for name in names:
             with self.subTest(dependency=name):
                 self.assertIn(name, inventory)

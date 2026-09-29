@@ -23,6 +23,17 @@ Both are patched in place by `patches/*.patch` (see `patches/README.md`).
 are not in the tree; the license text ships with the upstream release named
 above.
 
+## Fetched and compiled by a script (developer toolchain)
+
+| Component | Version | License | Source |
+|---|---|---|---|
+| tree-sitter-zig | commit `6479aa13` | MIT | <https://github.com/tree-sitter-grammars/tree-sitter-zig> (cloned by `grammars/build.sh`, detached at the full commit id in `REF_ZIG`, then patched with `grammars/0001-zig-0.17-dev-support.patch`) |
+
+ast-grep ships no Zig parser, so structural search over this repository's own
+source needs this one compiled into `grammars/zig.so`, which is gitignored and
+rebuilt by the script. It reaches no release artifact; `scripts/sbom.py` names
+it with the commit that pins it.
+
 ## Vendored in-tree
 
 | Component | Version | License | Where | Provenance |

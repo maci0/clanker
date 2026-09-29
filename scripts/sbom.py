@@ -14,6 +14,7 @@ list anywhere:
 - tools/ts/bun.lock        — assemblyscript + transitive npm deps
 - ui/vendor/README.md      — vendored web UI JS/CSS
 - scripts/setup-python-wasi.sh — optional kernel CPython interpreter
+- grammars/build.sh        — optional ast-grep Zig grammar (commit-pinned)
 
 Every component is tied back to the exact in-tree artifact that pins it (the
 zig hash, the bun.lock registry digest, or the committed vendored file path), so
@@ -330,6 +331,30 @@ def python_wasi() -> dict | None:
     }
 
 
+# --- optional ast-grep grammar (grammars/build.sh) ---------------------------
+
+# ast-grep ships no Zig parser, so structural search over this project's own
+# source needs tree-sitter-zig compiled into grammars/zig.so. It is a developer
+# tool rather than part of a release, like the kernel interpreter above, but it
+# is third-party source this repository fetches, patches and compiles, so the
+# document and the license inventory name it like any other fetched component.
+GRAMMAR_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+
+
+def tree_sitter_grammar() -> dict | None:
+    text = read("grammars/build.sh")
+    url = re.search(r'^REPO_ZIG="([^"]+)"', text, re.M)
+    ref = re.search(r'^REF_ZIG="([0-9a-f]+)"', text, re.M)
+    if not url or not ref:
+        return None
+    return {
+        "name": "tree-sitter-zig",
+        "version": ref.group(1),
+        "url": url.group(1),
+        "license": "MIT",
+    }
+
+
 # --- CycloneDX assembly ------------------------------------------------------
 
 def purl(name: str, version: str) -> str:
@@ -529,6 +554,19 @@ def build() -> dict:
             "license": e["license"],
             "purl": f"pkg:npm/{purl_name}@{e['version']}",
             "properties": props,
+        }))
+
+    # Optional ast-grep grammar (not shipped; fetched + commit-pinned)
+    grammar = tree_sitter_grammar()
+    if grammar:
+        comps.append(component({
+            "name": grammar["name"],
+            "version": grammar["version"],
+            "license": grammar["license"],
+            "purl": f"pkg:github/tree-sitter-grammars/tree-sitter-zig@{grammar['version']}",
+            "scope": "optional",
+            "externalReferences": [{"type": "vcs", "url": grammar["url"]}],
+            "properties": [{"name": "clanker:pin", "value": "grammars/build.sh:REF_ZIG"}],
         }))
 
     # Optional kernel interpreter (not shipped; fetched + sha256-verified)
