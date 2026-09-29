@@ -65,6 +65,13 @@ backups` section names a checkout-confined `state`, a backup root with no
 snapshot, a newest snapshot over two hours old, and an unset off-site mirror,
 so a missed schedule is not something only the journal knows.
 
+Both services run with `UMask=0077` and `NoNewPrivileges=true`: a snapshot
+carries `config.local.toml` and `.env`, so nothing a run creates is
+group- or world-readable whatever umask the login shell had, and the tree that
+runs rsync and sqlite3 over operator-edited paths cannot gain privilege. The
+units are symlinks into this checkout, so an edit to one under version control
+takes effect only after `systemctl --user daemon-reload`.
+
 Snapshots older than `CLANKER_BACKUP_RETENTION_DAYS` (default 30) are pruned
 on each successful backup; set it to `0` to keep every snapshot. Staging
 directories from runs that died mid-backup are always cleaned up, and a

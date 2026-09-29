@@ -14,4 +14,16 @@ EnvironmentFile=-%h/.config/clanker/backup.env
 # Twice the timer interval: a real backup of a multi-gigabyte store takes
 # minutes, so exceeding this means the run is not going to finish.
 TimeoutStartSec=1h
+# A snapshot carries config.local.toml and .env, so nothing it creates should
+# be readable by anyone but its owner: 0077 is the umask the installer already
+# writes backup.env through, so a scheduled run and an interactive run produce
+# the same modes rather than the login shell's 022 deciding for one of them.
+# `rsync -a` sets each restored file's mode from its source, so this only
+# covers what the run creates itself (staging directories, a recreated wal
+# sidecar, the drill's scratch copy), never what it copies.
+UMask=0077
+# The run shells out to rsync, sqlite3 and (for a remote mirror) ssh. None of
+# them needs privilege to gain, so refuse the whole tree the ability rather
+# than trusting the call graph of a script that reads operator-edited paths.
+NoNewPrivileges=true
 ExecStart=%h/.local/bin/clanker-state-backup

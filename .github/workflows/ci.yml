@@ -78,6 +78,29 @@ jobs:
         with:
           bun-version: ${{ steps.bunpin.outputs.version }}
 
+      # This job installs dependencies three times: the root install below, the
+      # AssemblyScript rebuild in tools/ts/verify.sh, and the Tailwind rebuild
+      # in ui/app/verify-css.sh (which re-runs the root install). Each one
+      # refetched every tarball into an empty runner cache. setup-zig has
+      # `use-cache` for the Zig global cache and this is the same idea for
+      # bun's global install cache, so a run that changes no lockfile restores
+      # them instead of re-downloading. Keyed by both lockfiles and the pinned
+      # bun version: the toolchain release changes what resolves out of the
+      # same cache, so a bun bump is a miss rather than a stale hit. The
+      # restore-keys prefix degrades to the newest cache with the same
+      # toolchain, which is what a lockfile edit should get.
+      #
+      # Only the download cache is kept, not node_modules/: the lockfile is the
+      # input that decides the tree, and node_modules carries no result of its
+      # own that `bun install --frozen-lockfile` would not reproduce.
+      - name: Cache Bun dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ steps.bunpin.outputs.version }}-${{ hashFiles('bun.lock', 'tools/ts/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ steps.bunpin.outputs.version }}-
+
       # Extract the pinned dependency trees and re-apply patches/*.patch
       # (patches/README.md). build.zig refuses to configure against pristine
       # upstream vaxis/zwasm, and apply-patches.sh cannot patch trees that

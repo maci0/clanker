@@ -13,4 +13,9 @@ EnvironmentFile=-%h/.config/clanker/backup.env
 # running forever and its journal entry, the artifact an incident reads,
 # unwritten.
 TimeoutStartSec=2h
+# Same two settings as the backup unit, for the same reason: the drill stages a
+# full copy of a store that carries API keys, and it runs the same rsync/sqlite3
+# pair over operator-supplied paths. See clanker-state-backup.service.
+UMask=0077
+NoNewPrivileges=true
 ExecStart=%h/.local/bin/clanker-state-verify
