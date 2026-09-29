@@ -120,6 +120,13 @@ function makeElement(tag) {
       this.childNodes.push(child);
       return child;
     },
+    /** @param {...ReturnType<typeof makeElement>} children The stub nodes to attach, in order. */
+    append(...children) {
+      for (const child of children) {
+        this.childNodes.push(child);
+        child.parentNode = this;
+      }
+    },
     setAttribute(name, value) { this.attributes[name] = String(value); },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
@@ -198,16 +205,15 @@ function makePage() {
   root.appendChild(rail);
 
   const tablist = makeElement("nav");
-  tablist.className = "rail-nav rail-places";
   tablist.setAttribute("role", "tablist");
   rail.appendChild(tablist);
 
   function group(host, label, heading) {
     const h = makeElement(heading);
-    h.className = "rail-group";
     h.textContent = label;
     const list = makeElement("ul");
     list.className = "m-0 list-none p-0";
+    list.attributes["data-rail-group"] = String(label);
     if (heading === "summary") {
       const details = makeElement("details");
       details.appendChild(h);
@@ -226,7 +232,6 @@ function makePage() {
   }
 
   const settings = makeElement("nav");
-  settings.className = "rail-nav rail-settings";
 
   const lists = {
     "Work": group(tablist, "Work", "h2"),

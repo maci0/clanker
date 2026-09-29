@@ -44,7 +44,7 @@ clanker.registerView({
     prompt.id = "compare-prompt";
     runs.appendChild(prompt);
 
-    var status = api.el("p", "meta");
+    var status = api.el("p", "sr-only");
     status.id = "compare-status";
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");

@@ -634,6 +634,9 @@
 .w-18 {
   width: calc(var(--spacing) * 18);
 }
+.w-36 {
+  width: calc(var(--spacing) * 36);
+}
 .w-60 {
   width: calc(var(--spacing) * 60);
 }
@@ -802,6 +805,9 @@
 .shrink {
   flex-shrink: 1;
 }
+.shrink-0 {
+  flex-shrink: 0;
+}
 .flex-grow {
   flex-grow: 1;
 }
@@ -949,9 +955,6 @@
 }
 .grid-cols-\[minmax\(0\,1fr\)\] {
   grid-template-columns: minmax(0,1fr);
-}
-.grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,1fr\)_9rem_auto_auto\] {
-  grid-template-columns: minmax(0,1fr) minmax(0,1fr) 9rem auto auto;
 }
 .grid-cols-\[repeat\(2\,minmax\(0\,18rem\)\)\] {
   grid-template-columns: repeat(2,minmax(0,18rem));
@@ -3383,6 +3386,9 @@
   .max-\[640px\]\:z-15 {
     z-index: 15;
   }
+  .max-\[640px\]\:ml-0 {
+    margin-left: 0px;
+  }
   .max-\[640px\]\:ml-1 {
     margin-left: var(--space-1);
   }
@@ -3400,6 +3406,9 @@
   }
   .max-\[640px\]\:w-\[min\(20rem\,85vw\)\] {
     width: min(20rem, 85vw);
+  }
+  .max-\[640px\]\:w-full {
+    width: 100%;
   }
   .max-\[640px\]\:max-w-\[10ch\] {
     max-width: 10ch;
@@ -3738,9 +3747,6 @@
 .data-\[grouped\=true\]\:\[\&_\[data-role\=meta\]\]\:hidden[data-grouped="true"] [data-role=meta] {
   display: none;
 }
-.\[\&_button\]\:row-start-2 button {
-  grid-row-start: 2;
-}
 .\[\&_button\]\:mt-2 button {
   margin-top: var(--space-2);
 }
@@ -3902,9 +3908,6 @@
 .\[\&_h3\]\:text-base h3 {
   font-size: var(--step-1);
 }
-.\[\&_input\]\:row-start-2 input {
-  grid-row-start: 2;
-}
 .\[\&_input\]\:m-0 input {
   margin: 0px;
 }
@@ -3997,12 +4000,6 @@
 .\[\&_input\[type\=checkbox\]\]\:flex-none input[type=checkbox] {
   flex: none;
 }
-.\[\&_input\[type\=checkbox\]\]\:self-center input[type=checkbox] {
-  align-self: center;
-}
-.\[\&_input\[type\=checkbox\]\]\:justify-self-start input[type=checkbox] {
-  justify-self: flex-start;
-}
 .\[\&_input\[type\=checkbox\]\]\:align-middle input[type=checkbox] {
   vertical-align: middle;
 }
@@ -4034,9 +4031,6 @@
 }
 .\[\&_input\[type\=text\]\]\:flex-1 input[type=text] {
   flex: 1;
-}
-.\[\&_label\]\:row-start-1 label {
-  grid-row-start: 1;
 }
 .\[\&_label\]\:m-0 label {
   margin: 0px;
@@ -4116,9 +4110,6 @@
 }
 .\[\&_strong\]\:text-fg-muted strong {
   color: var(--fg-muted);
-}
-.\[\&_textarea\]\:row-start-2 textarea {
-  grid-row-start: 2;
 }
 .\[\&_textarea\]\:min-w-0 textarea {
   min-width: 0px;
@@ -4217,6 +4208,11 @@
 }
 .\[\&\>\*\]\:flex-1 > * {
   flex: 1;
+}
+@media (width < 640px) {
+  .max-\[640px\]\:\[\&\>button\]\:w-full > button {
+    width: 100%;
+  }
 }
 .\[\&\>li\+li\]\:mt-1 > li + li {
   margin-top: var(--space-1);
@@ -5327,7 +5323,8 @@
     display: flex;
     align-items: stretch;
     gap: 0;
-    flex: 1 1 auto;
+    flex: 1 1 0%;
+    min-width: 0;
     min-height: 0;
   }
   main {
@@ -6473,13 +6470,6 @@
     }
     .prompt-list[hidden] {
       display: none;
-    }
-    .shell {
-      display: flex;
-      align-items: stretch;
-      gap: 0;
-      flex: 1 1 auto;
-      min-height: 0;
     }
     .detail-body {
       display: flex;

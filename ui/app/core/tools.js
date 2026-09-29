@@ -3,7 +3,7 @@
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
 import { fmtBytes as utilFmtBytes, plural as utilPlural, searchFold } from "./utils.js";
-import { showLoadError, UI } from "./ui.js";
+import { runDetail, showLoadError, toolRow } from "./ui.js";
 import { toolCategoryLabel, compareToolCategories } from "./labels.js";
 
 var _el = null;
@@ -67,19 +67,22 @@ export function renderTools(filterText) {
    and its retry survive every re-render the filter triggers. */
 var _toolLoadError = null;
 
+/* Until the first load answers, an empty list means "not asked yet", not "none registered". */
+let toolsLoaded = false;
+
 function buildToolRow(t) {
   var row = document.createElement("div");
-  row.className = UI.toolRow.row;
+  row.className = toolRow.row;
   var name = document.createElement("button");
   name.type = "button";
-  name.className = UI.toolRow.name;
+  name.className = toolRow.name;
   name.textContent = t.name;
   name.setAttribute("aria-label", "Show details for " + t.name);
   name.addEventListener("click", function () { showToolDetail(t); });
   row.appendChild(name);
   if (t.core) {
     var tag = document.createElement("span");
-    tag.className = UI.toolRow.tag;
+    tag.className = toolRow.tag;
     tag.textContent = "core";
     row.appendChild(tag);
   } else {
@@ -95,25 +98,25 @@ function buildToolRow(t) {
   }
   if (t.transform) {
     var tr = document.createElement("span");
-    tr.className = UI.toolRow.tag;
+    tr.className = toolRow.tag;
     tr.textContent = "transform " + t.transform.phase;
     row.appendChild(tr);
   }
   if (t.llm) {
     var llm = document.createElement("span");
-    llm.className = UI.toolRow.tag;
+    llm.className = toolRow.tag;
     llm.textContent = "llm";
     row.appendChild(llm);
   }
   (t.tags || []).forEach(function (tagName) {
     var tg = document.createElement("span");
-    tg.className = UI.toolRow.tag;
+    tg.className = toolRow.tag;
     tg.textContent = tagName;
     row.appendChild(tg);
   });
   if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
   var desc = document.createElement("span");
-  desc.className = UI.toolRow.desc;
+  desc.className = toolRow.desc;
   var text = (t.description || "").trim();
   var stop = text.indexOf(". ");
   desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : _clip(text, 160);
@@ -216,14 +219,14 @@ export function showToolDetail(t) {
   _el.toolDetail.textContent = "";
   _el.toolDetail.hidden = false;
   var head = document.createElement("div");
-  head.className = UI.runDetail.head;
+  head.className = runDetail.head;
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
-  title.className = UI.runDetail.title;
+  title.className = runDetail.title;
   title.textContent = t.name;
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
-  meta.className = UI.runDetail.meta;
+  meta.className = runDetail.meta;
   var tags = [];
   if (t.core) tags.push("core");
   if (t.llm) tags.push("calls the model");
@@ -336,6 +339,7 @@ export function loadTools() {
     .then(_readJson)
     .then(function (data) {
       _toolLoadError = null;
+      toolsLoaded = true;
       _allToolsHolder.list.length = 0; Array.prototype.push.apply(_allToolsHolder.list, data.plugins || []);
       renderTools(_el.toolFilter.value);
     })
@@ -394,13 +398,13 @@ function loadWorkflows() {
         card.appendChild(meta);
         if (wf.chain) {
           var chainTag = document.createElement("span");
-          chainTag.className = UI.toolRow.tag;
+          chainTag.className = toolRow.tag;
           chainTag.textContent = "chain";
           card.appendChild(chainTag);
         }
         (wf.tags || []).forEach(function (tagName) {
           var tg = document.createElement("span");
-          tg.className = UI.toolRow.tag;
+          tg.className = toolRow.tag;
           tg.textContent = tagName;
           card.appendChild(tg);
         });
@@ -538,7 +542,7 @@ export function bindTools(ctx) {
               }
             }, "Clear filter"));
         }
-        return ctx.UI.empty("No tools registered. `zig build tools` compiles them.");
+        return ctx.UI.empty(toolsLoaded ? "No tools registered. `zig build tools` compiles them." : "Loading tools…");
       }
 
       // Groups a filter matched stay open regardless of stored collapse
@@ -560,14 +564,14 @@ export function bindTools(ctx) {
         var collapsed = !filtering && isToolGroupCollapsed(cat);
         var head = ctx.T.button({
           type: "button",
-          class: UI.toolRow.group,
+          class: toolRow.group,
           "aria-expanded": String(!collapsed),
           "aria-label": (collapsed ? "Expand " : "Collapse ") + groupLabel(cat),
           title: (collapsed ? "Show " : "Hide ") + utilPlural(items.length, { one: "tool", other: "tools" }) + " in " + groupLabel(cat),
           onclick: function () { toggleToolGroupCollapsed(cat); }
-        }, ctx.T.span({ class: UI.toolRow.groupCaret }, collapsed ? "▸" : "▾"),
-          ctx.T.span({ class: UI.toolRow.groupName }, groupLabel(cat)),
-          ctx.T.span({ class: UI.toolRow.groupCount }, String(items.length)));
+        }, ctx.T.span({ class: toolRow.groupCaret }, collapsed ? "▸" : "▾"),
+          ctx.T.span({ class: toolRow.groupName }, groupLabel(cat)),
+          ctx.T.span({ class: toolRow.groupCount }, String(items.length)));
         out.push(head);
         if (collapsed) return;
         items.forEach(function (t) { out.push(buildToolRow(t)); });

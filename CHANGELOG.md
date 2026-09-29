@@ -11,6 +11,27 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   closing tag in the rail ended the page shell early, so the browser stacked
   the rail above the chat at every window width, and the chat sidebar's
   narrow-window classes sat outside its `class` attribute and styled nothing.
+- A view wider than the space beside the rail (System, Models, Prompts) no
+  longer drops a screen below an empty page, and on a phone the views get the
+  full width instead of none.
+- Kanban, Fleet, Runs, Knowledge, Tools and Prompts load again: each read a
+  shared class list under a name the web UI no longer exports, or handed
+  `classList` a space-separated list, and failed on open.
+- Plugin views (Files, Search, Music, Schedule, Compare, Mesh) get their rail
+  tab again, and switching views no longer throws for them.
+- The phone-only Menu button is hidden on wider windows, Rooms lists each
+  direct message on its own row, and the palette and file-mention rows are
+  styled again.
+- Runs, Arena and Compare say "nothing recorded yet" once instead of twice,
+  and Tools says it is loading until the list arrives rather than reporting
+  that no tools are registered.
+
+### Changed
+
+- Opening a view no longer toasts its item count ("7 skills.", "43 items.").
+  Errors and the results of an action still toast.
+- The Kanban New goal form reflows on narrow windows, and the Music dock
+  starts as its small button until you open it.
 
 ## [0.9.0] - 2026-09-28
 

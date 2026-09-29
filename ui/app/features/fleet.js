@@ -14,12 +14,12 @@ var ROSTER_CLASS = "min-w-0";
 var ROSTER_LIST_CLASS = "m-0 mt-2 list-none p-0 [&>li+li]:mt-2";
 var META_CLASS = "font-mono text-xs text-fg-muted tracking-wide tabular-nums wrap-anywhere";
 var ACTIONS_CLASS = "toolbar-actions flex min-w-0 flex-wrap items-center gap-3";
-var CARD_CLASS = chrome.toolRow.row + " cursor-pointer rounded-plate transition-colors hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var CARD_CLASS = chrome.row + " cursor-pointer rounded-plate transition-colors hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 var CARD_MAIN_CLASS = "min-w-0 flex-1 basis-72";
 var CHILD_GROUP_CLASS = "ml-4 mt-2 flex flex-col gap-2 border-l border-dashed border-rule pl-3";
-var CHILD_CLASS = chrome.toolRow.row + " py-1";
+var CHILD_CLASS = chrome.row + " py-1";
 var NOTE_CLASS = "meta ml-4 mt-2 font-mono text-xs text-fg-muted";
-var EXTRA_ROW_CLASS = chrome.toolRow.row + " ml-4";
+var EXTRA_ROW_CLASS = chrome.row + " ml-4";
 var DMS_CLASS = "mt-4 min-w-0";
 var DM_LIST_CLASS = "mt-2 flex flex-col gap-2";
 var DM_CARD_CLASS = "gap-3";
@@ -285,9 +285,9 @@ function renderDMs(container, chatData) {
     card.setAttribute("role", "listitem");
     var left = el("div", CARD_MAIN_CLASS);
     var titleRow = el("div", DM_TITLE_ROW_CLASS);
-    var badge = el("span", chrome.toolRow.tag + " " + DM_BADGE_CLASS, "DM");
+    var badge = el("span", chrome.tag + " " + DM_BADGE_CLASS, "DM");
     badge.setAttribute("aria-hidden", "true");
-    var title = el("span", chrome.toolRow.name);
+    var title = el("span", chrome.name);
     title.textContent = dmNames(r.room);
     title.title = r.room;
     titleRow.appendChild(badge);
@@ -385,7 +385,7 @@ function renderRuns(container, detailNode, runs) {
       openRun(root.run_id);
     });
     var left = el("div", CARD_MAIN_CLASS);
-    var title = el("div", chrome.toolRow.name, clip(root.task || root.run_id, 120));
+    var title = el("div", chrome.name, clip(root.task || root.run_id, 120));
     title.title = root.task || root.run_id;
     var meta = el("div", META_CLASS, root.run_id + " \u00b7 " + fmtRunMeta(root));
     left.appendChild(title);
@@ -425,7 +425,7 @@ function renderRuns(container, detailNode, runs) {
           openRun(child.run_id);
         });
         var l2 = el("div", CARD_MAIN_CLASS);
-        l2.appendChild(el("div", chrome.toolRow.name, child.run_id));
+        l2.appendChild(el("div", chrome.name, child.run_id));
         l2.appendChild(el("div", META_CLASS, clip(child.task || "", 100) + (child.task ? " \u00b7 " : "") + fmtRunMeta(child)));
         var a2 = el("div", ACTIONS_CLASS);
         var b2 = el("button", "secondary", "Open");
@@ -497,7 +497,7 @@ function renderRuns(container, detailNode, runs) {
           if (e.target.closest && e.target.closest("button")) return;
           openRun(sid);
         });
-        row2.appendChild(el("div", chrome.toolRow.name, sid));
+        row2.appendChild(el("div", chrome.name, sid));
         var a = el("div", "toolbar-actions");
         var b = el("button", "secondary", "Open");
         b.type = "button";
@@ -532,7 +532,7 @@ function renderSimpleGraph(container, g) {
   });
   stages.forEach(function (st, idx) {
     var sec = el("div", STAGE_CLASS);
-    var label = el("div", chrome.toolRow.name, "iter " + (st.llm.iteration || idx + 1) + " \u00b7 llm " + (st.llm.label || ""));
+    var label = el("div", chrome.name, "iter " + (st.llm.iteration || idx + 1) + " \u00b7 llm " + (st.llm.label || ""));
     var meta = el("div", "meta", fmtInt(st.llm.prompt_tokens || 0) + "/" + fmtInt(st.llm.completion_tokens || 0) + " tok \u00b7 " + fmtUnit(st.llm.duration_ms || 0, "millisecond"));
     sec.appendChild(label);
     sec.appendChild(meta);

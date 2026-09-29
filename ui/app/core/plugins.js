@@ -297,20 +297,13 @@ function makeViewShell(id, title, group) {
   tab.tabIndex = -1;
   tab.setAttribute("data-view", id);
   tab.textContent = title;
-  var rail = document.getElementById("rail");
-  var headings = rail ? rail.querySelectorAll(".rail-group") : [];
-  var placed = false;
-  for (var i = 0; i < headings.length; i++) {
-    if ((headings[i].textContent || "").trim() !== group) continue;
-    var host = headings[i].closest("details, section, nav") || headings[i].parentNode;
-    host.appendChild(tab);
-    placed = true;
-    break;
-  }
-  if (!placed) {
-    var fallback = document.querySelector(".rail-nav");
-    if (fallback) fallback.appendChild(tab);
-  }
+  /* Each rail list names its group (`data-rail-group` in index.html); a
+     group no list names lands in Set up, the rail's catch-all. */
+  const item = document.createElement("li"),
+    list = document.querySelector(`#rail ul[data-rail-group="${group}"]`) ?? document.querySelector('#rail ul[data-rail-group="Set up"]');
+
+  item.append(tab);
+  list.append(item);
   var tablist = document.querySelector("#rail [role='tablist']");
   if (tablist && tab.id) syncTablistOwns(tablist);
   _VIEWS.push(id);

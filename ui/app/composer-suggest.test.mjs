@@ -93,7 +93,7 @@ function harness(taskValue) {
     pendingFiles: [],
     // app.js styles the list rows from the chrome vocabulary (core/ui.js);
     // this sandbox strips that import, so the strings are handed in.
-    UI: { paletteItem: "palette-item", paletteKind: "palette-kind", paletteLabel: "palette-label" },
+    PALETTE_ITEM_CLASS: "palette-item", PALETTE_KIND_CLASS: "palette-kind", PALETTE_LABEL_CLASS: "palette-label",
     utilSearchFold: searchFold,
     renderFileChips() {},
     kbSelected: [],

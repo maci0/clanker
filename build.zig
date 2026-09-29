@@ -421,6 +421,11 @@ pub fn build(b: *std.Build) void {
     const layout_js_test = b.addSystemCommand(&.{ "bun", "test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));
     test_step.dependOn(&layout_js_test.step);
+    // The page shell and the class lists views build it from: each case is a
+    // defect the browser recovered from silently.
+    const shell_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    shell_js_test.addFileArg(b.path("ui/app/shell.test.ts"));
+    test_step.dependOn(&shell_js_test.step);
     const markdown_js_test = b.addSystemCommand(&.{ "bun", "test" });
     markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
     test_step.dependOn(&markdown_js_test.step);
@@ -466,6 +471,9 @@ pub fn build(b: *std.Build) void {
     const music_js_test = b.addSystemCommand(&.{ "bun", "test" });
     music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
     test_step.dependOn(&music_js_test.step);
+    const music_dock_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    music_dock_js_test.addFileArg(b.path("ui/plugins/music/dock.test.ts"));
+    test_step.dependOn(&music_dock_js_test.step);
     const office_js_test = b.addSystemCommand(&.{ "bun", "test" });
     office_js_test.addFileArg(b.path("ui/plugins/office/office.test.mjs"));
     test_step.dependOn(&office_js_test.step);

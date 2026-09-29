@@ -1,5 +1,5 @@
-import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError } from "./core/ui.js";
+import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
+import { RAIL_TAB_CLASS, T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
@@ -19,7 +19,7 @@ import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
 import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins, pluginViewShown as pluginsViewShown } from "./core/plugins.js";
-import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
+import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle, PALETTE_ITEM_CLASS, PALETTE_KIND_CLASS, PALETTE_LABEL_CLASS } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
@@ -2328,7 +2328,7 @@ function renderFileChips() {
     pendingFiles.forEach(function (path, i) {
       var chip = document.createElement("button");
       chip.type = "button";
-      chip.className = UI.chip;
+      chip.className = CHIP_CLASS;
       chip.textContent = "@" + path + " ×";
       chip.title = "Remove " + path;
       chip.addEventListener("click", function () {
@@ -2384,7 +2384,7 @@ function renderFileMentionList() {
     el.promptList.textContent = "";
     matches.forEach(function (path, i) {
       var li = document.createElement("li");
-      li.className = UI.paletteItem;
+      li.className = PALETTE_ITEM_CLASS;
       li.id = "prompt-item-" + i;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", String(i === 0));
@@ -2861,15 +2861,6 @@ function _roomHasUnread(r) {
    keeps working unchanged. Rows are real buttons (not <option>s) so they can
    carry a Slack-style "#"/"@" prefix and unread/presence text a <select>
    can't style. */
-function renderChatSidebarList(container, list, icon) {
-  if (!container) return;
-  container.textContent = "";
-  list.forEach(function (r) {
-    var row = document.createElement("button");
-    row.type = "button";
-    row.className = ROOMS_ROOM_ITEM_CLASS;
-    row.dataset.room = r.room;
-    var iconEl = document.createElement("span");
 /* The Rooms sidebar's shapes. State is an attribute, not a class: the row's
    active/unread marks, the group fold and the sidebar's collapsed drawer are
    written by this file and read by the sheet, so `data-*` is the one spelling.
@@ -2881,6 +2872,15 @@ var ROOMS_ROOM_NAME_CLASS = "room-name min-w-0 flex-1 truncate";
 var ROOMS_ROOM_BADGE_CLASS = "flex h-[18px] min-w-[18px] flex-none items-center justify-center rounded-capsule bg-danger px-1 text-2xs font-bold text-on-danger";
 var ROOMS_PRESENCE_CLASS = "h-2 w-2 flex-none rounded-full border-[1.5px] border-fg-muted data-[online=true]:border-ok-fill data-[online=true]:bg-ok-fill";
 
+function renderChatSidebarList(container, list, icon) {
+  if (!container) return;
+  container.textContent = "";
+  list.forEach(function (r) {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = ROOMS_ROOM_ITEM_CLASS;
+    row.dataset.room = r.room;
+    var iconEl = document.createElement("span");
     iconEl.className = ROOMS_ROOM_ICON_CLASS;
     iconEl.setAttribute("aria-hidden", "true");
     var isRoomDm = r.room.indexOf("dm:") === 0;
@@ -3832,7 +3832,7 @@ function loadChatPins(room) {
             function jump() {
               closeChatPins();
               var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(id) + '"]');
-              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(CHAT_HIGHLIGHT_CLASS); setTimeout(function () { target.classList.remove(CHAT_HIGHLIGHT_CLASS); }, 1500); }
+              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(...CHAT_HIGHLIGHT_CLASS.split(" ")); setTimeout(function () { target.classList.remove(...CHAT_HIGHLIGHT_CLASS.split(" ")); }, 1500); }
             }
             row.addEventListener("click", jump);
             row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
@@ -3885,7 +3885,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
           row.addEventListener("click", function () {
             closeChatSearch();
             var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
-            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(CHAT_HIGHLIGHT_CLASS); setTimeout(function () { target.classList.remove(CHAT_HIGHLIGHT_CLASS); }, 1500); }
+            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(...CHAT_HIGHLIGHT_CLASS.split(" ")); setTimeout(function () { target.classList.remove(...CHAT_HIGHLIGHT_CLASS.split(" ")); }, 1500); }
           });
           el.chatSearchResults.appendChild(row);
         });
@@ -4870,6 +4870,11 @@ if (window.MutationObserver) {
       // In-flight progress belongs in the view (or sr-only status), not a
       // toast that vanishes before the work finishes.
       if (/^(Loading|Searching|Refreshing|Pausing|Resuming)\b/.test(text)) return;
+
+      if (isInventoryStatus(text)) {
+        return;
+      }
+
       seen[text] = true;
       var shown = showToast(text);
       if (shown) statusToasts.set(el0, shown);
@@ -4961,12 +4966,12 @@ function renderPromptList() {
   if (promptIndex >= matches.length) promptIndex = 0;
   matches.forEach(function (text, i) {
     var li = document.createElement("li");
-    li.className = UI.paletteItem;
+    li.className = PALETTE_ITEM_CLASS;
     li.id = "prompt-item-" + i;
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === promptIndex));
     var label = document.createElement("span");
-    label.className = UI.paletteLabel;
+    label.className = PALETTE_LABEL_CLASS;
     label.textContent = text;
     label.title = text;
     li.appendChild(label);
@@ -5041,10 +5046,10 @@ function renderSlashList(){
   promptIndex = Math.min(promptIndex, matches.length - 1);
   matches.forEach(function(c, i){
     var li = document.createElement("li");
-    li.className = UI.paletteItem; li.id = "prompt-item-" + i;
+    li.className = PALETTE_ITEM_CLASS; li.id = "prompt-item-" + i;
     li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===promptIndex));
-    var k = document.createElement("span"); k.className=UI.paletteKind; k.textContent=c.cmd; li.appendChild(k);
-    var label = document.createElement("span"); label.className=UI.paletteLabel; label.textContent=c.desc; li.appendChild(label);
+    var k = document.createElement("span"); k.className=PALETTE_KIND_CLASS; k.textContent=c.cmd; li.appendChild(k);
+    var label = document.createElement("span"); label.className=PALETTE_LABEL_CLASS; label.textContent=c.desc; li.appendChild(label);
     li.addEventListener("mousedown", function(e){ e.preventDefault(); useSlash(c, q.rest); });
     el.promptList.appendChild(li);
   });
@@ -5617,10 +5622,10 @@ function renderKbMentionList() {
     kbMentionIndex = Math.min(kbMentionIndex, matches.length - 1);
     matches.forEach(function(c, i){
       var li = document.createElement("li");
-      li.className = UI.paletteItem; li.id = "prompt-item-" + i;
+      li.className = PALETTE_ITEM_CLASS; li.id = "prompt-item-" + i;
       li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===kbMentionIndex));
-      var k = document.createElement("span"); k.className=UI.paletteKind; k.textContent="# " + c.title; li.appendChild(k);
-      var label = document.createElement("span"); label.className=UI.paletteLabel; label.textContent=c.doc_count + " docs"; li.appendChild(label);
+      var k = document.createElement("span"); k.className=PALETTE_KIND_CLASS; k.textContent="# " + c.title; li.appendChild(k);
+      var label = document.createElement("span"); label.className=PALETTE_LABEL_CLASS; label.textContent=c.doc_count + " docs"; li.appendChild(label);
       li.addEventListener("mousedown", function(e){
         e.preventDefault();
         if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) { kbSelected.push(c.id); try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(kbSelected)); } catch(_){} } 

@@ -37,7 +37,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   var api = null;
   var viewRoot = null;
   var dock = null;
-  var collapsed = false;
+  var collapsed = true;
   var savedLoaded = false;
 
   function titleFromUrl(u) {
@@ -69,7 +69,8 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     try {
       var dockVal = api.storage.get("dock");
       if (dockVal == null) dockVal = window.localStorage.getItem("clanker.music.dock");
-      collapsed = dockVal === "hide";
+      // Collapsed until the operator opens it; "show" is only ever their choice.
+      collapsed = dockVal !== "show";
       var raw = api.storage.get("urls");
       if (raw == null) raw = window.localStorage.getItem("clanker.music.urls");
       var saved = JSON.parse(raw || "[]");

@@ -522,7 +522,7 @@ function boardColumn(col, s) {
         var collapse = document.createElement("button");
         collapse.type = "button"; collapse.className = "secondary";
         collapse.title = "Collapse lane";
-        collapse.classList.add(LANE_CONTROL_CLASS);
+        collapse.classList.add(...LANE_CONTROL_CLASS.split(" "));
         collapse.setAttribute("aria-label", "Collapse " + col.title + " lane");
         collapse.setAttribute("aria-expanded", "true");
         collapse.setAttribute("aria-controls", "board-cards-" + col.id);
@@ -548,7 +548,7 @@ function boardColumn(col, s) {
           var add = document.createElement("button");
           add.type = "button"; add.className = "secondary";
           add.title = "Define a new goal card";
-          add.classList.add(LANE_CONTROL_CLASS);
+          add.classList.add(...LANE_CONTROL_CLASS.split(" "));
           add.setAttribute("aria-label", "Add a goal to " + col.title);
           add.appendChild(icon("plus", 14));
           add.addEventListener("click", function(e){

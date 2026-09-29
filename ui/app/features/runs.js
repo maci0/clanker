@@ -11,7 +11,7 @@
 // than being re-derived here. Everything else is imported directly, which is
 // what takes `lib/runs-list.js` off the eager path with this module.
 import { fmtInt, fmtMs, fmtUnit, plural, escapeHtml, readJson } from "../core/utils.js";
-import { skeletonRows, toolRow as chrome, showLoadError } from "../core/ui.js";
+import { skeletonRows, toolRow, runDetail, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { loadD3, copyText, scrollTo } from "../core/vendor.js";
 import { runLabel } from "../core/labels.js";
@@ -128,6 +128,13 @@ function renderRunOptions(filterText) {
   var q = (filterText || "").trim();
   var matches = allRuns.filter(function (r) { return matchesRunQuery(r, q); });
   var previous = el.runSelect.value;
+  /* Nothing recorded at all: the graph panel says so once, with the way to
+     start a run, so the picker and the list step aside instead of repeating it. */
+  const nothingRecorded = allRuns.length === 0;
+
+  for (const node of document.querySelectorAll("#run-select, label[for='run-select'], #run-list, .run-list-head")) {
+    node.toggleAttribute("hidden", nothingRecorded);
+  }
   el.runSelect.textContent = "";
   matches.forEach(function (r) {
     var opt = document.createElement("option");
@@ -203,14 +210,8 @@ function renderRunList(matches) {
     // recorded yet" beside a filled filter is false, and it offers no way out.
     if (el.runFilter && el.runFilter.value.trim()) {
       empty.textContent = "No runs match this filter.";
-    } else {
-      empty.appendChild(document.createTextNode("No runs recorded yet. Start one from Chat, or "));
-      var cmd = document.createElement("code");
-      cmd.textContent = "clanker run \"<task>\"";
-      empty.appendChild(cmd);
-      empty.appendChild(document.createTextNode(", and it lands here."));
+      el.runList.appendChild(empty);
     }
-    el.runList.appendChild(empty);
     return;
   }
   groupRunsByDayMod(rows, Date.now()).forEach(function (group) {
@@ -520,7 +521,7 @@ function drawRun(g) {
   head.className = "run-head";
   head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "var(--space-2)"; head.style.alignItems = "center";
   var headId = document.createElement("span"); headId.textContent = g.run_id; headId.style.fontWeight = "600"; head.appendChild(headId);
-  if (g.provider) { var hp = document.createElement("span"); hp.className = chrome.toolRow.tag; hp.textContent = g.provider; head.appendChild(hp); }
+  if (g.provider) { var hp = document.createElement("span"); hp.className = toolRow.tag; hp.textContent = g.provider; head.appendChild(hp); }
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
   if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
   var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id";
@@ -1110,17 +1111,17 @@ function showNodeDetail(kind, node) {
   el.runDetail.hidden = false;
 
   var head = document.createElement("div");
-  head.className = chrome.runDetail.head;
+  head.className = runDetail.head;
 
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
-  title.className = chrome.runDetail.title;
+  title.className = runDetail.title;
   title.textContent = "";
   if (node.ok === false) title.appendChild(icon("strike", 12));
   title.appendChild(document.createTextNode(kind + " · " + (node.label || node.detail || kind)));
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
-  meta.className = chrome.runDetail.meta;
+  meta.className = runDetail.meta;
   meta.textContent = "  " + metricsFor(node) + (node.detail ? "  ·  " + node.detail : "");
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
@@ -1166,7 +1167,7 @@ function showNodeDetail(kind, node) {
   var truncated = typeof node.result_bytes === "number" && node.result_bytes > shownBytes;
   if (truncated) {
     var note = document.createElement("p");
-    note.className = chrome.runDetail.note;
+    note.className = runDetail.note;
     note.textContent = "Showing the first " + shownBytes + " of " + node.result_bytes +
       " bytes — the rest was not recorded, so this is raw text rather than a parsed tree.";
     el.runDetail.appendChild(note);
@@ -1208,7 +1209,7 @@ function showNodeDetail(kind, node) {
   }
 
   var out = document.createElement("div");
-  out.className = chrome.runDetail.output;
+  out.className = runDetail.output;
   /* A file-edit tool records its arguments (path/old/new or create/content)
      on the run node now, so the change itself renders here — the result
      line ("replaced 1 match") says it happened, not what it was. Old runs

@@ -505,3 +505,8 @@ export function wireRefresh(button, load) {
     else free();
   });
 }
+
+/* A view's inventory line ("7 skills.", "No prompts.", "43 items.") restates
+   the list the view is already showing, so the status-to-toast mirror skips
+   it; errors and the results of an operator's action still toast. */
+export const isInventoryStatus = (text) => /^(?:\d[\d,]*|No)\s[\w\s-]{1,40}?(?:\syet)?\.$/u.test(String(text).trim());
