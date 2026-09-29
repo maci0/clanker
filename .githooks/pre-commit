@@ -86,9 +86,14 @@ fi
 # regardless). The same command as CI: `bun run lint` runs every rule at error
 # over the whole tree (about 3s) and fails when a file's count for a rule moves
 # off tools/oxlint/baseline.json, or a disable directive silences nothing.
-if [ -n "$(staged '*.js' '*.mjs' '*.ts' 'tools/oxlint/baseline.json' '.oxlintrc.json' | tr -d '\0')" ]; then
+if [ -n "$(staged '*.js' '*.mjs' '*.ts' 'tools/oxlint/baseline.json' '.oxlintrc.json' 'tsconfig.json' | tr -d '\0')" ]; then
     if [ -x node_modules/.bin/oxlint ]; then
         bun run lint || fail "lint ratchet failed (fix the finding; bun run lint:baseline records paid-down debt)"
+        # The same check CI runs, on the whole program tsconfig.json names (a
+        # staged file is not the only one a type error can appear in, so the
+        # per-file scoping the fmt check above uses would answer a different
+        # question than CI's answer to the same tree).
+        bun run typecheck || fail "tsc --noEmit failed"
     else
         # The other skips here are a missing tool off PATH and say so; this one
         # is a declared dependency that was never installed, and CI installs it

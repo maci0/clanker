@@ -3,6 +3,7 @@
 #
 # CI (.github/workflows/ci.yml) checks more than `clanker gate` does:
 # shell script linting (shellcheck), oxlint over ui/ and tools/ts, the
+# `tsc --noEmit` type check over tsconfig.json's program, the
 # AssemblyScript rebuild-and-diff, the SBOM generation, and ruff over every
 # tracked .py. None of those are part of `clanker gate` (shellcheck, bun and
 # ruff are not guaranteed on a contributor machine), so a change that
@@ -36,6 +37,7 @@ if command -v bun >/dev/null 2>&1; then
     bun install --frozen-lockfile || status=1
     bun test tools/oxlint || status=1
     bun run lint || status=1
+    bun run typecheck || status=1
     bun scripts/brand.ts --check || status=1
 
     step "JavaScript toolchains (CI: Audit JavaScript toolchains)"
@@ -44,7 +46,7 @@ if command -v bun >/dev/null 2>&1; then
     (cd tools/ts && ./verify.sh) || status=1
     ./ui/app/verify-css.sh || status=1
 else
-    echo "bun not installed; skipping JavaScript lint, tools/ts and Tailwind CSS verification (CI will run them)"
+    echo "bun not installed; skipping JavaScript lint, type check, tools/ts and Tailwind CSS verification (CI will run them)"
 fi
 
 step "SBOM generation (CI: Check SBOM generation)"

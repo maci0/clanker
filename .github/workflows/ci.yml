@@ -110,6 +110,14 @@ jobs:
           bun run lint
           bun scripts/brand.ts --check
 
+      # oxlint is type-aware, but a type-aware lint rule is not a type check:
+      # it answers the rules it carries and stays silent on the rest, so
+      # tsconfig.json (`strict`) described a configuration no job ever ran and
+      # the only spelling in use was `bunx tsc`, which resolves whatever the
+      # network serves that day. The pinned devDependency is one tree every run.
+      - name: Type-check JavaScript
+        run: bun run typecheck
+
       # The root lockfile (oxlint and its napi bindings) gets the same audit
       # the AssemblyScript toolchain gets below; nothing else scanned it.
       - name: Audit root JavaScript toolchain

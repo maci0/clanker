@@ -9,7 +9,8 @@
     "css:build": "tailwindcss -i ui/app/tailwind.src.css -o ${CSS_OUT:-ui/app/tailwind.css}",
     "lint": "bun tools/oxlint/ratchet.ts",
     "lint:baseline": "bun tools/oxlint/ratchet.ts --update",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.86.0",
@@ -20,6 +21,7 @@
     "oxlint": "1.86.0",
     "oxlint-tsgolint": "7.0.2003",
     "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
     "zod": "4.6.5"
   },
   "patchedDependencies": {

@@ -21,13 +21,23 @@ select = [
     "B",   # bugbear: mutable defaults, bare except shapes
     "BLE", # blind except; only the one deliberate tool top-level catch is exempt
     "C4",  # comprehensions
+    "DTZ", # naive datetime: a local-time stamp that never was a UTC instant
     "E",   # pycodestyle errors
     "ERA", # commented-out code left behind by a debug session
     "F",   # pyflakes
+    "G",   # logging-format calls
     "I",   # import order
+    "ISC", # implicit string concatenation, where a missing `+` is invisible
+    "LOG", # misuse of the logging module
+    "N",   # pep8-naming
+    "PERF", # perflint: a comprehension or a list where a generator will do
     "PIE", # misc lints
+    "RET", # return-path bugs (bare else after return, unnecessary else)
+    "RSE", # raise spelled wrongly
     "RUF", # ruff-specific correctness
     "SIM", # simplifications that read as intent
+    "SLF", # private-member access that binds this package to itself
+    "TID", # import tidying beyond ordering
     "UP",  # pyupgrade
     "W",   # pycodestyle warnings
 ]
