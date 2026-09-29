@@ -51,16 +51,36 @@ const wrap_up_warning_iterations: u32 = 3;
 /// tally in state/tool_usage.json and the correlated logs carry that detail.
 var tool_requests_total = std.atomic.Value(u64).init(0);
 var tool_errors_total = std.atomic.Value(u64).init(0);
+/// Duration of every tool call, successes and failures alike, so the tools
+/// group is a RED group like `http` and `llm` rather than rate and error rate
+/// alone. A turn is mostly spent in tools, and a request-level or
+/// provider-level duration cannot say which tool held it up. Buckets are
+/// millisecond-scale but far coarser than the HTTP histogram's: a wasm tool
+/// that crosses the sandbox boundary and touches the filesystem is tens of
+/// milliseconds at best, and the interesting question is seconds, not
+/// single-digit ones.
+var tool_latency_ms_sum = std.atomic.Value(u64).init(0);
+var tool_latency_le_100ms = std.atomic.Value(u64).init(0);
+var tool_latency_le_1s = std.atomic.Value(u64).init(0);
+var tool_latency_le_10s = std.atomic.Value(u64).init(0);
 
 pub const ToolMetrics = struct {
     requests_total: u64,
     errors_total: u64,
+    latency_ms_sum: u64,
+    latency_le_100ms: u64,
+    latency_le_1s: u64,
+    latency_le_10s: u64,
 };
 
 pub fn snapshotToolMetrics() ToolMetrics {
     return .{
         .requests_total = tool_requests_total.load(.monotonic),
         .errors_total = tool_errors_total.load(.monotonic),
+        .latency_ms_sum = tool_latency_ms_sum.load(.monotonic),
+        .latency_le_100ms = tool_latency_le_100ms.load(.monotonic),
+        .latency_le_1s = tool_latency_le_1s.load(.monotonic),
+        .latency_le_10s = tool_latency_le_10s.load(.monotonic),
     };
 }
 
@@ -70,6 +90,13 @@ fn noteToolRequest() void {
 
 fn noteToolError() void {
     _ = tool_errors_total.fetchAdd(1, .monotonic);
+}
+
+fn noteToolLatency(duration_ms: u64) void {
+    _ = tool_latency_ms_sum.fetchAdd(duration_ms, .monotonic);
+    if (duration_ms <= 100) _ = tool_latency_le_100ms.fetchAdd(1, .monotonic);
+    if (duration_ms <= 1_000) _ = tool_latency_le_1s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 10_000) _ = tool_latency_le_10s.fetchAdd(1, .monotonic);
 }
 
 /// Each chatroom inbox line injected into a run. Long enough to see what a
@@ -3214,8 +3241,14 @@ pub const Agent = struct {
         // initial value and a possible result.
         const results = try self.arena.alloc(?[]const u8, calls.len);
         @memset(results, null);
+        // Stamped per call, not once for the batch: a batch runs its distinct
+        // tool names in parallel, so the batch wall clock says nothing about
+        // which call was slow. Only the attribution is wanted here, so a
+        // counter is enough and no per-tool label is carried.
+        const started_at = try self.arena.alloc(std.Io.Timestamp, calls.len);
 
         for (calls, 0..) |tc, i| {
+            started_at[i] = std.Io.Timestamp.now(self.ctx.io, .awake);
             // Counted here, not in executeTool: there are two execution paths
             // and a third for duplicates, and this is the only point all of
             // them pass through. Counted before the call, because a tool the
@@ -3475,17 +3508,22 @@ pub const Agent = struct {
         for (results) |*r| {
             if (r.* == null or r.*.?.len == 0) r.* = "{\"ok\":true,\"result\":\"\"}";
         }
-        for (results) |maybe_content| {
+        for (results, 0..) |maybe_content, i| {
             const content = maybe_content orelse continue;
+            noteToolLatency(elapsed.since(self.ctx.io, started_at[i]));
             if (std.mem.startsWith(u8, content, "{\"ok\":false")) noteToolError();
         }
-        // Append-only record of what each call came back with.
+        // Append-only record of what each call came back with. `duration_ms`
+        // is what makes this the pivot target for a slow `tools` bucket in
+        // `/api/metrics`: the aggregate names the tool that got slower, this
+        // row says by how much on the call itself.
         if (self.events) |*rec| {
             for (calls, 0..) |tc, i| {
                 const out = if (results[i]) |r| r else "";
                 rec.recordObject(session_events.EventKind.tool_result, &.{
                     .{ .name = "name", .value = .{ .text = tc.name } },
                     .{ .name = "ok", .value = .{ .bool_ = !std.mem.startsWith(u8, out, "{\"ok\":false") } },
+                    .{ .name = "duration_ms", .value = .{ .int = eventInt(elapsed.since(self.ctx.io, started_at[i])) } },
                     .{ .name = "preview", .value = .{ .text = utf8.cap(out, tool_result_preview_bytes) } },
                 });
             }
@@ -5404,6 +5442,10 @@ test "ttsrStreamWrap uses the threadlocal guard and is a no-op without one" {
 test "tool metrics count invocations and error JSON" {
     const start_req = tool_requests_total.load(.monotonic);
     const start_err = tool_errors_total.load(.monotonic);
+    const start_sum = tool_latency_ms_sum.load(.monotonic);
+    const start_le_100 = tool_latency_le_100ms.load(.monotonic);
+    const start_le_1s = tool_latency_le_1s.load(.monotonic);
+    const start_le_10s = tool_latency_le_10s.load(.monotonic);
     noteToolRequest();
     noteToolRequest();
     noteToolError();
@@ -5412,6 +5454,25 @@ test "tool metrics count invocations and error JSON" {
     const snap = snapshotToolMetrics();
     try std.testing.expect(snap.requests_total >= start_req + 2);
     try std.testing.expect(snap.errors_total >= start_err + 1);
+}
+
+test "tool latency buckets are cumulative and every call lands in one" {
+    const start_sum = tool_latency_ms_sum.load(.monotonic);
+    const start_100 = tool_latency_le_100ms.load(.monotonic);
+    const start_1s = tool_latency_le_1s.load(.monotonic);
+    const start_10s = tool_latency_le_10s.load(.monotonic);
+    // One per bucket edge plus one past the top, so the nesting is what gets
+    // asserted rather than a single convenient duration.
+    noteToolLatency(50);
+    noteToolLatency(500);
+    noteToolLatency(5_000);
+    noteToolLatency(30_000);
+    try std.testing.expectEqual(start_sum + 35_550, tool_latency_ms_sum.load(.monotonic));
+    try std.testing.expectEqual(start_100 + 1, tool_latency_le_100ms.load(.monotonic));
+    try std.testing.expectEqual(start_1s + 3, tool_latency_le_1s.load(.monotonic));
+    // Past the top bucket: counted in the sum, in no bucket, which is what
+    // makes the "calls slower than le_10000" figure derivable.
+    try std.testing.expectEqual(start_10s + 3, tool_latency_le_10s.load(.monotonic));
 }
 
 test "steer framing is applied to the request copy, never to the stored message" {

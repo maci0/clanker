@@ -8241,7 +8241,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         };
         if (n == 0) return;
         received_any = true;
-        total.appendSlice(gpa, tmp[0..n]) catch return;
+        // An allocation failure here drops the connection with nothing read
+        // past this point, and the completion defer can only report
+        // `method=unknown path=unknown status=0`: a counter moving with no
+        // line explaining it is the shape an operator cannot chase. The OOM
+        // is the reason, so say it at the point it happens.
+        total.appendSlice(gpa, tmp[0..n]) catch {
+            log.log(.error_, "serve: request buffer allocation failed after {d} byte(s), dropping the connection", .{total.items.len});
+            return;
+        };
         // The body allowance is separate from its HTTP headers. Counting both
         // against max_body_bytes made a body at the advertised boundary
         // impossible to send, and the old 1 MiB literal also made the 4 MiB
@@ -9472,7 +9480,7 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         mesh_net_m.joins_pending_total,
         mesh_net_m.inbound_refused_total,
     }) catch return null;
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -9497,6 +9505,10 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         llm.latency_le_60s,
         tools.requests_total,
         tools.errors_total,
+        tools.latency_ms_sum,
+        tools.latency_le_100ms,
+        tools.latency_le_1s,
+        tools.latency_le_10s,
         schedule.fires_total,
         schedule.errors_total,
         job.starts_total,
@@ -9533,6 +9545,19 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     const live_obj = (parsed.value.object.get("live").?).object;
     for ([_][]const u8{ "subscribers", "dropped_total" }) |field| {
         const v = live_obj.get(field) orelse return error.MissingLiveField;
+        try std.testing.expect(v == .integer);
+    }
+    // A turn spends most of its wall clock in tools, and neither the request
+    // nor the provider duration can attribute it. Without the tools histogram
+    // a slow turn reads as a slow provider.
+    const tools_obj = (parsed.value.object.get("tools").?).object;
+    for ([_][]const u8{ "requests_total", "errors_total", "latency_ms_sum" }) |field| {
+        const v = tools_obj.get(field) orelse return error.MissingToolsField;
+        try std.testing.expect(v == .integer);
+    }
+    const tool_buckets = (tools_obj.get("latency_buckets") orelse return error.MissingToolsLatency).object;
+    for ([_][]const u8{ "le_100", "le_1000", "le_10000" }) |field| {
+        const v = tool_buckets.get(field) orelse return error.MissingToolsLatency;
         try std.testing.expect(v == .integer);
     }
     const jobs_obj = (parsed.value.object.get("jobs").?).object;
