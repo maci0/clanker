@@ -65,7 +65,7 @@ pub const Cache = struct {
     /// Connections are handled one thread each, so two retries of one id can
     /// arrive together and both reach `begin` before either has stored
     /// anything. The lock is what makes the second one see the first's claim.
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     entries: std.ArrayList(Entry) = .empty,
     bytes: usize = 0,
 
@@ -73,9 +73,9 @@ pub const Cache = struct {
         return .{ .gpa = gpa };
     }
 
-    pub fn deinit(self: *Cache) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn deinit(self: *Cache, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         for (self.entries.items) |e| {
             if (e.body) |b| self.gpa.free(b);
             self.gpa.free(e.id);
@@ -127,9 +127,9 @@ pub const Cache = struct {
     }
 
     /// Registers interest in `key`. See `Begin`.
-    pub fn begin(self: *Cache, key: []const u8, now: i64) Begin {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn begin(self: *Cache, io: std.Io, key: []const u8, now: i64) Begin {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         self.sweep(now);
         if (self.find(key)) |i| {
             if (self.entries.items[i].body) |b| return .{ .replay = b };
@@ -150,9 +150,9 @@ pub const Cache = struct {
     /// replays it instead of running the agent again. The body is copied: the
     /// caller's buffer is a stack frame that is gone by the time a retry lands.
     /// Swept at the entry's own stamp, so a long run does not expire itself.
-    pub fn finish(self: *Cache, key: []const u8, body: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn finish(self: *Cache, io: std.Io, key: []const u8, body: []const u8) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         const copy = self.gpa.dupe(u8, body) catch return;
@@ -163,9 +163,9 @@ pub const Cache = struct {
 
     /// Drops a claim whose run failed, so the peer's retry runs the agent
     /// instead of replaying a failure as a success.
-    pub fn release(self: *Cache, key: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn release(self: *Cache, io: std.Io, key: []const u8) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
         const i = self.find(key) orelse return;
         if (self.entries.items[i].body != null) return;
         self.removeAt(i);
@@ -181,43 +181,46 @@ pub const Cache = struct {
 const testing = std.testing;
 
 test "a second request with the same id replays the first reply instead of running again" {
+    const io = testing.io;
     var c = Cache.init(testing.allocator);
-    defer c.deinit();
+    defer c.deinit(io);
 
-    try testing.expectEqual(Begin{ .fresh = {} }, c.begin("req-1", 100));
+    try testing.expectEqual(Begin{ .fresh = {} }, c.begin(io, "req-1", 100));
     // The first request is still running when its retry arrives.
-    try testing.expectEqual(Begin{ .wait = {} }, c.begin("req-1", 101));
-    c.finish("req-1", "{\"result\":1}");
+    try testing.expectEqual(Begin{ .wait = {} }, c.begin(io, "req-1", 101));
+    c.finish(io, "req-1", "{\"result\":1}");
 
-    switch (c.begin("req-1", 102)) {
+    switch (c.begin(io, "req-1", 102)) {
         .replay => |body| try testing.expectEqualStrings("{\"result\":1}", body),
         else => return error.ExpectedReplay,
     }
     // A different id is a different operation.
-    try testing.expectEqual(Begin{ .fresh = {} }, c.begin("req-2", 102));
+    try testing.expectEqual(Begin{ .fresh = {} }, c.begin(io, "req-2", 102));
 }
 
 test "a failed run releases its claim so the retry is a fresh attempt" {
+    const io = testing.io;
     var c = Cache.init(testing.allocator);
-    defer c.deinit();
+    defer c.deinit(io);
 
-    try testing.expectEqual(Begin{ .fresh = {} }, c.begin("req-1", 100));
-    c.release("req-1");
-    try testing.expectEqual(Begin{ .fresh = {} }, c.begin("req-1", 101));
+    try testing.expectEqual(Begin{ .fresh = {} }, c.begin(io, "req-1", 100));
+    c.release(io, "req-1");
+    try testing.expectEqual(Begin{ .fresh = {} }, c.begin(io, "req-1", 101));
     try testing.expectEqual(@as(usize, 1), c.count());
 }
 
 test "the table is bounded by count and by age" {
+    const io = testing.io;
     var c = Cache.init(testing.allocator);
-    defer c.deinit();
+    defer c.deinit(io);
 
     var buf: [32]u8 = undefined;
     var i: usize = 0;
     while (i < max_entries + 8) : (i += 1) {
         const key = try std.fmt.bufPrint(&buf, "req-{d}", .{i});
         const owned = try testing.allocator.dupe(u8, key);
-        _ = c.begin(owned, 1000);
-        c.finish(owned, "reply");
+        _ = c.begin(io, owned, 1000);
+        c.finish(io, owned, "reply");
         testing.allocator.free(owned);
         try testing.expect(c.count() <= max_entries);
     }
@@ -227,7 +230,7 @@ test "the table is bounded by count and by age" {
     // nothing left to replay.
     c.sweep(1000 + ttl_s + 1);
     try testing.expectEqual(@as(usize, 0), c.count());
-    try testing.expectEqual(Begin{ .fresh = {} }, c.begin("req-0", 1000 + ttl_s + 2));
+    try testing.expectEqual(Begin{ .fresh = {} }, c.begin(io, "req-0", 1000 + ttl_s + 2));
 }
 
 test "an integer id keys on its decimal spelling and an unusable one does not key at all" {

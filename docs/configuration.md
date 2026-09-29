@@ -1,11 +1,12 @@
 # Configuration: providers, models, and `config.toml`
 
-Everything clanker needs to reach a model and run lives in two TOML files at
-the working directory root. This is the complete reference; the authoritative
-schema is `src/config.zig`, and if a claim here disagrees with that file, the
-code wins. The Default columns are the struct defaults in that file; the
-committed `config.toml` overrides several of them, so read it for what a given
-checkout actually does.
+Everything clanker needs to reach a model and run lives in the two TOML files
+at the working directory root, plus the profile overlay below. This is the
+complete reference for those keys; the authoritative schema is
+`src/config.zig`, and if a claim here disagrees with that file, the code
+wins. The Default columns are the struct defaults in that file; the committed
+`config.toml` overrides several of them, so read it for what a given checkout
+actually does.
 
 ## Where config lives
 
@@ -32,6 +33,14 @@ checkout actually does.
   `[models."<provider>/<model>"]` entry is applied after the provider merge,
   so it may add a model to a provider only `config.toml` declares, without
   repeating that `[providers.<name>]` stanza.
+- **`profiles/<name>.toml` and `profiles/<name>.local.toml`**: the overlay
+  `--profile <name>` selects, merged in that order after
+  `config.local.toml` and before the environment and flags. Same merge rules
+  as the local file. Use it for a whole posture (a provider set, module
+  toggles) rather than one or two values.
+- **`presets/<name>.toml`**: a named tool-and-persona bundle picked with
+  `--preset`, not a config overlay. It selects and denies tools; the settings
+  themselves still come from the layers above. See [presets](presets).
 - **`.env`**: API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
   `api_key_env`. Keys never go in the TOML. A line that is neither a comment

@@ -5451,6 +5451,13 @@ test "tool metrics count invocations and error JSON" {
     noteToolError();
     try std.testing.expectEqual(start_req + 2, tool_requests_total.load(.monotonic));
     try std.testing.expectEqual(start_err + 1, tool_errors_total.load(.monotonic));
+    // Counting a call and timing it are separate events: the latency buckets
+    // move only from `noteToolLatency`, so an error here must not be timed as
+    // a zero-duration success.
+    try std.testing.expectEqual(start_sum, tool_latency_ms_sum.load(.monotonic));
+    try std.testing.expectEqual(start_le_100, tool_latency_le_100ms.load(.monotonic));
+    try std.testing.expectEqual(start_le_1s, tool_latency_le_1s.load(.monotonic));
+    try std.testing.expectEqual(start_le_10s, tool_latency_le_10s.load(.monotonic));
     const snap = snapshotToolMetrics();
     try std.testing.expect(snap.requests_total >= start_req + 2);
     try std.testing.expect(snap.errors_total >= start_err + 1);

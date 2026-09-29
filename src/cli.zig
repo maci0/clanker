@@ -9480,7 +9480,10 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         mesh_net_m.joins_pending_total,
         mesh_net_m.inbound_refused_total,
     }) catch return null;
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
+    // Same cap, same reason, applied to `http`: it carries the widest bucket
+    // ladder and pushes the flat call past 32 arguments on its own.
+    var http_buf: [512]u8 = undefined;
+    const http_group = std.fmt.bufPrint(&http_buf, "{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -9492,6 +9495,9 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         http_latency_le_100ms.load(.monotonic),
         http_latency_le_1s.load(.monotonic),
         http_latency_le_10s.load(.monotonic),
+    }) catch return null;
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{s},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
+        http_group,
         live_bus.subscribers,
         live_bus.dropped_total,
         llm.requests_total,
@@ -9734,13 +9740,13 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
 /// process. `serve_gpa`-owned and never freed, like the steer table beside it:
 /// it is empty when the process exits.
 var a2a_cache: ?a2a_reply_cache.Cache = null;
-var a2a_cache_mutex: std.Thread.Mutex = .{};
+var a2a_cache_mutex: std.Io.Mutex = .init;
 
 /// The process-wide cache, created on first use. `serve_gpa` is installed at
 /// serve start, before any connection is accepted.
-fn a2aReplyCache(gpa: std.mem.Allocator) *a2a_reply_cache.Cache {
-    a2a_cache_mutex.lock();
-    defer a2a_cache_mutex.unlock();
+fn a2aReplyCache(io: std.Io, gpa: std.mem.Allocator) *a2a_reply_cache.Cache {
+    a2a_cache_mutex.lockUncancelable(io);
+    defer a2a_cache_mutex.unlock(io);
     if (a2a_cache == null) a2a_cache = a2a_reply_cache.Cache.init(gpa);
     return &a2a_cache.?;
 }
@@ -9764,10 +9770,10 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // float, object) is not deduplicated: there is nothing to compare.
     var key_buf: [32]u8 = undefined;
     const dedup_key: ?[]const u8 = a2a_reply_cache.Cache.keyFor(id, &key_buf);
-    const cache = a2aReplyCache(gpa);
+    const cache = a2aReplyCache(io, gpa);
     if (dedup_key) |k| {
         const claimed_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
-        switch (cache.begin(k, claimed_at)) {
+        switch (cache.begin(io, k, claimed_at)) {
             .replay => |replay| {
                 log.log(.info, "a2a: id {s} already answered; replaying the stored reply", .{k});
                 respond(stream, 200, "OK", replay);
@@ -9791,7 +9797,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // an answer: releasing the claim is what lets the peer's retry run the
     // agent again instead of replaying a failure as a success.
     var claimed: ?[]const u8 = dedup_key;
-    defer if (claimed) |k| cache.release(k);
+    defer if (claimed) |k| cache.release(io, k);
 
     var text: []const u8 = "";
     if (parsed.params) |p| {
@@ -9890,7 +9896,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // the write and its read is the case this whole path exists for, and a
     // claim still marked in flight would answer 409 forever.
     if (dedup_key) |k| {
-        cache.finish(k, buf[0..w.end]);
+        cache.finish(io, k, buf[0..w.end]);
         claimed = null;
     }
     respond(stream, 200, "OK", buf[0..w.end]);
