@@ -548,11 +548,19 @@ def build() -> dict:
             props.append(d)
         name = e["name"]
         purl_name = name.replace("@", "%40")
+        web_purl = f"pkg:npm/{purl_name}@{e['version']}"
+        # A vendored file whose exact release is also an npm dependency (the
+        # type sources for preact, htm and signals-core) is one component: a
+        # second entry would repeat the bom-ref, which CycloneDX forbids.
+        same = next((c for c in comps if c["bom-ref"] == web_purl), None)
+        if same is not None:
+            same.setdefault("properties", []).extend(props)
+            continue
         comps.append(component({
             "name": name,
             "version": e["version"],
             "license": e["license"],
-            "purl": f"pkg:npm/{purl_name}@{e['version']}",
+            "purl": web_purl,
             "properties": props,
         }))
 

@@ -9,9 +9,9 @@ The whole tree's third-party inventory, this directory included, is
 
 | File | Upstream | Version | License | SHA-256 (committed bytes) |
 |------|----------|---------|---------|---------------------------|
-| `preact.module.js` | [preact](https://www.npmjs.com/package/preact) `dist/preact.module.js` | 10.x ESM | MIT | `a1cefabf06ec626adcb92731537e1e04fd09a7908e22551bab50540106dc950d` |
-| `htm.module.js` | [htm](https://www.npmjs.com/package/htm) `dist/htm.module.js` | 3.x ESM | Apache-2.0 | `ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4` |
-| `signals-core.module.js` | [@preact/signals-core](https://www.npmjs.com/package/@preact/signals-core) | 1.x ESM | MIT | `a2261b3791bb800e7b268783e459a362f5da84f9c038be9b9509f3a6c632ad34` |
+| `preact.module.js` | [preact](https://www.npmjs.com/package/preact) `dist/preact.module.js` | 10.27.3 ESM | MIT | `f9c9a62cb9465e2e3debdf902f2577027466c967a9667ddceac5c30e36522967` |
+| `htm.module.js` | [htm](https://www.npmjs.com/package/htm) `dist/htm.module.js` | 3.1.1 ESM | Apache-2.0 | `ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4` |
+| `signals-core.module.js` | [@preact/signals-core](https://www.npmjs.com/package/@preact/signals-core) | 1.12.2 ESM | MIT | `a2261b3791bb800e7b268783e459a362f5da84f9c038be9b9509f3a6c632ad34` |
 | `d3-dag.min.js` | [d3-dag](https://www.npmjs.com/package/d3-dag) | 1.x | ISC | `c646048f14fc222189f8acb683b574625c1cf48e3eaf594b34722f51b18cf3c0` |
 | `hljs.min.js` | [highlight.js](https://www.npmjs.com/package/highlight.js) | 11.12.0 | BSD-3-Clause | `8ab71eb09c51f501e5e25157d9cff100e46cc29bcbfc744d0b746d451fca7f53` |
 | `mermaid.min.js` | [mermaid](https://www.npmjs.com/package/mermaid) UMD `dist/mermaid.min.js` | 11.16.1 | MIT | `18327bef70d96fb505fe7287d9f6a7362ebf07ff6576ddfaffb1a06f3e1a2954` |
