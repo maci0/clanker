@@ -29,11 +29,9 @@ utility and every `pf-v6-c-*` component rule became a utility or a hand-written
 rule in `ui/app/tailwind.src.css`, so the sheet was unlinked first and then deleted from
 the tree and the host wiring (`ui/vendor.zig`, `cli.zig`, `webui_assets.zig`,
 the size gate). Its subset script (`scripts/subset-patternfly.py`) and the
-`@font-face` caveat went with it. A few `pf-v6-*` class names survive in
-`ui/app/app.js` and `ui/app/core/plugins.js` as DOM query hooks and class
-labels; no shipped stylesheet matches them, and the `--pf-t--global--*` aliases
-in `tailwind.src.css` are kept only so any rule naming a token directly still resolves
-onto the cabinet scale.
+`@font-face` caveat went with it. No `pf-v6-*` class name and no
+`--pf-t--global--*` token alias remains under `ui/app` or `ui/plugins`, and
+`ui/app/core/harden.test.mjs` fails if either spelling returns.
 
 `patternfly-addons.css` was removed 2026-08-26: it stayed unlinked from
 `index.html`, no view or plugin used any `pf-v6-u-*` utility class, and serving
