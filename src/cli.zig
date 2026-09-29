@@ -13782,6 +13782,19 @@ fn handleSessionEventsPost(
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
         return;
     };
+    // The owner's erase of one of its sessions, not an append. It deletes the
+    // replica whole, so it is answered before the cursor logic: a session the
+    // owner no longer has has no stream to append to, and the events array is
+    // empty by construction.
+    if (parsed.erase) {
+        session_sync.eraseReplica(io, arena, parsed.owner, id) catch |err| {
+            log.log(.error_, "mesh session sync: could not erase replica owner={s} session={s} err={s}", .{ parsed.owner, id, @errorName(err) });
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not erase replica\"}");
+            return;
+        };
+        respond(stream, 200, "OK", "{\"ok\":true,\"erased\":true}");
+        return;
+    }
     const result = session_sync.receive(io, arena, parsed.owner, id, parsed.events) catch |err| {
         // The sender sees a 500 and retries; the replica's side of that
         // failure is otherwise nothing, since the completion line records the
@@ -13811,6 +13824,9 @@ fn handleSessionEventsPost(
 const AppendRequest = struct {
     owner: []const u8,
     events: []const session_events.Event = &.{},
+    /// The owner erased the session: drop the replica instead of appending to
+    /// a stream that no longer exists.
+    erase: bool = false,
 };
 
 /// The sentinel-terminated path to a session's database.
@@ -13947,6 +13963,10 @@ fn handleSessions(
                 return;
             };
             forgetSessionArtifacts(io, gpa, arena, cfg, environ_map, id);
+            // state/mesh/<peer>/sessions/<id>.db is a full copy of the
+            // transcript on every instance this one replicates to, so the
+            // erase goes with the rest of the stores above.
+            if (cfg.modules.session_events) session_sync.broadcastErase(io, gpa, arena, cfg, id);
             endServeSession(io, cfg, id);
             respond(stream, 200, "OK", "{\"ok\":true}");
             return;

@@ -20,6 +20,10 @@ const log = @import("../util/log.zig");
 
 pub const replica_root = "state/mesh";
 
+/// The status a peer answers `GET /api/sessions/<id>` with for a session it
+/// does not have, which is what makes a replica of it stale.
+const not_found_status: u16 = 404;
+
 /// Process-local counters for mesh session replication. Every step below is
 /// fire-and-forget: the caller that triggers a push or a backfill is already
 /// answering or has already returned, and nothing retries until the next
@@ -74,6 +78,66 @@ fn replicaStore(io: std.Io, arena: std.mem.Allocator, owner: []const u8, id: []c
     return session_events.Store.open(arena, path);
 }
 
+/// Deletes the replica of `owner`'s session `<id>`, its events and the
+/// transcript projection beside them. The owner erasing a conversation is the
+/// only way a replica ever goes, and without this the erase stopped at the
+/// home instance: the replica holds every message, so an operator who deleted
+/// a session on one machine had left a full copy of it on every peer, and
+/// nothing afterwards could tell the two apart (a later pull 404s and is
+/// skipped like any other missing session, so the replica simply never
+/// changed again).
+///
+/// The sidecars go with it: a WAL written by the last append still holds the
+/// messages in pages the main file's deletion does not reach.
+pub fn eraseReplica(io: std.Io, arena: std.mem.Allocator, owner: []const u8, id: []const u8) !void {
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}/sessions/{s}.db", .{ replica_root, owner, id });
+    std.Io.Dir.cwd().deleteFile(io, path) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    for ([_][]const u8{ "-journal", "-wal", "-shm" }) |side_suffix| {
+        const side = try std.fmt.allocPrint(arena, "{s}{s}", .{ path, side_suffix });
+        std.Io.Dir.cwd().deleteFile(io, side) catch {};
+    }
+    log.log(.info, "mesh session sync: erased replica owner={s} session={s}", .{ owner, id });
+}
+
+/// Tells every peer that `session_id` is gone, so the replicas built by
+/// `pushTail` and `backfill` are deleted there too. Fire-and-forget under the
+/// same rule as `pushTail`: the transcript is already deleted locally, so a
+/// peer that misses this keeps a stale copy and the failure has to be counted
+/// and named rather than returned. The signal rides the existing events route
+/// as `{"erase":true}` rather than an event, because the local event store is
+/// gone by the time this runs and an append needs a seq the peer's cursor has
+/// to accept.
+pub fn broadcastErase(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config, session_id: []const u8) void {
+    if (session_id.len == 0) return;
+    const peers = peersOf(cfg, arena);
+    if (peers.len == 0) return;
+    const owner = ownerId(cfg);
+    const body = std.fmt.allocPrint(arena, "{{\"owner\":{f},\"events\":[],\"erase\":true}}", .{std.json.fmt(owner, .{})}) catch |err| {
+        fanoutFailed("encode erase", owner, "-", session_id, err);
+        return;
+    };
+    for (peers) |peer| {
+        const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}/events", .{ peer.url, session_id }) catch |err| {
+            fanoutFailed("build peer url", owner, peer.name, session_id, err);
+            continue;
+        };
+        const resp = httpFetch(io, gpa, arena, .POST, url, body) catch |err| {
+            fanoutFailed("push erase", owner, peer.name, session_id, err);
+            continue;
+        };
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, resp, .{ .ignore_unknown_fields = true }) catch |err| {
+            fanoutFailed("parse peer erase reply", owner, peer.name, session_id, err);
+            continue;
+        };
+        if (parsed == .object and (parsed.object.get("erased") == null or parsed.object.get("ok") == null)) {
+            fanoutFailed("peer did not confirm the erase", owner, peer.name, session_id, error.PeerDidNotErase);
+        }
+    }
+}
+
 pub const ReceiveResult = union(enum) {
     /// Appends accepted; the replica's last seq after the batch.
     accepted: i64,
@@ -125,6 +189,15 @@ const http_client = @import("../util/http_client.zig");
 /// counter.
 fn httpFetch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) ![]const u8 {
     return http_client.fetch(io, gpa, arena, method, url, body, null, http_client.default_timeout_ms);
+}
+
+/// As `httpFetch`, but the status is the caller's to read. The erase path is
+/// the one that needs it: `fetch` collapses every status >= 400 into one
+/// error, and only 404 (the owner says this session is not there) means the
+/// replica is stale while a 500, a refused connect and a timeout all mean
+/// "ask again later".
+fn httpFetchStatus(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8) !http_client.FetchResult {
+    return http_client.fetchStatus(io, gpa, arena, .GET, url, null, null, http_client.default_timeout_ms);
 }
 
 fn ownerId(cfg: *const config_mod.Config) []const u8 {
@@ -182,6 +255,11 @@ fn encodeBatch(arena: std.mem.Allocator, owner: []const u8, events: []const sess
 /// A peer answered a fan-out with a resync point at or behind the cursor the
 /// sender already holds, so following it would resend the same batch forever.
 pub const CursorError = error{CursorStalled};
+
+/// A peer answered the erase request with something that is not the
+/// confirmation, so its replica is still there and the operator's delete did
+/// not reach that machine.
+pub const EraseError = error{PeerDidNotErase};
 
 pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config, session_id: []const u8) void {
     if (session_id.len == 0) return;
@@ -434,6 +512,43 @@ test "receive accepts appends at cursor+1, drops duplicates, and reports gaps" {
     try std.testing.expectEqual(@as(i64, 2), try store.lastSeq());
 }
 
+test "eraseReplica deletes the replica the owner's erase names, sidecars included" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const owner = try std.fmt.allocPrint(arena, "erased-{s}", .{&env.tmp.sub_path});
+    const owner_dir = try std.fmt.allocPrint(arena, "{s}/{s}", .{ replica_root, owner });
+    defer std.Io.Dir.cwd().deleteTree(io, owner_dir) catch {};
+
+    const events = [_]session_events.Event{
+        .{ .seq = 1, .ts_ms = 1000, .kind = "task", .payload = "{\"content\":\"the conversation\"}" },
+    };
+    _ = try receive(io, arena, owner, "sess-1", &events);
+
+    const db = try std.fmt.allocPrint(arena, "{s}/sessions/sess-1.db", .{owner_dir});
+    const wal = try std.fmt.allocPrint(arena, "{s}-wal", .{db});
+    const db_file = try std.Io.Dir.cwd().openFile(io, db, .{});
+    db_file.close(io);
+    // A clean close checkpoints the WAL away, so it is only asserted when the
+    // store left one behind: an open replica (the shape this runs in) does.
+    const wal_there = blk: {
+        const f = std.Io.Dir.cwd().openFile(io, wal, .{}) catch break :blk false;
+        f.close(io);
+        break :blk true;
+    };
+
+    try eraseReplica(io, arena, owner, "sess-1");
+
+    // A WAL left behind still holds the messages the deletion did not reach.
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().openFile(io, db, .{}));
+    if (wal_there) try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().openFile(io, wal, .{}));
+
+    // Erasing again is what a retried delete does, and it must not fail the
+    // request that carried it.
+    try eraseReplica(io, arena, owner, "sess-1");
+}
+
 test "receive reports the committed cursor after rolling back a gapped batch" {
     var env: test_env.Env = .init();
     defer env.deinit();
@@ -588,6 +703,15 @@ const TranscriptResponse = struct {
 /// only means resume happens from an older snapshot, so every one of them is
 /// counted and named rather than dropped, or a replica silently resumes from
 /// a stale conversation with no record of why.
+///
+/// The one failure that is not fail-open is a 404. The caller only gets here
+/// after the owner answered the events pull, so the owner is up and this
+/// session is genuinely gone from it: the transcript below is a copy of a
+/// conversation the owner has erased, and keeping it is the one outcome where
+/// waiting helps nobody. `broadcastErase` deletes the same file when the peer
+/// was reachable at the moment of the erase; this is what catches the peer
+/// that was not, since nothing else ever revisits a replica that no longer
+/// has a source.
 fn pullTranscript(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -596,6 +720,24 @@ fn pullTranscript(
     owner: []const u8,
     id: []const u8,
 ) void {
+    const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch |err| {
+        backfillFailed("build pull url", owner, owner_url, id, err);
+        return;
+    };
+    const res = httpFetchStatus(io, gpa, arena, url) catch |err| {
+        backfillFailed("pull transcript", owner, owner_url, id, err);
+        return;
+    };
+    if (res.status == not_found_status) {
+        eraseReplica(io, arena, owner, id) catch |err| {
+            backfillFailed("erase replica of a deleted session", owner, owner_url, id, err);
+        };
+        return;
+    }
+    if (res.status >= 400) {
+        backfillFailed("pull transcript", owner, owner_url, id, error.HttpStatus);
+        return;
+    }
     var store = replicaStore(io, arena, owner, id) catch |err| {
         backfillFailed("open replica store", owner, owner_url, id, err);
         return;
@@ -605,14 +747,7 @@ fn pullTranscript(
         backfillFailed("ensure replica transcript table", owner, owner_url, id, err);
         return;
     };
-    const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch |err| {
-        backfillFailed("build pull url", owner, owner_url, id, err);
-        return;
-    };
-    const body = httpFetch(io, gpa, arena, .GET, url, null) catch |err| {
-        backfillFailed("pull transcript", owner, owner_url, id, err);
-        return;
-    };
+    const body = res.body;
     const parsed = std.json.parseFromSliceLeaky(TranscriptResponse, arena, body, .{ .ignore_unknown_fields = true }) catch |err| {
         backfillFailed("parse transcript", owner, owner_url, id, err);
         return;
