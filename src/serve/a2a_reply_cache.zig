@@ -112,7 +112,10 @@ pub const Cache = struct {
 
     fn removeAt(self: *Cache, index: usize) void {
         const e = self.entries.orderedRemove(index);
-        if (e.body) |b| self.bytes -= b.len;
+        if (e.body) |b| {
+            self.bytes -= b.len;
+            self.gpa.free(b);
+        }
         self.gpa.free(e.id);
     }
 
@@ -128,9 +131,7 @@ pub const Cache = struct {
                 i += 1;
             }
         }
-        while (self.entries.items.len >= max_entries or
-            (self.entries.items.len > 0 and self.bytes > max_bytes))
-        {
+        while (self.entries.items.len > 0 and self.bytes > max_bytes) {
             self.removeAt(0);
         }
     }
@@ -143,6 +144,9 @@ pub const Cache = struct {
         if (self.find(key)) |i| {
             if (self.entries.items[i].body) |b| return .{ .replay = b };
             return .wait;
+        }
+        while (self.entries.items.len >= max_entries) {
+            self.removeAt(0);
         }
         const id = self.gpa.dupe(u8, key) catch return .fresh;
         self.entries.append(self.gpa, .{ .id = id, .at = now, .body = null }) catch {
