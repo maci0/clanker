@@ -207,6 +207,9 @@ pub const MapInput = struct {
     mesh_enabled: bool,
     /// Unix seconds. Chat `last_ts` is seconds (`chatrooms.sendMessageOpts`),
     /// not milliseconds: a ms clock here would make every pulse look stale.
+    /// The two clocks are independent, since a room's `last_ts` can be a
+    /// remote peer's, so a stamp ahead of this one is a skewed peer rather
+    /// than a message from the future.
     now: i64,
     pulse_window: i64 = 15,
     peers: []const MapPeer,
@@ -291,8 +294,13 @@ pub fn buildMap(arena: std.mem.Allocator, in: MapInput) !Map {
         const listener = if (std.mem.eql(u8, speaker, a)) b else a;
         const n: u32 = if (room.messages == 0) 1 else @intCast(@min(room.messages, std.math.maxInt(u32)));
         try addLink(arena, &links, speaker, listener, n, room.last_ts);
-        const age = if (in.now >= room.last_ts) in.now - room.last_ts else 0;
-        if (room.last_ts > 0 and age <= in.pulse_window) {
+        // A negative age is a peer's clock running ahead of this instance's,
+        // not a message from the future, and it is not "just spoke" either:
+        // clamping it to zero pinned the wire pulsing and painted the speaker
+        // `working` for as long as the skew lasted, an hour for a peer one
+        // hour fast. A stamp ahead of now simply fails the window test.
+        const age = in.now - room.last_ts;
+        if (room.last_ts > 0 and age >= 0 and age <= in.pulse_window) {
             try pulses.append(arena, .{ .from = speaker, .to = listener, .ts = room.last_ts });
             for (nodes.items) |*node| {
                 if (std.mem.eql(u8, node.id, speaker) and !std.mem.eql(u8, node.id, in.self_id))
@@ -506,4 +514,31 @@ test "mesh map is self plus peers, wires from dm rooms, pulse when recent" {
     const json = out.written();
     try std.testing.expect(std.mem.find(u8, json, "\"working\":true") != null);
     try std.testing.expect(std.mem.find(u8, json, "\"from\":\"aaa\"") != null);
+}
+
+test "a room stamped ahead of now does not pulse or mark the speaker working" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const peers = [_]MapPeer{.{ .name = "alice", .id = "aaa" }};
+    // The last word in this DM is stamped an hour ahead of this instance:
+    // alice's clock is fast. The wire still exists, but alice is not
+    // "talking" and the map must not hold a pulse until the clocks agree.
+    const rooms = [_]MapRoom{
+        .{ .room = "dm:me|alice", .messages = 1, .last_from = "alice", .last_ts = 1_700_000_015 + 3600 },
+    };
+    const map = try buildMap(arena, .{
+        .self_id = "self-1",
+        .self_name = "me",
+        .self_working = false,
+        .mesh_enabled = false,
+        .now = 1_700_000_015,
+        .pulse_window = 15,
+        .peers = &peers,
+        .rooms = &rooms,
+    });
+    try std.testing.expectEqual(@as(usize, 0), map.pulses.len);
+    for (map.nodes) |n| {
+        if (std.mem.eql(u8, n.id, "aaa")) try std.testing.expect(!n.working);
+    }
 }

@@ -1479,11 +1479,13 @@ function setBusy(next) {
   syncControls();
 }
 
+/* Durations, not instants: `performance.now()` survives an NTP step. */
+function liveClock() { return performance.now(); }
 function startElapsed(startedAt) {
   stopElapsed();
   function tick() {
     elapsedTimer = window.requestAnimationFrame(tick);
-    el.hint.textContent = runWaitLabel + " · " + fmtMs(Date.now() - startedAt);
+    el.hint.textContent = runWaitLabel + " · " + fmtMs(liveClock() - startedAt);
     paintRunMetrics();
   }
   tick();
@@ -2444,7 +2446,7 @@ function resetSessionMetrics() {
 
 function paintRunMetrics() {
   if (!el.runMetrics) return;
-  var parts = formatRunMetricsParts(sessionMetrics, Date.now());
+  var parts = formatRunMetricsParts(sessionMetrics, liveClock());
   el.runMetrics.hidden = !parts.length;
   el.runMetrics.setAttribute("aria-live", sessionMetrics.live ? "off" : "polite");
   el.runMetrics.title = "This visit only. Reloading or opening another conversation clears these numbers.";
@@ -2550,7 +2552,7 @@ el.form.addEventListener("submit", function (e) {
   el.hint.textContent = "";
   showCaret(turn, true);
   turn.root.setAttribute("data-live", "true");
-  var startedAt = Date.now();
+  var startedAt = liveClock();
   beginLiveTurn(sessionMetrics, startedAt);
   paintRunMetrics();
   runWaitLabel = "thinking";
@@ -2567,7 +2569,7 @@ el.form.addEventListener("submit", function (e) {
       if (!liveGraph._timer) liveGraph._timer = setTimeout(function(){
         liveGraph._timer=null;
         // stash as a synthetic run for the picker — not persisted, just for live view
-        var synth = { run_id:"live", task: task, provider: (opts.provider||""), duration_ms: Date.now()-startedAt, total_prompt_tokens:0, total_completion_tokens:0, nodes: liveGraph.nodes.slice() };
+        var synth = { run_id:"live", task: task, provider: (opts.provider||""), duration_ms: liveClock()-startedAt, total_prompt_tokens:0, total_completion_tokens:0, nodes: liveGraph.nodes.slice() };
         // render into Runs if that view is open, otherwise just keep for final compare
         if (document.getElementById("view-runs") && !document.getElementById("view-runs").hidden) {
           try{ drawRun(synth); }catch(_){}
@@ -2633,14 +2635,14 @@ el.form.addEventListener("submit", function (e) {
     }
     var stick = nearBottom();
     if (sessionMetrics.live && sessionMetrics.liveTtftMs == null) {
-      noteFirstToken(sessionMetrics, Date.now());
+      noteFirstToken(sessionMetrics, liveClock());
     }
     if (sessionMetrics.live) noteLiveChars(sessionMetrics, line.length + 1);
     paintRunMetrics();
     appendText(turn, line + "\n", false);
     // live markdown: throttled incremental render while streaming
-    if (!turn._mdThrottle) { turn._mdThrottle = 0; turn._lastMD = ""; }
-    var now2 = Date.now();
+    if (!turn._mdThrottle) { turn._mdThrottle = liveClock(); turn._lastMD = ""; }
+    var now2 = liveClock();
     if (now2 - turn._mdThrottle > 160) {
       turn._mdThrottle = now2;
       var pend = turn.root.markdownSource || "";
@@ -2753,7 +2755,7 @@ el.form.addEventListener("submit", function (e) {
     // matched, and the count line then contradicted the screen.
     if (el.turnFilter.value.trim()) applyTurnFilter();
     if (sessionMetrics.live) {
-      applyDoneStats(sessionMetrics, { ms: liveElapsedMs(sessionMetrics, Date.now()) });
+      applyDoneStats(sessionMetrics, { ms: liveElapsedMs(sessionMetrics, liveClock()) });
     }
     stopElapsed();
     paintRunMetrics();
@@ -4042,10 +4044,10 @@ function setTyping(on){
   ind.hidden = !on;
 }
 el.chatText.addEventListener("input", function(){
-  typingAt = Date.now();
+  typingAt = liveClock();
   setTyping(true);
   if(typingTimer) clearTimeout(typingTimer);
-  typingTimer = setTimeout(function(){ if(Date.now()-typingAt >= 1800) setTyping(false); }, 2000);
+  typingTimer = setTimeout(function(){ if(liveClock()-typingAt >= 1800) setTyping(false); }, 2000);
   syncChatSend();
 });
 

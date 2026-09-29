@@ -399,6 +399,13 @@ pub fn parseOffset(text: []const u8) ParseError!i32 {
         const hours = std.fmt.parseInt(i32, rest[0..colon], 10) catch return ParseError.BadNumber;
         const mins = std.fmt.parseInt(i32, rest[colon + 1 ..], 10) catch return ParseError.BadNumber;
         if (hours < 0 or mins < 0 or mins > 59) return ParseError.OutOfRange;
+        // Bounded before the product, not after: `hours` is an `i32` straight
+        // out of `parseInt`, so `+99999999:00` multiplied by 60 overflows.
+        // A Debug build panicked and a ReleaseFast one stored a wrapped
+        // offset, which is an entry that fires at an arbitrary hour. The
+        // bound is the same `max_tz_offset_minutes` the total is checked
+        // against below, so the refusal names the limit in force.
+        if (hours > @divTrunc(max_tz_offset_minutes, 60)) return ParseError.OutOfRange;
         minutes = hours * 60 + mins;
     } else {
         minutes = std.fmt.parseInt(i32, rest, 10) catch return ParseError.BadNumber;
@@ -672,6 +679,12 @@ test "offsets parse in every spelling that means the same thing" {
     try std.testing.expectEqual(@as(i32, -570), try parseOffset("-09:30"));
     try std.testing.expectError(ParseError.OutOfRange, parseOffset("+99:00"));
     try std.testing.expectError(ParseError.OutOfRange, parseOffset("+01:99"));
+    // An hour field big enough to overflow `hours * 60` is refused rather
+    // than multiplied: the total bound below cannot catch it, because the
+    // product is computed first.
+    try std.testing.expectError(ParseError.OutOfRange, parseOffset("+99999999:00"));
+    try std.testing.expectError(ParseError.OutOfRange, parseOffset("-99999999:00"));
+    try std.testing.expectError(ParseError.OutOfRange, parseOffset("+2147484:00"));
     try std.testing.expectError(ParseError.BadNumber, parseOffset("east"));
     try std.testing.expectError(ParseError.EmptyField, parseOffset(""));
 }
