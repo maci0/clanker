@@ -156,6 +156,9 @@
 .z-4 {
   z-index: 4;
 }
+.z-10 {
+  z-index: 10;
+}
 .z-40 {
   z-index: 40;
 }
@@ -2292,8 +2295,22 @@
   border-bottom-style: var(--tw-border-style);
   border-bottom-width: 0px;
 }
+.empty\:mt-0:empty {
+  margin-top: 0px;
+}
 .empty\:hidden:empty {
   display: none;
+}
+.empty\:border-0:empty {
+  border-style: var(--tw-border-style);
+  border-width: 0px;
+}
+.empty\:p-0:empty {
+  padding: 0px;
+}
+.empty\:shadow-none:empty {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
 }
 .empty\:before\:inline-block:empty::before {
   content: var(--tw-content);
@@ -4840,6 +4857,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
   }
   form[hidden] {
     display: none;
@@ -4852,7 +4870,6 @@
     font-family: var(--sans);
     font-size: var(--step-0);
     font-weight: 500;
-    letter-spacing: 0.01em;
     color: var(--fg-muted);
     margin-bottom: 0.35rem;
   }
@@ -6013,7 +6030,7 @@
       top: -100%;
       inset-inline-start: 0.75rem;
       z-index: 100;
-      font-family: var(--mono);
+      font-family: var(--sans);
       font-size: var(--step-0);
       padding: 0.5rem var(--space-4);
       background: var(--accent);
@@ -6066,7 +6083,6 @@
     }
     .composer label, .detail-row label, .tool-field label {
       font-family: var(--sans);
-      letter-spacing: 0.01em;
       text-transform: none;
       font-weight: 500;
     }
@@ -6134,11 +6150,10 @@
       color: var(--danger);
     }
     .meta {
-      font-family: var(--mono);
+      font-family: var(--sans);
       font-size: var(--step--1);
       color: var(--fg-muted);
       font-variant-numeric: tabular-nums;
-      letter-spacing: 0.02em;
       line-height: 1.5;
       opacity: 1;
     }
@@ -6339,7 +6354,7 @@
     }
     .run-head {
       max-width: var(--measure);
-      font-family: var(--mono);
+      font-family: var(--sans);
       font-size: var(--step-0);
       color: var(--fg-muted);
       font-weight: 600;
@@ -6350,7 +6365,7 @@
       white-space: pre-line;
     }
     .run-empty {
-      font-family: var(--mono);
+      font-family: var(--sans);
       font-size: var(--step-0);
       color: var(--fg-muted);
       line-height: 1.6;

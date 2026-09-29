@@ -1327,7 +1327,7 @@
   "eslint(no-var)": 43,
   "eslint(one-var)": 29,
   "eslint(prefer-arrow-callback)": 12,
-  "eslint(prefer-template)": 11,
+  "eslint(prefer-template)": 10,
   "eslint(vars-on-top)": 20,
   "import(no-mutable-exports)": 1,
   "typescript(no-unsafe-argument)": 9,

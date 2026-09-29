@@ -16,7 +16,7 @@
    The dock's viewport cap has no scale to come from, and the page reserves room
    for a fixed dock with one `body:has()` rule that no utility can express —
    both are marked in ui/app/tailwind.src.css. */
-var DOCK_CLASS = "fixed right-4 bottom-4 z-40 flex max-w-[min(36rem,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-plate border border-border bg-surface px-3 py-2 shadow-lift data-[collapsed=true]:border-0 data-[collapsed=true]:bg-transparent data-[collapsed=true]:p-0 data-[collapsed=true]:shadow-none max-[40rem]:bottom-22 max-[40rem]:left-3 max-[40rem]:right-3 max-[40rem]:max-w-none";
+var DOCK_CLASS = "fixed right-4 bottom-4 z-10 flex max-w-[min(36rem,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-plate border border-border bg-surface px-3 py-2 shadow-lift data-[collapsed=true]:border-0 data-[collapsed=true]:bg-transparent data-[collapsed=true]:p-0 data-[collapsed=true]:shadow-none max-[40rem]:bottom-22 max-[40rem]:left-3 max-[40rem]:right-3 max-[40rem]:max-w-none";
 var BTN_CLASS = "inline-flex min-h-8 min-w-8 flex-none cursor-pointer items-center justify-center px-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 var PLAY_CLASS = "min-w-10 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 var FAB_CLASS = "min-h-10 min-w-10 rounded-capsule border-accent bg-accent text-on-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11";

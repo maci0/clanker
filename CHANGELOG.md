@@ -5,6 +5,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI: the page no longer scrolls behind the app shell when a view jumps
+  to a section (screen-reader status lines stretched the document); the theme
+  button shows the theme name instead of a clipped `theme: …`; the music dock
+  sits under the phone navigation drawer instead of over it; an empty System
+  progress log no longer draws an empty box; hints and empty states use the
+  body font with no letter-spacing.
+- Brand guide contrast table now measures the sidebar's text and
+  current-page marker; `DESIGN.md` and the brand guide describe the shipped
+  sidebar-and-cards layout.
+
 ## [0.11.0] - 2026-09-29
 
 ### Added

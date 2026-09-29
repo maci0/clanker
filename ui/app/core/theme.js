@@ -115,7 +115,7 @@ export function applyTheme(theme, opts) {
   }
   var btn = document.getElementById(id);
   if (btn) {
-    btn.textContent = "theme: " + theme;
+    btn.textContent = String(theme);
     btn.setAttribute("aria-label", "Theme: " + theme);
     btn.setAttribute("aria-haspopup", "listbox");
     btn.setAttribute("aria-expanded", _open ? "true" : "false");

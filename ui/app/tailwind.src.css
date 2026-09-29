@@ -45,12 +45,8 @@
   --fg: #242424;
   --fg-muted: #605e5c;
 
-  /* Operator action blue and the IEC 60073 signal colours, as RAL Classic
-     readings — the same enamels as the card covers and chat hues, not a
-     framework ramp. The interactive blue used to be Material's #0b57d0 while
-     RAL 5017 traffic blue sat two dozen lines below it in --card-blue, and
-     the lamps drew Tailwind's red-700/amber-700/green-600; a cabinet whose
-     whole argument is that one blue means one thing cannot carry two blues. */
+  /* Operator action blue and the IEC 60073 signal colours. One blue means
+     operator action; green, amber and red are state and nothing else. */
   --accent: #0072c9;
   --accent-dim: #0072c914;
   --accent-text: #0065b3;
@@ -158,9 +154,7 @@
   --step-1: 1rem;
   --step-2: 1.125rem;
   --step-3: 1.375rem;
-  /* Engraved legend plates: one tracking, the 0.06em DESIGN.md names.
-     Headings stay untracked; tight tracking is the SaaS default this page
-     does not use. */
+  /* Labels are sentence case with no letter-spacing (DESIGN.md). */
   --track-label: 0;
 
   --space-1: 0.25rem;
@@ -433,6 +427,9 @@
     padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
     display: flex; flex-direction: column;
     overflow: hidden;
+    /* Contains the views' sr-only status lines. Without it they position
+       against the page and stretch the document past the viewport. */
+    position: relative;
   }
   /* Operator pages and Chat fill the main column. A leftover 46rem cap on
      Chat left a stripe of text in a wide window. */
@@ -495,7 +492,7 @@
      large enough to tell two screenshots apart. */
   label {
     display: block; font-family: var(--sans);
-    font-size: var(--step-0); font-weight: 500; letter-spacing: 0.01em;
+    font-size: var(--step-0); font-weight: 500;
     color: var(--fg-muted); margin-bottom: 0.35rem;
   }
 
@@ -1255,7 +1252,7 @@
 @layer components {
   .skip-link {
     position: absolute; top: -100%; inset-inline-start: 0.75rem; z-index: 100;
-    font-family: var(--mono); font-size: var(--step-0);
+    font-family: var(--sans); font-size: var(--step-0);
     padding: 0.5rem var(--space-4); background: var(--accent); color: var(--on-accent);
     border-radius: var(--radius); text-decoration: none; transition: top 0.15s;
   }
@@ -1286,7 +1283,7 @@
     background: var(--accent);
   }
 
-  .composer label, .detail-row label, .tool-field label { font-family: var(--sans); letter-spacing: 0.01em; text-transform: none; font-weight: 500; }
+  .composer label, .detail-row label, .tool-field label { font-family: var(--sans); text-transform: none; font-weight: 500; }
 
   .overlay {
     position: fixed; inset: 0; z-index: 20;
@@ -1331,8 +1328,8 @@
   }
 
   .meta {
-    font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-    font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5;
+    font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
+    font-variant-numeric: tabular-nums; line-height: 1.5;
     opacity: 1;
   }
 
@@ -1444,12 +1441,12 @@
 
   .run-head {
     max-width: var(--measure);
-    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-weight: 600;
+    font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); font-weight: 600;
     padding-bottom: var(--space-3); border-bottom: 1px dashed var(--rule); margin-bottom: var(--space-4);
     overflow-wrap: anywhere; white-space: pre-line;
   }
 
-  .run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }
+  .run-empty { font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }
 
   .run-detail-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem;
