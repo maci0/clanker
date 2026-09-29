@@ -277,6 +277,15 @@ envelope above rather than JSON-RPC error objects. A request with no `method`,
 or with a `jsonrpc` other than `"2.0"`, is a 400. Every other method name is
 answered the same way: the agent runs and its message comes back.
 
+The `id` is the request's idempotency key, because the work behind it is a full
+agent run. A repeat of an id that already completed inside the window returns
+the stored reply with `200` instead of running the agent again; a repeat of an
+id whose first run is still in flight is a `409` with a JSON-RPC error object
+(`{"code":-32000}`); a run that failed releases its id, so the peer's retry
+starts a new one. An `id` of `null`, or one that is not a string or an integer,
+is not deduplicated. The window and the table size are
+`src/serve/a2a_reply_cache.zig`.
+
 ## Proxy
 
 `/proxy/v1/*` forwards to the configured provider 1:1, in the shape of

@@ -61,6 +61,7 @@ const live = @import("serve/live.zig");
 const webui_assets = @import("serve/webui_assets.zig");
 const webui_strip = @import("serve/webui_strip.zig");
 const serve_http = @import("serve/http.zig");
+const a2a_reply_cache = @import("serve/a2a_reply_cache.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
 const knowledge_logic = @import("knowledge_logic");
@@ -9701,6 +9702,24 @@ fn handleAgentCard(gpa: std.mem.Allocator, cfg: *const config.Config, port: u16,
     respond(stream, 200, "OK", buf[0..w.end]);
 }
 
+/// One cached delegation reply per JSON-RPC id, so a peer that retries a
+/// request whose response it lost gets the first answer instead of a second
+/// agent run. Created on the first A2A request and bounded on count, bytes and
+/// age (`a2a_reply_cache`), so it costs a fixed ceiling for the life of the
+/// process. `serve_gpa`-owned and never freed, like the steer table beside it:
+/// it is empty when the process exits.
+var a2a_cache: ?a2a_reply_cache.Cache = null;
+var a2a_cache_mutex: std.Thread.Mutex = .{};
+
+/// The process-wide cache, created on first use. `serve_gpa` is installed at
+/// serve start, before any connection is accepted.
+fn a2aReplyCache(gpa: std.mem.Allocator) *a2a_reply_cache.Cache {
+    a2a_cache_mutex.lock();
+    defer a2a_cache_mutex.unlock();
+    if (a2a_cache == null) a2a_cache = a2a_reply_cache.Cache.init(gpa);
+    return &a2a_cache.?;
+}
+
 fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -9713,6 +9732,42 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         return;
     }
     const id = parsed.id orelse .null;
+
+    // A peer that never got the answer resends the same id. The task behind
+    // it is a full agent run, so the retry is billed and its tools run twice
+    // unless the id is remembered. An id that cannot be spelled stably (null,
+    // float, object) is not deduplicated: there is nothing to compare.
+    var key_buf: [32]u8 = undefined;
+    const dedup_key: ?[]const u8 = a2a_reply_cache.Cache.keyFor(id, &key_buf);
+    const cache = a2aReplyCache(gpa);
+    if (dedup_key) |k| {
+        const claimed_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
+        switch (cache.begin(k, claimed_at)) {
+            .replay => |replay| {
+                log.log(.info, "a2a: id {s} already answered; replaying the stored reply", .{k});
+                respond(stream, 200, "OK", replay);
+                return;
+            },
+            .wait => {
+                // The first request is still running. A second agent run would
+                // double the bill and race the first one's tool calls.
+                log.log(.info, "a2a: id {s} is still in flight; refusing the duplicate", .{k});
+                if (a2aErrorBody(arena, id, "a request with this id is already in flight")) |err_body| {
+                    respond(stream, 409, "Conflict", err_body);
+                } else {
+                    respond(stream, 409, "Conflict", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32000,\"message\":\"duplicate request\"}}");
+                }
+                return;
+            },
+            .fresh => {},
+        }
+    }
+    // Every refusal between here and the reply below is a failed attempt, not
+    // an answer: releasing the claim is what lets the peer's retry run the
+    // agent again instead of replaying a failure as a success.
+    var claimed: ?[]const u8 = dedup_key;
+    defer if (claimed) |k| cache.release(k);
+
     var text: []const u8 = "";
     if (parsed.params) |p| {
         if (p == .object) {
@@ -9806,7 +9861,37 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     s.endObject() catch return;
     s.endObject() catch return;
     s.endObject() catch return;
+    // Stored before the reply goes out: a peer whose connection dies between
+    // the write and its read is the case this whole path exists for, and a
+    // claim still marked in flight would answer 409 forever.
+    if (dedup_key) |k| {
+        cache.finish(k, buf[0..w.end]);
+        claimed = null;
+    }
     respond(stream, 200, "OK", buf[0..w.end]);
+}
+
+/// A JSON-RPC error object echoing the caller's id. The id goes back because
+/// JSON-RPC correlates a response by it, and a refusal that drops it is
+/// indistinguishable from a reply to some other request.
+fn a2aErrorBody(arena: std.mem.Allocator, id: std.json.Value, message: []const u8) ?[]const u8 {
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w };
+    s.beginObject() catch return null;
+    s.objectField("jsonrpc") catch return null;
+    s.write("2.0") catch return null;
+    s.objectField("id") catch return null;
+    s.write(id) catch return null;
+    s.objectField("error") catch return null;
+    s.beginObject() catch return null;
+    s.objectField("code") catch return null;
+    s.write(@as(i32, -32000)) catch return null;
+    s.objectField("message") catch return null;
+    s.write(message) catch return null;
+    s.endObject() catch return null;
+    s.endObject() catch return null;
+    return arena.dupe(u8, buf[0..w.end]) catch null;
 }
 
 /// One image pasted or dropped into the web composer, sent with a run.

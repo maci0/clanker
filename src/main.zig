@@ -187,6 +187,7 @@ comptime {
     _ = @import("serve/live.zig");
     _ = @import("serve/mesh_net.zig");
     _ = @import("serve/http.zig");
+    _ = @import("serve/a2a_reply_cache.zig");
     _ = @import("serve/webui_assets.zig");
     _ = @import("serve/webui_strip.zig");
     _ = @import("agent/session.zig");
