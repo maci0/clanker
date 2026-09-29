@@ -1,19 +1,24 @@
 ---
 name: clanker
-description: A control cabinet for operating a fleet of small machine workers.
+description: An operations console for a fleet of small machine workers, laid out after Headlamp's Kubernetes UI.
 colors:
-  operator-blue: "#1d5c9e"
-  cabinet-backplane: "#dcd9d1"
-  cabinet-panel: "#eeebe4"
-  cabinet-well: "#e2dfd6"
-  cabinet-edge: "#7b7971"
-  cabinet-rule: "#cdc9bf"
-  ink: "#1b1c18"
-  muted-ink: "#4f534b"
-  healthy-green: "#117a3a"
-  warning-amber: "#8a6d00"
-  fault-red: "#a72920"
-  code-well: "#d4d0c6"
+  accent: "#0072c9"
+  accent-text: "#0065b3"
+  page: "#f5f5f5"
+  surface: "#ffffff"
+  surface-2: "#f3f2f1"
+  border: "#8a8886"
+  rule: "#e1dfdd"
+  fg: "#242424"
+  fg-muted: "#605e5c"
+  ok: "#107c10"
+  warn: "#8a6d00"
+  danger: "#a4262c"
+  rail-bg: "#242424"
+  rail-active: "#3b3a39"
+  rail-fg: "#f3f2f1"
+  rail-muted: "#c8c6c4"
+  rail-mark: "#f2e600"
 typography:
   title:
     fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
@@ -26,18 +31,15 @@ typography:
     fontWeight: 400
     lineHeight: 1.6
   label:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
     fontSize: "0.75rem"
     fontWeight: 600
     lineHeight: 1.4
-    letterSpacing: "0.06em"
-tracking:
-  label: "0.06em"
+    letterSpacing: "0"
 rounded:
-  sm: "2px"
-  md: "3px"
-  lg: "4px"
-  pill: "999px"
+  sm: "3px"
+  md: "4px"
+  lg: "6px"
 spacing:
   xs: "0.25rem"
   sm: "0.4rem"
@@ -48,163 +50,136 @@ spacing:
   3xl: "3.4rem"
 components:
   button-primary:
-    backgroundColor: "{colors.operator-blue}"
+    backgroundColor: "{colors.accent}"
     textColor: "#ffffff"
-    rounded: "{rounded.pill}"
-    padding: "0.5rem 1.05rem"
+    rounded: "{rounded.lg}"
     height: "40px"
   input:
-    backgroundColor: "{colors.cabinet-panel}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.fg}"
     rounded: "{rounded.md}"
-    padding: "0.55rem 0.75rem"
     height: "40px"
-  panel:
-    backgroundColor: "{colors.cabinet-panel}"
-    textColor: "{colors.ink}"
+  section-card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.fg}"
     rounded: "{rounded.lg}"
-    padding: "0.9rem"
+    padding: "0.9rem 1.4rem"
 ---
 
 # Design System: clanker
 
 ## Overview
 
-**Creative North Star: "The Control Cabinet"**
+clanker is an operator surface for a fleet of small machine workers. Its layout follows Headlamp, the Kubernetes UI: a dark sidebar of icon-and-label destinations, a white top bar, a light grey page, and each view's content in white section cards. The interface is dense because operators scan and act; hierarchy comes from grouping and state, not decorative whitespace.
 
-clanker is an operator surface for a fleet of small machine workers. It borrows literally from industrial switchgear: warm RAL-grey panel faces on a darker backplane, engraved-looking labels, compact actuators, and IEC 60073 signal lamps. The interface is dense because operators scan and act; hierarchy comes from disciplined grouping, typography, and state rather than decorative whitespace.
+Signal lamps stay: a small radial dome that lights only when state deserves attention. Everything around them is flat and neutral.
 
-The signature is the lamp: a radial dome that glows only when state deserves attention. Everything around it stays flat, machined, and restrained. Day shift uses warm cabinet greys; night shift uses graphite surfaces with brighter readings. Named palettes may change the atmosphere but preserve the same semantic roles.
-
-The mark, wordmark, icon library, mascot rules and voice live in the [brand guide](docs/brand/README.md).
-
-**Key Characteristics:**
-
-- Industrial, tactile, and operator-focused.
-- Compact without sacrificing keyboard use or coarse-pointer targets.
-- Flat panel geometry with structural depth and restrained motion.
-- One semantic color vocabulary across themes and plugins.
+The mark, wordmark, icon library, mascot rules and voice live in the [brand guide](docs/brand/README.md). The tokens live in `ui/app/tailwind.src.css`, the page's only stylesheet; this file names them and never overrides them.
 
 ## Colors
 
-Warm cabinet neutrals carry the interface; blue is reserved for operator action, while green, amber, and red communicate machine state.
+Neutral greys carry the interface; blue is operator action, and green, amber and red are machine state.
 
 ### Primary
 
-- **Operator Blue** (`#1d5c9e`): links, focus, selected controls, and primary actuators.
+- **Accent** (`#0072c9`, text reading `#0065b3`): links, focus, selected controls, primary buttons.
 
 ### Neutral
 
-- **Cabinet Backplane** (`#dcd9d1`): page background.
-- **Cabinet Panel** (`#eeebe4`): primary working surfaces.
-- **Cabinet Well** (`#e2dfd6`): inset and secondary surfaces.
-- **Cabinet Edge** (`#7b7971`): control boundaries, at 3:1 or better against the panel and the backplane (WCAG 2.2 1.4.11).
-- **Cabinet Rule** (`#cdc9bf`): internal dividers.
-- **Ink** (`#1b1c18`): primary text.
-- **Muted Ink** (`#4f534b`): metadata and supporting labels.
+- **Page** (`--bg`, `#f5f5f5`): the background behind the cards.
+- **Surface** (`#ffffff`): section cards, the top bar, fields.
+- **Surface 2** (`#f3f2f1`): wells, code blocks, secondary rows.
+- **Border** (`#8a8886`): control boundaries, at 3:1 or better against the surface (WCAG 2.2 1.4.11).
+- **Rule** (`#e1dfdd`): card edges and internal dividers.
+- **Fg** (`#242424`) and **Fg muted** (`#605e5c`): text and metadata.
 
-### Secondary
+### Sidebar
 
-- **Healthy Green** (`#117a3a`): healthy and successful state.
-- **Warning Amber** (`#8a6d00`): abnormal or cautionary state.
-- **Fault Red** (`#a72920`): faults, destructive actions, and failed state.
+The sidebar (`#rail`) is dark in both themes. It re-scopes `--bg`, `--surface`, `--rule` and `--fg` to the `--rail-*` values, so any utility inside it reads the dark set without a second class.
 
-**The IEC Rule.** Blue means operator action; green means healthy; amber means abnormal; red means fault. Never reuse those colors decoratively.
+- **Rail bg** (`#242424`), **hover** (`#323130`), **active** (`#3b3a39`).
+- **Rail fg** (`#f3f2f1`) and **rail muted** (`#c8c6c4`, group labels).
+- **Rail mark** (`#f2e600`): the current-page bar. Used nowhere else.
 
-**One role, no theme's own.** Every theme in `themes/` carries its own blue reading of the operator color, derived from that palette rather than copied from upstream: light themes a deep blue that clears 4.5:1 on the panel, dark themes a lifted one that clears it against the backplane. A named theme is its neutrals, its lamps and its weather; the accent is not on its list, so a theme that wants mauve keeps it in the card enamels where a card is entitled to any colour.
+### State
+
+- **Ok** (`#107c10`): healthy and successful.
+- **Warn** (`#8a6d00`): abnormal or cautionary.
+- **Danger** (`#a4262c`): faults, destructive actions, failed state.
+
+**The IEC rule.** Blue means operator action; green means healthy; amber means abnormal; red means fault. None of them is decoration.
+
+Every theme in `themes/` carries its own reading of each role, derived from that palette and checked by `ui/app/contrast.test.ts`. The brand guide's contrast table lists every pair the UI sets, day and night, sidebar included.
 
 ## Typography
 
-**Display Font:** system sans-serif stack  
-**Body Font:** system sans-serif stack  
-**Label/Mono Font:** system monospace stack
+System sans for prose and labels; system mono for status chips, measurements, code and IDs. No web fonts.
 
-**Character:** prose stays quiet and native to the host OS. Monospace is reserved for measurements, code, IDs, and engraved control labels, never as a generic technical costume.
-
-### Hierarchy
-
-- **Title** (600, `1.375rem`): view and panel headings. Untracked: tight tracking is not a cabinet idea.
-- **Body** (400, `1rem`, `1.6`): prose, transcript content, and explanations; cap reading measure near `70ch`.
-- **Control** (600, `0.875rem`): buttons, inputs, and dense operational rows.
-- **Label** (600, `0.75rem`, `--track-label` / `0.06em`): uppercase group labels and compact readings.
+- **Title** (600, `1.375rem`): view headings.
+- **Body** (400, `1rem`, `1.6`): prose and transcript; reading measure near `70ch`.
+- **Control** (600, `0.875rem`): buttons, inputs, dense rows.
+- **Label** (600, `0.75rem`): group and field labels, sentence case, no letter-spacing (`--track-label: 0`).
 - **Micro** (`0.6875rem`): counts and graph stamps only.
 
-**The Engraving Rule.** Use monospace only where alignment, measurement, code, or equipment labeling earns it.
+Sentence case everywhere. No uppercase labels.
 
 ## Layout
 
-The application shell is a fixed masthead, a persistent navigation rail, and one main working surface. The conversation view uses the full available height with an independently scrolling transcript and docked composer. Dense views use flexible grids and wrapping rows; reading content stays near `70ch`.
+The shell is a CSS grid: the top bar spans both columns, the sidebar fills the left column below it, and the view fills the rest. The conversation view uses the full height with an independently scrolling transcript and a docked composer.
 
-The core spacing scale is `0.25rem`, `0.4rem`, `0.6rem`, `0.9rem`, `1.4rem`, `2.2rem`, and `3.4rem`. At `40rem` and below, the rail becomes an off-canvas drawer, multi-column views collapse, and primary touch targets rise to `44px`. Intermediate layouts span roughly `40–75rem`; room layouts use an additional `48rem` breakpoint.
+Every other view's top-level `<section>` is a card: surface background, one-pixel rule border, `6px` radius, `--lift-low` shadow, `0.9rem 1.4rem` padding. Chat and Rooms are exempt, since they fill the pane.
 
-## Elevation & Depth
+Spacing scale: `0.25rem`, `0.4rem`, `0.6rem`, `0.9rem`, `1.4rem`, `2.2rem`, `3.4rem`. At `40rem` and below the sidebar becomes an off-canvas drawer, multi-column views collapse, and touch targets rise to `44px`.
 
-Depth is structural: panel faces sit on a backplane, controls are raised or pressed, and overlays lift clear of the work surface. Shadows use offset and blur, never decorative halos.
+## Elevation
 
-### Shadow Vocabulary
+- **`--lift-low`**: section cards and rows.
+- **`--lift`**: menus and small floating surfaces.
+- **`--lift-high`**: dialogs and drag state.
+- **`--bevel-*`**: input and pressed-button depth.
+- **`--lamp-glow`** with **`--lamp-ring`**: a lit lamp.
+- **`--ring`**: focus and "you are here" outlines.
 
-- **Seated plate** (`--lift-low`): low separation for rows and cards.
-- **Raised control** (`--lift`): menus, active controls, and small floating surfaces.
-- **Floating overlay** (`--lift-high`): dialogs and drag state.
-- **Machined states** (`--bevel-raised`, `--bevel-inset`, `--bevel-pressed`): actuator and input depth.
-- **Lamp glow** (`--lamp-glow`, with `--lamp-ring`): a lit dome's light. One radius, wherever a lamp is lit.
-- **Ring** (`--ring`, `--ring-ok`, `--ring-warn`): two pixels of a signal colour just outside a plate.
-
-**The Structural Depth Rule.** Use a named lift or bevel token; do not invent one-off shadows. A glow is `--lamp-glow`. A ring is `--ring`.
+Use a named token; no one-off shadows.
 
 ## Shapes
 
-Panels and fields use tight `2–4px` radii, like machined plates rather than soft cards. Pills are reserved for compact actuators, chips, lamps, and status housings. Borders are usually one pixel and use the semantic edge or rule token. The page's only sheet is `ui/app/tailwind.src.css`. Style these surfaces with the cabinet tokens, never by restoring a library default.
+Radii are `3px`, `4px` and `6px`; cards take the largest. Borders are one pixel, `--border` on controls and `--rule` on cards and dividers.
 
 ## Components
 
+### Sidebar
+
+A `<nav aria-label="Sections">` of buttons in three `<details>` groups (Work, Watch, Set up). Each destination is an 18px icon from `core/icons.js` plus a label; `decorateRailTab` adds the icon, including to plugin tabs. The current destination carries `aria-current="page"`, the active background, and the 3px `--rail-mark` bar on its leading edge. Collapsed, the sidebar shows icons only and hides labels and counts.
+
 ### Buttons
 
-- **Shape:** tight plate or pill, depending on whether the control is a panel action or compact actuator.
-- **Primary:** Operator Blue with explicit on-accent text.
-- **Hover / Focus:** tonal change plus a two-pixel Operator Blue focus outline.
-- **Active:** pressed bevel or a one-pixel travel where appropriate.
+- **Primary:** accent fill, white label, `6px` radius (`--radius-pill`).
+- **Secondary:** surface fill, `--border` edge, same radius.
+- **Danger:** danger fill for destructive actions only.
+- **Focus:** two-pixel accent outline.
 
-### Chips
+### Inputs
 
-- **Style:** pill housing with compact mono or control text.
-- **State:** pair color with words; lamps are never the sole state indicator.
+Surface background, `--border` edge, `4px` radius, accent border on focus. Focused fields on phones use at least `16px` text.
 
-### Cards / Containers
+### Chips and lamps
 
-- **Corner style:** `3–4px`.
-- **Background:** Cabinet Panel or Cabinet Well.
-- **Shadow strategy:** flat or seated by default; lift only for interaction or hierarchy.
-- **Border:** one-pixel Rule or Edge.
+Pair colour with words; a lamp is never the only indicator. A lamp is coloured by setting `color:` to a state token; `--lamp-dome` reads `currentColor`.
 
-### Inputs / Fields
+## Do and don't
 
-- **Style:** inset cabinet well, readable sans-serif text, tight radius.
-- **Focus:** Operator Blue border or inset-safe two-pixel outline.
-- **Mobile:** focused fields use at least `16px` text; coarse-pointer controls use `44px` targets.
+**Do**
 
-### Navigation
+- Use the semantic tokens so every theme stays coherent.
+- Keep rows dense, keyboard reachable, and tolerant of long text.
+- Load view code when the operator opens the view, not at boot.
+- Give every animation a reduced-motion path that keeps the state visible.
 
-The rail behaves as a vertical tablist with roving focus and arrow-key navigation. Selected destinations combine an engaged lamp, semantic state, and `aria-selected`; mobile navigation becomes a scrim-backed drawer.
+**Don't**
 
-### Signal Lamp
-
-The lamp is the signature component. Use the shared dome, ring, and glow tokens; set its color from the IEC state tokens and repeat the state in text or accessible naming.
-
-## Do's and Don'ts
-
-### Do:
-
-- **Do** use semantic tokens so all named themes remain coherent.
-- **Do** keep operational rows dense, scannable, keyboard reachable, and resilient to long text.
-- **Do** defer view-specific code and heavy vendor assets until the operator opens that surface.
-- **Do** provide reduced-motion alternatives that preserve useful state feedback.
-
-### Don't:
-
-- **Don't** introduce a second blue or unrelated status palette.
-- **Don't** use lamps, glow, or monospace as decoration.
-- **Don't** round working surfaces into generic soft SaaS cards.
-- **Don't** add a library theme-token alias, or assume a vendor class name styles anything.
-- **Don't** add one-off shadows, spacing values, or hard-coded theme colors when a token exists.
-- **Don't** place new non-chat features on the eager load path without updating and justifying the weight budget.
+- Add a second blue or a separate status palette.
+- Use the rail mark, lamps or glow as decoration.
+- Uppercase or letter-space a label.
+- Add a one-off shadow, spacing value or hard-coded colour where a token exists.
+- Put a new non-chat feature on the eager load path without updating and justifying the weight budget.
