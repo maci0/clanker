@@ -168,7 +168,7 @@
   "eslint(no-underscore-dangle)": 39,
   "eslint(no-unused-expressions)": 1,
   "eslint(no-unused-vars)": 36,
-  "eslint(no-use-before-define)": 172,
+  "eslint(no-use-before-define)": 171,
   "eslint(no-useless-assignment)": 2,
   "eslint(no-useless-escape)": 1,
   "eslint(no-useless-return)": 1,
@@ -199,7 +199,7 @@
   "typescript(no-unnecessary-condition)": 21,
   "typescript(no-unnecessary-type-conversion)": 4,
   "typescript(no-unsafe-argument)": 64,
-  "typescript(no-unsafe-assignment)": 401,
+  "typescript(no-unsafe-assignment)": 391,
   "typescript(no-unsafe-call)": 421,
   "typescript(no-unsafe-member-access)": 994,
   "typescript(no-unsafe-return)": 79,
@@ -241,8 +241,7 @@
   "unicorn(prefer-query-selector)": 255,
   "unicorn(prefer-spread)": 10,
   "unicorn(prefer-string-raw)": 1,
-  "unicorn(prefer-string-replace-all)": 6,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-string-replace-all)": 6
  },
  "ui/app/composer-suggest.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 4,
@@ -321,8 +320,7 @@
   "unicorn(prefer-add-event-listener)": 4,
   "unicorn(prefer-dom-node-append)": 4,
   "unicorn(prefer-number-properties)": 1,
-  "unicorn(prefer-optional-catch-binding)": 2,
-  "vitest(require-hook)": 3
+  "unicorn(prefer-optional-catch-binding)": 2
  },
  "ui/app/core/chat.js": {
   "anti-slop(no-runtime-typeof)": 1,
@@ -646,8 +644,7 @@
   "typescript(strict-boolean-expressions)": 9,
   "unicorn(escape-case)": 1,
   "unicorn(prefer-default-parameters)": 2,
-  "unicorn(prefer-string-replace-all)": 1,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-string-replace-all)": 1
  },
  "ui/app/core/labels.test.mjs": {
   "eslint(prefer-arrow-callback)": 2,
@@ -772,8 +769,7 @@
   "unicorn(prefer-number-coercion)": 2,
   "unicorn(prefer-number-properties)": 4,
   "unicorn(prefer-optional-catch-binding)": 8,
-  "unicorn(prefer-spread)": 2,
-  "vitest(require-hook)": 9
+  "unicorn(prefer-spread)": 2
  },
  "ui/app/core/modelpicker.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 2,
@@ -820,9 +816,9 @@
   "eslint(no-shadow)": 1,
   "eslint(no-underscore-dangle)": 10,
   "eslint(no-use-before-define)": 1,
-  "eslint(no-var)": 39,
+  "eslint(no-var)": 36,
   "eslint(object-shorthand)": 15,
-  "eslint(one-var)": 27,
+  "eslint(one-var)": 26,
   "eslint(prefer-arrow-callback)": 12,
   "eslint(prefer-destructuring)": 1,
   "eslint(prefer-template)": 9,
@@ -840,8 +836,7 @@
   "unicorn(prefer-dom-node-append)": 4,
   "unicorn(prefer-dom-node-dataset)": 1,
   "unicorn(prefer-query-selector)": 1,
-  "unicorn(prefer-single-call)": 6,
-  "vitest(require-hook)": 5
+  "unicorn(prefer-single-call)": 6
  },
  "ui/app/core/palette.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -873,29 +868,28 @@
  },
  "ui/app/core/plugins.js": {
   "@rikalabs(no-pass-through-intermediate-vars)": 2,
-  "@rikalabs(no-runtime-compat-fallbacks)": 1,
   "@rikalabs(no-silent-catch-fallback)": 5,
   "anti-slop(no-runtime-typeof)": 4,
-  "anti-slop(require-readable-spacing)": 81,
+  "anti-slop(require-readable-spacing)": 78,
   "eslint(capitalized-comments)": 33,
-  "eslint(curly)": 30,
+  "eslint(curly)": 28,
   "eslint(eqeqeq)": 4,
   "eslint(func-style)": 20,
   "eslint(max-lines-per-function)": 2,
   "eslint(no-empty)": 2,
   "eslint(no-eq-null)": 4,
   "eslint(no-implicit-coercion)": 1,
-  "eslint(no-plusplus)": 3,
+  "eslint(no-plusplus)": 2,
   "eslint(no-underscore-dangle)": 14,
   "eslint(no-unused-vars)": 3,
   "eslint(no-use-before-define)": 4,
   "eslint(no-useless-call)": 2,
-  "eslint(no-var)": 69,
+  "eslint(no-var)": 63,
   "eslint(object-shorthand)": 36,
-  "eslint(one-var)": 46,
+  "eslint(one-var)": 40,
   "eslint(prefer-arrow-callback)": 20,
   "eslint(prefer-template)": 21,
-  "eslint(vars-on-top)": 52,
+  "eslint(vars-on-top)": 46,
   "import(no-mutable-exports)": 1,
   "promise(avoid-new)": 1,
   "promise(catch-or-return)": 1,
@@ -909,8 +903,8 @@
   "typescript(no-unsafe-call)": 36,
   "typescript(no-unsafe-member-access)": 155,
   "typescript(no-unsafe-return)": 30,
-  "typescript(prefer-for-of)": 3,
-  "typescript(prefer-nullish-coalescing)": 24,
+  "typescript(prefer-for-of)": 2,
+  "typescript(prefer-nullish-coalescing)": 23,
   "typescript(prefer-optional-chain)": 9,
   "typescript(strict-boolean-expressions)": 61,
   "typescript(use-unknown-in-catch-callback-variable)": 2,
@@ -918,13 +912,12 @@
   "unicorn(explicit-length-check)": 2,
   "unicorn(no-array-for-each)": 2,
   "unicorn(prefer-add-event-listener)": 2,
-  "unicorn(prefer-dom-node-append)": 17,
+  "unicorn(prefer-dom-node-append)": 15,
   "unicorn(prefer-dom-node-dataset)": 4,
   "unicorn(prefer-global-this)": 9,
   "unicorn(prefer-includes)": 2,
   "unicorn(prefer-optional-catch-binding)": 3,
-  "unicorn(prefer-query-selector)": 2,
-  "vitest(require-hook)": 10
+  "unicorn(prefer-query-selector)": 1
  },
  "ui/app/core/plugins.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 4,
@@ -1068,8 +1061,7 @@
   "typescript(prefer-nullish-coalescing)": 2,
   "typescript(prefer-optional-chain)": 1,
   "typescript(strict-boolean-expressions)": 7,
-  "unicorn(prefer-global-this)": 2,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-global-this)": 2
  },
  "ui/app/core/scroll.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -1168,8 +1160,7 @@
   "typescript(prefer-nullish-coalescing)": 2,
   "typescript(prefer-optional-chain)": 2,
   "typescript(strict-boolean-expressions)": 11,
-  "unicorn(prefer-query-selector)": 1,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-query-selector)": 1
  },
  "ui/app/core/slash.test.mjs": {
   "@rikalabs(no-trivial-runtime-guard-helpers)": 1,
@@ -1292,8 +1283,7 @@
   "typescript(strict-boolean-expressions)": 8,
   "unicorn(prefer-add-event-listener)": 2,
   "unicorn(prefer-optional-catch-binding)": 6,
-  "unicorn(prefer-string-replace-all)": 1,
-  "vitest(require-hook)": 3
+  "unicorn(prefer-string-replace-all)": 1
  },
  "ui/app/core/theme.js": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -1334,8 +1324,7 @@
   "unicorn(prefer-global-this)": 2,
   "unicorn(prefer-includes)": 2,
   "unicorn(prefer-optional-catch-binding)": 2,
-  "unicorn(prefer-query-selector)": 1,
-  "vitest(require-hook)": 9
+  "unicorn(prefer-query-selector)": 1
  },
  "ui/app/core/theme.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 2,
@@ -1395,9 +1384,9 @@
   "typescript(no-floating-promises)": 1,
   "typescript(no-unnecessary-condition)": 3,
   "typescript(no-unsafe-argument)": 11,
-  "typescript(no-unsafe-assignment)": 64,
+  "typescript(no-unsafe-assignment)": 48,
   "typescript(no-unsafe-call)": 47,
-  "typescript(no-unsafe-member-access)": 216,
+  "typescript(no-unsafe-member-access)": 200,
   "typescript(no-unsafe-return)": 9,
   "typescript(prefer-includes)": 5,
   "typescript(prefer-nullish-coalescing)": 22,
@@ -1415,8 +1404,7 @@
   "unicorn(prefer-includes)": 7,
   "unicorn(prefer-number-properties)": 1,
   "unicorn(prefer-optional-catch-binding)": 2,
-  "unicorn(prefer-query-selector)": 4,
-  "vitest(require-hook)": 18
+  "unicorn(prefer-query-selector)": 4
  },
  "ui/app/core/tools.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -1492,8 +1480,7 @@
   "unicorn(prefer-export-from)": 1,
   "unicorn(prefer-global-this)": 5,
   "unicorn(prefer-optional-catch-binding)": 1,
-  "unicorn(prefer-query-selector)": 1,
-  "vitest(require-hook)": 4
+  "unicorn(prefer-query-selector)": 1
  },
  "ui/app/core/usage.js": {
   "anti-slop(require-readable-spacing)": 13,
@@ -1513,8 +1500,7 @@
   "typescript(strict-boolean-expressions)": 8,
   "unicorn(explicit-length-check)": 1,
   "unicorn(max-nested-calls)": 12,
-  "unicorn(no-array-reduce)": 1,
-  "vitest(require-hook)": 7
+  "unicorn(no-array-reduce)": 1
  },
  "ui/app/core/utils.js": {
   "@rikalabs(no-bare-wrapper-functions)": 1,
@@ -1574,8 +1560,7 @@
   "unicorn(prefer-number-properties)": 9,
   "unicorn(prefer-optional-catch-binding)": 2,
   "unicorn(prefer-spread)": 3,
-  "unicorn(prefer-string-replace-all)": 4,
-  "vitest(require-hook)": 4
+  "unicorn(prefer-string-replace-all)": 4
  },
  "ui/app/core/utils.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 7,
@@ -1728,8 +1713,7 @@
   "unicorn(prefer-global-this)": 15,
   "unicorn(prefer-includes)": 2,
   "unicorn(prefer-optional-catch-binding)": 4,
-  "unicorn(prefer-query-selector)": 1,
-  "vitest(require-hook)": 4
+  "unicorn(prefer-query-selector)": 1
  },
  "ui/app/features/arena.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 3,
@@ -1874,8 +1858,7 @@
   "unicorn(prefer-spread)": 4,
   "unicorn(prefer-string-replace-all)": 3,
   "unicorn(prefer-string-slice)": 1,
-  "unicorn(prefer-ternary)": 1,
-  "vitest(require-hook)": 115
+  "unicorn(prefer-ternary)": 1
  },
  "ui/app/features/fleet.js": {
   "@rikalabs(no-bare-wrapper-functions)": 1,
@@ -1919,7 +1902,7 @@
   "typescript(no-unsafe-argument)": 18,
   "typescript(no-unsafe-assignment)": 166,
   "typescript(no-unsafe-call)": 216,
-  "typescript(no-unsafe-member-access)": 548,
+  "typescript(no-unsafe-member-access)": 539,
   "typescript(no-unsafe-return)": 8,
   "typescript(prefer-for-of)": 2,
   "typescript(prefer-includes)": 2,
@@ -1946,8 +1929,7 @@
   "unicorn(prefer-query-selector)": 4,
   "unicorn(prefer-single-call)": 9,
   "unicorn(prefer-spread)": 1,
-  "unicorn(prefer-ternary)": 2,
-  "vitest(require-hook)": 40
+  "unicorn(prefer-ternary)": 2
  },
  "ui/app/features/goals.js": {
   "@rikalabs(no-json-parse-default-fallback)": 1,
@@ -2006,8 +1988,7 @@
   "unicorn(prefer-number-coercion)": 2,
   "unicorn(prefer-number-properties)": 3,
   "unicorn(prefer-optional-catch-binding)": 1,
-  "unicorn(prefer-spread)": 1,
-  "vitest(require-hook)": 16
+  "unicorn(prefer-spread)": 1
  },
  "ui/app/features/knowledge.js": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -2044,9 +2025,9 @@
   "typescript(no-floating-promises)": 10,
   "typescript(no-unnecessary-condition)": 2,
   "typescript(no-unsafe-argument)": 9,
-  "typescript(no-unsafe-assignment)": 42,
+  "typescript(no-unsafe-assignment)": 40,
   "typescript(no-unsafe-call)": 32,
-  "typescript(no-unsafe-member-access)": 98,
+  "typescript(no-unsafe-member-access)": 96,
   "typescript(no-unsafe-return)": 1,
   "typescript(prefer-nullish-coalescing)": 15,
   "typescript(prefer-optional-chain)": 5,
@@ -2066,8 +2047,7 @@
   "unicorn(prefer-includes)": 2,
   "unicorn(prefer-modern-dom-apis)": 1,
   "unicorn(prefer-optional-catch-binding)": 6,
-  "unicorn(prefer-query-selector)": 30,
-  "vitest(require-hook)": 8
+  "unicorn(prefer-query-selector)": 30
  },
  "ui/app/features/models.js": {
   "@rikalabs(no-bare-wrapper-functions)": 1,
@@ -2127,8 +2107,7 @@
   "unicorn(prefer-query-selector)": 60,
   "unicorn(prefer-single-call)": 3,
   "unicorn(prefer-string-raw)": 2,
-  "unicorn(prefer-string-replace-all)": 2,
-  "vitest(require-hook)": 17
+  "unicorn(prefer-string-replace-all)": 2
  },
  "ui/app/features/models.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 2,
@@ -2190,8 +2169,7 @@
   "unicorn(prefer-global-this)": 2,
   "unicorn(prefer-includes)": 1,
   "unicorn(prefer-optional-catch-binding)": 6,
-  "unicorn(prefer-query-selector)": 16,
-  "vitest(require-hook)": 3
+  "unicorn(prefer-query-selector)": 16
  },
  "ui/app/features/runs.js": {
   "@rikalabs(no-bare-wrapper-functions)": 4,
@@ -2223,16 +2201,16 @@
   "eslint(no-use-before-define)": 53,
   "eslint(no-useless-assignment)": 1,
   "eslint(no-useless-escape)": 6,
-  "eslint(no-var)": 279,
+  "eslint(no-var)": 278,
   "eslint(object-shorthand)": 2,
-  "eslint(one-var)": 213,
+  "eslint(one-var)": 212,
   "eslint(prefer-arrow-callback)": 103,
   "eslint(prefer-destructuring)": 11,
   "eslint(prefer-named-capture-group)": 8,
   "eslint(prefer-template)": 57,
   "eslint(require-unicode-regexp)": 9,
   "eslint(sort-vars)": 14,
-  "eslint(vars-on-top)": 216,
+  "eslint(vars-on-top)": 215,
   "import(no-mutable-exports)": 1,
   "promise(catch-or-return)": 2,
   "promise(prefer-await-to-callbacks)": 4,
@@ -2240,9 +2218,9 @@
   "typescript(no-floating-promises)": 8,
   "typescript(no-unnecessary-condition)": 2,
   "typescript(no-unsafe-argument)": 35,
-  "typescript(no-unsafe-assignment)": 108,
+  "typescript(no-unsafe-assignment)": 102,
   "typescript(no-unsafe-call)": 116,
-  "typescript(no-unsafe-member-access)": 360,
+  "typescript(no-unsafe-member-access)": 354,
   "typescript(no-unsafe-return)": 16,
   "typescript(prefer-for-of)": 2,
   "typescript(prefer-nullish-coalescing)": 45,
@@ -2256,7 +2234,7 @@
   "unicorn(explicit-length-check)": 16,
   "unicorn(no-array-for-each)": 31,
   "unicorn(no-array-reduce)": 1,
-  "unicorn(prefer-dom-node-append)": 104,
+  "unicorn(prefer-dom-node-append)": 101,
   "unicorn(prefer-dom-node-dataset)": 16,
   "unicorn(prefer-global-this)": 12,
   "unicorn(prefer-includes)": 3,
@@ -2264,8 +2242,7 @@
   "unicorn(prefer-number-coercion)": 10,
   "unicorn(prefer-number-properties)": 13,
   "unicorn(prefer-optional-catch-binding)": 18,
-  "unicorn(prefer-query-selector)": 11,
-  "vitest(require-hook)": 31
+  "unicorn(prefer-query-selector)": 11
  },
  "ui/app/features/system.js": {
   "@rikalabs(no-bare-wrapper-functions)": 1,
@@ -2312,8 +2289,7 @@
   "unicorn(prefer-optional-catch-binding)": 1,
   "unicorn(prefer-query-selector)": 10,
   "unicorn(prefer-string-raw)": 2,
-  "unicorn(prefer-string-replace-all)": 2,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-string-replace-all)": 2
  },
  "ui/app/features/todos.js": {
   "@rikalabs(no-low-signal-variable-names)": 1,
@@ -2343,8 +2319,7 @@
   "typescript(prefer-optional-chain)": 4,
   "typescript(strict-boolean-expressions)": 11,
   "unicorn(explicit-length-check)": 3,
-  "unicorn(no-array-callback-reference)": 1,
-  "vitest(require-hook)": 6
+  "unicorn(no-array-callback-reference)": 1
  },
  "ui/app/lib/board.js": {
   "@rikalabs(no-json-parse-default-fallback)": 2,
@@ -2484,8 +2459,7 @@
   "unicorn(prefer-includes)": 1,
   "unicorn(prefer-modern-dom-apis)": 1,
   "unicorn(prefer-optional-catch-binding)": 3,
-  "unicorn(prefer-ternary)": 1,
-  "vitest(require-hook)": 11
+  "unicorn(prefer-ternary)": 1
  },
  "ui/app/lib/graph.test.mjs": {
   "anti-slop(require-readable-spacing)": 6,
@@ -2559,8 +2533,7 @@
   "unicorn(prefer-number-coercion)": 1,
   "unicorn(prefer-number-properties)": 1,
   "unicorn(prefer-optional-catch-binding)": 5,
-  "unicorn(prefer-query-selector)": 4,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-query-selector)": 4
  },
  "ui/app/lib/markdown.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 3,
@@ -2815,8 +2788,7 @@
   "unicorn(explicit-length-check)": 1,
   "unicorn(no-array-for-each)": 1,
   "unicorn(prefer-dom-node-append)": 13,
-  "unicorn(prefer-global-this)": 2,
-  "vitest(require-hook)": 3
+  "unicorn(prefer-global-this)": 2
  },
  "ui/plugins/arena3d/app.js": {
   "@rikalabs(no-low-signal-variable-names)": 1,
@@ -2922,8 +2894,7 @@
   "unicorn(no-array-for-each)": 3,
   "unicorn(prefer-dom-node-append)": 39,
   "unicorn(prefer-global-this)": 3,
-  "unicorn(prefer-optional-catch-binding)": 1,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-optional-catch-binding)": 1
  },
  "ui/plugins/compare/compare.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -2987,8 +2958,7 @@
   "unicorn(prefer-dom-node-remove)": 1,
   "unicorn(prefer-global-this)": 2,
   "unicorn(prefer-includes)": 1,
-  "unicorn(prefer-optional-catch-binding)": 1,
-  "vitest(require-hook)": 25
+  "unicorn(prefer-optional-catch-binding)": 1
  },
  "ui/plugins/files/files.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 3,
@@ -3052,8 +3022,7 @@
   "unicorn(prefer-dom-node-dataset)": 4,
   "unicorn(prefer-math-min-max)": 1,
   "unicorn(prefer-number-properties)": 1,
-  "unicorn(prefer-optional-catch-binding)": 1,
-  "vitest(require-hook)": 5
+  "unicorn(prefer-optional-catch-binding)": 1
  },
  "ui/plugins/mesh/app.js": {
   "@rikalabs(no-pass-through-intermediate-vars)": 2,
@@ -3095,8 +3064,7 @@
   "unicorn(no-immediate-mutation)": 1,
   "unicorn(no-negated-condition)": 3,
   "unicorn(prefer-dom-node-append)": 41,
-  "unicorn(prefer-global-this)": 1,
-  "vitest(require-hook)": 5
+  "unicorn(prefer-global-this)": 1
  },
  "ui/plugins/mesh/mesh.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 3,
@@ -3167,8 +3135,7 @@
   "unicorn(prefer-dom-node-dataset)": 1,
   "unicorn(prefer-global-this)": 4,
   "unicorn(prefer-number-properties)": 8,
-  "unicorn(prefer-optional-catch-binding)": 2,
-  "vitest(require-hook)": 13
+  "unicorn(prefer-optional-catch-binding)": 2
  },
  "ui/plugins/music/music.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 3,
@@ -3263,8 +3230,7 @@
   "unicorn(prefer-modern-math-apis)": 3,
   "unicorn(prefer-optional-catch-binding)": 3,
   "unicorn(prefer-spread)": 2,
-  "unicorn(switch-case-braces)": 10,
-  "vitest(require-hook)": 4
+  "unicorn(switch-case-braces)": 10
  },
  "ui/plugins/office/office.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 4,
@@ -3321,8 +3287,7 @@
   "unicorn(no-negated-condition)": 2,
   "unicorn(numeric-separators-style)": 2,
   "unicorn(prefer-dom-node-append)": 35,
-  "unicorn(prefer-number-properties)": 1,
-  "vitest(require-hook)": 5
+  "unicorn(prefer-number-properties)": 1
  },
  "ui/plugins/search/app.js": {
   "@rikalabs(no-pass-through-intermediate-vars)": 1,
@@ -3358,8 +3323,7 @@
   "unicorn(explicit-length-check)": 1,
   "unicorn(no-array-for-each)": 1,
   "unicorn(prefer-dom-node-append)": 27,
-  "unicorn(prefer-global-this)": 5,
-  "vitest(require-hook)": 1
+  "unicorn(prefer-global-this)": 5
  },
  "ui/plugins/search/search.test.mjs": {
   "@rikalabs(no-pass-through-intermediate-vars)": 6,

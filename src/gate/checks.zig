@@ -1690,7 +1690,7 @@ fn buildRegistersJsSuite(build_src: []const u8, rel: []const u8) bool {
 }
 
 /// `zig build test` drives the web UI's node suites by name: one
-/// `addSystemCommand(&.{ "bun", "test" })` per `.test.mjs`, listed by hand
+/// `addSystemCommand(&.{ "bun", "test" })` per `.test.mjs` or `.test.ts`, listed by hand
 /// in `build.zig`. A new suite nobody adds a line for is never run, and the
 /// suite output cannot show it — the file is simply not in the list, so the
 /// run is green on the tests it does not have. The obvious alternative,
@@ -1743,8 +1743,13 @@ fn scanUnrunJsSuites(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_
     return .{ .ok = false, .label = "js-suite-coverage", .detail = owned, .stderr = owned };
 }
 
-/// Collects every `*.test.mjs` under `dir_path`, recursively, as paths
-/// relative to `dir`.
+/// A bun test suite: the `.mjs` suites and the typed `.ts` ones.
+fn isJsSuite(name: []const u8) bool {
+    return std.mem.endsWith(u8, name, ".test.mjs") or std.mem.endsWith(u8, name, ".test.ts");
+}
+
+/// Collects every JS suite (`isJsSuite`) under `dir_path`, recursively, as
+/// paths relative to `dir`.
 fn collectJsSuites(
     io: std.Io,
     arena: std.mem.Allocator,
@@ -1764,10 +1769,18 @@ fn collectJsSuites(
         const sub = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name });
         switch (entry.kind) {
             .directory => try collectJsSuites(io, arena, list, dir, sub),
-            .file => if (std.mem.endsWith(u8, entry.name, ".test.mjs")) try list.append(arena, sub),
+            .file => if (isJsSuite(entry.name)) try list.append(arena, sub),
             else => {},
         }
     }
+}
+
+test "isJsSuite takes typed suites and refuses look-alikes" {
+    try std.testing.expect(isJsSuite("shell.test.ts"));
+    try std.testing.expect(isJsSuite("scroll.test.mjs"));
+    try std.testing.expect(!isJsSuite("shell.test.ts.bak"));
+    try std.testing.expect(!isJsSuite("shell.ts"));
+    try std.testing.expect(!isJsSuite("test.d.ts"));
 }
 
 test "buildRegistersJsSuite matches the whole quoted path" {

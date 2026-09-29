@@ -49,6 +49,9 @@
     // rules exist to move a suite onto the vitest runner this repo does not use.
     "vitest/no-import-node-test": "off",
     "vitest/prefer-importing-vitest-globals": "off",
+    // A test-file rule: in an application module there is no hook to move
+    // module setup into. The test override below turns it back on.
+    "vitest/require-hook": "off",
     "no-console": "error",
     "no-empty-function": "error",
     "eqeqeq": "error",
@@ -148,7 +151,8 @@
       "files": ["**/*.test.{js,mjs,ts}", "**/*.spec.{js,mjs,ts}", "tests/**/*", "ui/app/**/*.test.mjs", "ui/**/*.test.mjs", "tools/**/*.test.*"],
       "rules": {
         "no-console": "off",
-        "no-empty-function": "off"
+        "no-empty-function": "off",
+        "vitest/require-hook": "error"
       }
     }
   ]
