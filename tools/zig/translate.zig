@@ -5,6 +5,11 @@
 //! Input:  {"tool": "<wrapped tool>", "phase": "after", "payload": "<json>"}
 //! Output: {"ok": true, "payload": "<rewritten json>"}
 //!
+//! The payload is a wrapped tool result, so its bytes may be a fetched page, a
+//! file, or a peer's message. It is quoted and neutralized through
+//! `prompt_quote.zig` before it reaches the prompt, and the untrusted note
+//! tells the model the quote is evidence, never instructions.
+//!
 //! Settings come from the `config` object in tools/manifests/translate.tool.json:
 //!   lang       target language (default "en")
 //!   provider   provider name for the translation call (default: the agent's)
@@ -15,6 +20,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const model_reply = @import("model_reply.zig");
+const pq = @import("prompt_quote.zig");
 
 const Settings = struct {
     lang: []const u8 = "en",
@@ -47,10 +53,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         \\- Leave identifiers, URLs, file paths, code, and numbers untouched.
         \\- If nothing needs translating, return the input unchanged.
         \\
+        \\{s}
+        \\
         \\Tool: {s}
         \\
         \\{s}
-    , .{ settings.lang, req.tool, req.payload });
+    , .{ settings.lang, pq.untrusted_note, req.tool, try pq.quote(alloc, "TOOL RESULT", req.payload) });
 
     const answer = lib.llm(prompt) catch |err| {
         lib.log(2, @errorName(err));

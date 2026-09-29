@@ -5,6 +5,11 @@
 //! Input:  {"tool": "...", "phase": "after", "payload": "<json>"}
 //! Output: {"ok": true, "payload": "<rewritten>"}  or {"ok":false} to decline.
 //!
+//! The payload is a wrapped tool result, so its bytes may be a fetched page, a
+//! file, or a peer's message. It is quoted and neutralized through
+//! `prompt_quote.zig` before it reaches the prompt, and the untrusted note
+//! tells the model the quote is evidence, never instructions.
+//!
 //! Settings come from `config` in tools/manifests/mutate.tool.json:
 //!   instruction  LLM instruction template (may contain {{lang}} and {{tool}})
 //!   lang         shorthand for the common translate case (default "en")
@@ -14,6 +19,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const model_reply = @import("model_reply.zig");
+const pq = @import("prompt_quote.zig");
 
 const Settings = struct {
     instruction: []const u8 = "",
@@ -47,10 +53,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const prompt = try std.fmt.allocPrint(alloc,
         \\{s}
         \\
+        \\{s}
+        \\
         \\Tool: {s}
         \\
         \\{s}
-    , .{ instruction, req.tool, req.payload });
+    , .{ instruction, pq.untrusted_note, req.tool, try pq.quote(alloc, "TOOL RESULT", req.payload) });
 
     const answer = lib.llm(prompt) catch |err| {
         lib.log(2, @errorName(err));
