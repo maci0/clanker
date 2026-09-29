@@ -108,7 +108,8 @@ const EXPOSED = {
   // core/ui.js
   T: "van.tags", add: "van.add", bind: "van.bind", state: "van.state",
   UI: "ui.kit", showLoadError: "ui.loadError", skeletonRows: "ui.skeletonRows",
-  toolRow: "ui.toolRow", runDetail: "ui.runDetail",
+  toolRow: "ui.toolRow", runDetail: "ui.runDetail", requireText: "ui.requireText",
+  showLoading: "ui.loading",
   wireRefresh: "ui.refresh", uiConfirm: "confirm", uiPrompt: "prompt", toast: "toast",
   // core/utils.js
   readJson: "getJSON", postJson: "postJSON",

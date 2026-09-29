@@ -291,6 +291,7 @@ function loadHost(page, extras) {
     T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
     skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
+    requireText: () => true, showLoading: () => {},
     openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
     liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},
     copyText: () => {}, scrollTo: () => {}, paintTomlInto: () => {},

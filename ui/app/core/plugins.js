@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { RAIL_TAB_CLASS, T, add, bind, effect, showLoadError, skeletonRows, state, toast, UI, uiConfirm, uiPrompt, runDetail, toolRow } from "./ui.js";
+import { RAIL_TAB_CLASS, T, add, bind, effect, requireText, showLoadError, skeletonRows, state, toast, UI, uiConfirm, uiPrompt, runDetail, toolRow } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
 import { liveOk, makeLineSplitter, onLive, pumpInto } from "./stream.js";
@@ -11,7 +11,7 @@ import { icon } from "./icons.js";
 import {
   clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
   fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
-  providerUnusableReason, searchFoldFind, searchFold, themeToken, wireRefresh
+  providerUnusableReason, searchFoldFind, searchFold, showLoading, themeToken, wireRefresh
 } from "./utils.js";
 
 // A plugin that still hands a raw <button> through api.ui.button gets the
@@ -185,7 +185,9 @@ export function pluginApi(spec) {
       runDetail: runDetail,
       button: stampButtonVariant,
       refresh: wireRefresh,
-      kit: UI
+      kit: UI,
+      requireText: requireText,
+      loading: showLoading
     },
     // A modal dialog with focus handling (`core/overlay.js`). A view that
     // confirms a destructive action or edits a record needs one, and building

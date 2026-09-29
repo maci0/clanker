@@ -326,10 +326,20 @@ clanker.registerView({
     var drag = null;              // { office, kind: 'agent'|'janitor'|'prop', target, offsetX, offsetY, samples, startedAt, shakeDir, shakeCount, shakeWindowStart, lastShakeAt }
 
     function agentColor(name) {
-      // Stable per name, spread around the wheel. Saturation and lightness are
-      // fixed so every avatar reads at the same weight on either theme.
-      var hue = hashString(name) % 360;
-      return "hsl(" + hue + ", 62%, 62%)";
+      // One stable tone per clanker name, and the *same* tone the Board draws
+      // that name in: the eight `--chat-hue-N` enamels, indexed by the hash
+      // board.js uses, so a person is one colour across both views. Those
+      // tokens are re-shaded per theme until they clear 5.5:1 on the panel.
+      // This was its own HSL wheel at a fixed 62% lightness, so every name was
+      // a different colour here than anywhere else and none of them was legible
+      // on the light panel faces.
+      return cssVar("--chat-hue-" + (nameTone(name) % 8), "#1d5c9e");
+    }
+
+    function nameTone(name) {
+      var h = 0;
+      for (var i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+      return Math.abs(h);
     }
 
     function say(text) {
@@ -487,10 +497,10 @@ clanker.registerView({
 
     function drawOffice(o, ox, oy) {
       var L = o.layout;
-      var wall = cssVar("--border", "#888");
-      var floor = cssVar("--surface-2", "#eee");
-      var ink = cssVar("--fg", "#111");
-      var muted = cssVar("--fg-muted", "#666");
+      var wall = cssVar("--border", "#b9b5aa");
+      var floor = cssVar("--surface-2", "#e2dfd6");
+      var ink = cssVar("--fg", "#1b1c18");
+      var muted = cssVar("--fg-muted", "#4f534b");
 
       if (sheetReady) {
         for (var ty = 0; ty < L.h; ty++) {
@@ -584,7 +594,7 @@ clanker.registerView({
       var drawn = character(CH_JANITOR, px, py, moving, janitor.phase,
         janitor.dir > 0 ? DIR_RIGHT : DIR_LEFT);
       if (!drawn) {
-        ctx2d.fillStyle = cssVar("--warn", "#e8c34a");
+        ctx2d.fillStyle = cssVar("--warn", "#8a6d00");
         ctx2d.fillRect(px + 4, py + 2, 8, 12);
         ctx2d.fillStyle = ink;
         ctx2d.fillRect(px + 6, py + 4, 2, 2);
@@ -597,7 +607,7 @@ clanker.registerView({
       // diagonal is the one thing on this floor that is not pixel art. Held
       // out past the sprite's shoulder, because a handle crossing his torso
       // is a dark line on dark cloth and disappears.
-      ctx2d.fillStyle = cssVar("--fg-muted", "#666");
+      ctx2d.fillStyle = cssVar("--fg-muted", "#4f534b");
       var x0 = cx + janitor.dir * 15, x1 = cx + janitor.dir * 9;
       for (var s = 0; s <= 12; s++) {
         var t = s / 12;
@@ -606,7 +616,7 @@ clanker.registerView({
           Math.round((foot + (hand - foot) * t) / 2) * 2,
           2, 2);
       }
-      ctx2d.fillStyle = cssVar("--ok", "#7aa");
+      ctx2d.fillStyle = cssVar("--ok", "#117a3a");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
       if (spinning || squashed) ctx2d.restore();
       if (janitor.dragging) dragShadow(px + TILE / 2, py);
@@ -671,7 +681,7 @@ clanker.registerView({
         var px = bx + ci * bandW + (bandW - noteW) / 2;
         var py = by + 20 + n * (noteH + 4);
         if (py + noteH > by + bh - 4) return; // board is full; the list has them all
-        ctx2d.fillStyle = c.assignee ? agentColor(c.assignee) : "#f2d65c";
+        ctx2d.fillStyle = c.assignee ? agentColor(c.assignee) : cssVar("--card-yellow", "#c19a00");
         ctx2d.fillRect(px, py, noteW, noteH);
         ctx2d.fillStyle = "rgba(0,0,0,0.18)";
         ctx2d.fillRect(px, py + noteH - 3, noteW, 3); // curl at the bottom
@@ -685,26 +695,31 @@ clanker.registerView({
       var L = o.layout;
       var wx = ox + L.whiteboard.x * TILE;
       var wy = oy + L.whiteboard.y * TILE;
-      ctx2d.fillStyle = "#f4f4ee";
+      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
       ctx2d.fillRect(wx, wy, L.whiteboard.w * TILE, L.whiteboard.h * TILE);
-      ctx2d.strokeStyle = "#9aa0a6";
+      ctx2d.strokeStyle = cssVar("--border", "#b9b5aa");
       ctx2d.lineWidth = 2;
       ctx2d.strokeRect(wx + 1, wy + 1, L.whiteboard.w * TILE - 2, L.whiteboard.h * TILE - 2);
       // Tray along the bottom, so it reads as a whiteboard and not a window.
-      ctx2d.fillStyle = "#b9bfc5";
+      ctx2d.fillStyle = cssVar("--rule", "#cdc9bf");
       ctx2d.fillRect(wx + 2, wy + L.whiteboard.h * TILE - 4, L.whiteboard.w * TILE - 4, 3);
       // Goals as lines of "writing": the text itself is in the Goals view.
       // Each line carries an IEC lamp for its status — green working (and
       // breathing while the clankers are actually on it), amber in review,
       // red blocked — so a glance at the room says how the work stands.
-      ctx2d.fillStyle = "#4a4a4a";
+      // Those are the cabinet's own signal tokens, so a lamp here means what
+      // it means everywhere else; they were a borrowed green/amber/red whose
+      // three reds and two greens appeared nowhere in the palette.
+      ctx2d.fillStyle = cssVar("--fg-muted", "#4f534b");
       ctx2d.font = "9px ui-monospace, monospace";
       var live = goals.filter(function (g) { return g.status === "active"; }).length;
       ctx2d.fillText("GOALS" + (live ? " · " + live + " live" : ""), wx + 8, wy + 11);
       var now2 = performance.now();
       goals.slice(0, 4).forEach(function (g, i) {
         var ly = wy + 20 + i * 12;
-        var lamp = g.status === "active" ? "#2fae4d" : g.status === "review" ? "#c9a50a" : "#c62828";
+        var lamp = g.status === "active" ? cssVar("--ok", "#117a3a")
+          : g.status === "review" ? cssVar("--warn", "#8a6d00")
+            : cssVar("--danger", "#a72920");
         // The breath: a working goal's lamp swells, unless motion is reduced.
         var r = 2.5;
         if (g.status === "active" && !reduced) r += 0.8 * Math.abs(Math.sin(now2 / 600 + i));
@@ -713,7 +728,7 @@ clanker.registerView({
         ctx2d.arc(wx + 10, ly + 1, r, 0, Math.PI * 2);
         ctx2d.fill();
         var lineW = Math.min(L.whiteboard.w * TILE - 24, 20 + (hashString(g.objective || "") % 40));
-        ctx2d.fillStyle = g.status === "active" ? "#2f6ea8" : "#8a8f96";
+        ctx2d.fillStyle = g.status === "active" ? cssVar("--accent", "#1d5c9e") : cssVar("--rule", "#cdc9bf");
         ctx2d.fillRect(wx + 16, ly, lineW, 3);
       });
     }
@@ -780,17 +795,17 @@ clanker.registerView({
       var cy = oy + 0.55 * TILE;
       var ringing = performance.now() < o.ringUntil;
       var jx = ringing && !reduced ? Math.round(Math.sin(performance.now() / 30) * 2) : 0;
-      ctx2d.fillStyle = "#c94f4f";
+      ctx2d.fillStyle = cssVar("--danger", "#a72920");
       ctx2d.fillRect(cx + jx - 7, cy - 9, 4, 3); // bells
       ctx2d.fillRect(cx + jx + 3, cy - 9, 4, 3);
       ctx2d.beginPath();
       ctx2d.arc(cx + jx, cy, 7, 0, Math.PI * 2);
       ctx2d.fill();
-      ctx2d.fillStyle = "#f4f4ee";
+      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
       ctx2d.beginPath();
       ctx2d.arc(cx + jx, cy, 5, 0, Math.PI * 2);
       ctx2d.fill();
-      ctx2d.strokeStyle = "#1a1a1a";
+      ctx2d.strokeStyle = cssVar("--fg", "#1b1c18");
       ctx2d.lineWidth = 1;
       var d = new Date();
       var mins = d.getMinutes() / 60 * Math.PI * 2 - Math.PI / 2;
@@ -802,8 +817,8 @@ clanker.registerView({
       ctx2d.lineTo(cx + jx + Math.cos(hrs) * 2.5, cy + Math.sin(hrs) * 2.5);
       ctx2d.stroke();
       if (ringing) {
-        ctx2d.fillStyle = "#c94f4f";
-        ctx2d.font = "bold 10px ui-sans-serif, sans-serif";
+        ctx2d.fillStyle = cssVar("--danger", "#a72920");
+        ctx2d.font = "bold 10px " + cssVar("--sans", "ui-sans-serif, system-ui, sans-serif");
         ctx2d.fillText("RRRING", cx - 18, cy - 13);
       }
     }
@@ -811,17 +826,17 @@ clanker.registerView({
     /* Past halfway across its office a bubble opens to the left, so it never
        runs over the neighbouring room. */
     function bubble(px, py, text, ox, tilesWide) {
-      ctx2d.font = "11px ui-sans-serif, sans-serif";
+      ctx2d.font = "11px " + cssVar("--sans", "ui-sans-serif, sans-serif");
       var w = ctx2d.measureText(text).width + 10;
       var roomRight = ox + tilesWide * TILE;
       var bx = px + TILE * 0.75;
       if (bx + w > roomRight) bx = Math.max(ox + 4, px - w);
-      ctx2d.fillStyle = "#fdfdf7";
+      ctx2d.fillStyle = cssVar("--surface", "#eeebe4");
       ctx2d.fillRect(bx, py - 18, w, 16);
-      ctx2d.strokeStyle = "#5b5b5b";
+      ctx2d.strokeStyle = cssVar("--border", "#b9b5aa");
       ctx2d.lineWidth = 1;
       ctx2d.strokeRect(bx + 0.5, py - 17.5, w - 1, 15);
-      ctx2d.fillStyle = "#1a1a1a";
+      ctx2d.fillStyle = cssVar("--fg", "#1b1c18");
       ctx2d.fillText(text, bx + 5, py - 6);
     }
 

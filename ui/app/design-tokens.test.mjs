@@ -736,3 +736,50 @@ test("the export stylesheets wear the theme store's readings", () => {
     }
   }
 });
+
+test("the office canvas paints the cabinet's signal colours, not a borrowed ramp", () => {
+  const office = readFileSync(join(pluginsDir, "office", "app.js"), "utf8");
+
+  // Every status lamp on the whiteboard is an IEC role: healthy, abnormal,
+  // fault. Those three readings were Google's green/amber/red, which appear
+  // nowhere in the palette and matched neither the board's status colours nor
+  // the same three lamps in any other view.
+  for (const role of ["ok", "warn", "danger"]) {
+    assert.ok(office.includes(`cssVar("--${role}"`), `the office lamps must read --${role} from the cabinet`);
+  }
+
+  // One stable colour per clanker name is a promise the Board already makes
+  // through --chat-hue-N; the office cannot keep a private HSL wheel and still
+  // be the same product.
+  assert.match(office, /cssVar\("--chat-hue-"/, "agent colours must come from the shared chat-hue palette");
+  assert.doesNotMatch(office, /hsl\(/, "a private hue wheel is a second identity for the same people");
+
+  // Any colour the office paints as chrome (a surface, an edge, a reading) is
+  // a token read; a literal hex is the drift this pins. Drop every cssVar call
+  // first, since its second argument is a checked fallback below. What is left
+  // is object paint on the pixel-art sheet: cork, desk timber, the portrait.
+  const objectPaint = /#(?:8b5e34|8a6a44|6d5335|4a3722|f4d9b0|2a1c10)/g;
+  const found = [];
+  office.split("\n").forEach((line, i) => {
+    const kept = line.replace(/cssVar\(.*?"#[0-9a-f]{6}"\)/g, "").replace(objectPaint, "");
+    for (const hex of kept.match(/#[0-9a-fA-F]{6}/g) || []) found.push(`office/app.js:${i + 1}  ${hex}`);
+  });
+  assert.deepEqual(found, [], `canvas chrome must read the cabinet tokens:\n${found.join("\n")}`);
+
+  // And those fallbacks are the cabinet's own day readings, so a context with
+  // no computed style still draws the cabinet rather than an imported ramp.
+  const src = readFileSync(join(here, "tailwind.src.css"), "utf8");
+  // The day face only: the sheet restates the tokens in its dark blocks and
+  // each theme/ has its own, so the first :root is the reading a fallback must
+  // quote.
+  const dayBlock = src.slice(src.indexOf(":root"), src.indexOf("}", src.indexOf(":root")));
+  const tokens = Object.fromEntries(
+    [...dayBlock.matchAll(/(--[a-z0-9-]+):\s*(#[0-9a-f]{6})/g)].map((m) => [m[1], m[2]]));
+  const fallbacks = [...office.matchAll(/cssVar\("(--[a-z0-9-]+)",\s*"(#[0-9a-f]{6})"\)/g)];
+  assert.ok(fallbacks.length, "the office reads tokens; it must carry fallbacks");
+  for (const [, token, value] of fallbacks) {
+    if (token.startsWith("--chat-hue-")) continue;
+    assert.equal(value, tokens[token],
+      `office fallback for ${token} must be the day face ${tokens[token]}, not ${value}`);
+  }
+});
