@@ -37,6 +37,13 @@ pub const Run = struct {
 /// descriptor's relative `"wasm"` path are resolved against the process's
 /// cwd with no override flag, so a temp-dir cwd cannot see the real ones
 /// unless pointed at directly — see `linkZigOut` for the wasm half).
+/// `agent.seed` for every e2e journey. Unset means time-seeded, so each run
+/// drew a different `ck_random` stream and a failure could not be replayed
+/// from the seed the log printed. One constant for the whole suite: a journey
+/// is replayed by re-running it, not by re-deriving a seed, and every test
+/// gets the same stream only if they all start from the same one.
+pub const e2e_agent_seed: u64 = 0x0E2E_5EED;
+
 pub fn writeMockConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port: u16) !void {
     const toml = try std.fmt.allocPrint(gpa,
         \\default_provider = "e2e-mock"
@@ -53,8 +60,9 @@ pub fn writeMockConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port
         \\
         \\[agent]
         \\tools_dir = {f}
+        \\seed = {d}
         \\
-    , .{ port, std.json.fmt(tools_manifests_dir, .{}) });
+    , .{ port, std.json.fmt(tools_manifests_dir, .{}), e2e_agent_seed });
     defer gpa.free(toml);
     try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
 }
