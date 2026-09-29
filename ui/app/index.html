@@ -107,9 +107,9 @@ lamps carry further). The seven named palettes ride the same tokens.
     <button type="button" class="secondary group chip inline-flex min-w-0 shrink [&::before]:hidden pointer-coarse:min-h-11 max-[640px]:min-h-11 max-w-[22ch] max-[640px]:max-w-[10ch] cursor-pointer items-center gap-1 overflow-hidden rounded-capsule border border-rule bg-surface-2 px-2 py-0.5 font-sans text-sm font-medium text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))] hover:border-border hover:text-fg" id="header-model" title="Active model (click to change)" aria-haspopup="listbox" aria-expanded="false">
       <span class="min-w-0 truncate" data-role="name">…</span>
     </button>
-    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="instance-chip" hidden aria-hidden="true">connecting…</span>
-    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="peers-chip" hidden aria-hidden="true"></span>
-    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="session-chip" hidden aria-hidden="true">session …</span>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="instance-chip" hidden>connecting…</span>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="peers-chip" hidden></span>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] max-[640px]:hidden" id="session-chip" hidden>session …</span>
     <button type="button" class="icon-btn max-[640px]:hidden" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
     <button type="button" class="secondary inline-flex box-border min-h-8 min-w-0 shrink cursor-pointer items-center justify-center overflow-hidden rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-ellipsis whitespace-nowrap text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
     <button type="button" class="icon-btn max-[640px]:hidden" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
@@ -145,7 +145,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
     <details class="m-0 border-0 p-0 [&:not([open])>*:not(summary)]:hidden [&>summary]:cursor-pointer [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden" id="rail-fold-watch">
       <summary class="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg" id="rail-section-watch">Watch</summary>
-      <section aria-labelledby="rail-section-watch">
+      <div role="group" aria-labelledby="rail-section-watch">
         <ul class="m-0 list-none p-0" role="presentation">
           <li>
             <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
@@ -160,7 +160,7 @@ lamps carry further). The seven named palettes ride the same tokens.
             <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
           </li>
         </ul>
-      </section>
+      </div>
     </details>
   </nav>
 
@@ -187,7 +187,7 @@ lamps carry further). The seven named palettes ride the same tokens.
   <nav class="mt-auto flex-none border-t border-rule pt-2" data-rail-section="settings" aria-label="Set up">
     <details class="m-0 border-0 p-0 [&:not([open])>*:not(summary)]:hidden [&>summary]:cursor-pointer [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden" id="rail-fold-setup">
       <summary class="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg" id="rail-section-setup">Set up</summary>
-      <section aria-labelledby="rail-section-setup">
+      <div role="group" aria-labelledby="rail-section-setup">
         <ul class="m-0 list-none p-0" role="presentation">
           <li>
             <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
@@ -205,10 +205,9 @@ lamps carry further). The seven named palettes ride the same tokens.
             <button type="button" class="rail-tab relative flex min-h-8 w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-plate border border-transparent bg-transparent bg-none px-3 pl-5 text-left font-sans text-sm font-medium text-fg-muted shadow-none hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-semibold aria-selected:text-fg enabled:active:translate-y-px motion-reduce:active:transform-none" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
           </li>
         </ul>
-      </section>
+      </div>
     </details>
   </nav>
-    </div>
   </div>
 </aside>
 
@@ -287,7 +286,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <!-- ARIA allows `combobox` on an input, never on a textarea: a textarea's
            implicit role is textbox with aria-multiline, and overriding it hid
            the fact that this field takes more than one line. So the composer is
-           the ARIA 1.1 shape instead -- the role, the popup state and the popup
+           the ARIA 1.1 shape instead: the role, the popup state and the popup
            itself belong to this wrapper, and #task stays the textbox inside it,
            keeping aria-autocomplete and aria-activedescendant. -->
       <div class="relative" id="task-combobox" role="combobox"
@@ -463,7 +462,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div id="fleet-runs"></div>
         </section>
         <div id="fleet-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Fleet run detail" hidden></div>
-        <div class="pointer-events-none absolute inset-0" id="fleet-floor" aria-hidden="true" hidden>
+        <div class="pointer-events-none absolute inset-0" id="fleet-floor" hidden>
           <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="fleet-canvas" width="640" height="180"></canvas>
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
@@ -493,7 +492,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <!-- The canvas is decorative; #arena-status carries the same state in
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
-        <div class="pointer-events-none absolute inset-0" id="arena-stage" aria-hidden="true" hidden>
+        <div class="pointer-events-none absolute inset-0" id="arena-stage" hidden>
           <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="arena-canvas" width="640" height="200"></canvas>
           <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
                decorative contract as the canvas above; inherits aria-hidden
@@ -519,7 +518,7 @@ lamps carry further). The seven named palettes ride the same tokens.
   <div data-view="true" class=" [&:not([hidden])]:flex [&:not([hidden])]:flex-col [&:not([hidden])]:overflow-hidden" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
     <div class="flex min-h-0 w-full flex-1 overflow-hidden rounded-plate border border-rule bg-surface max-[768px]:relative max-[768px]:h-auto">
       <!-- Sidebar: channel list -->
-      <aside max-[768px]:absolute max-[768px]:top-0 max-[768px]:left-0 max-[768px]:z-30 max-[768px]:h-full max-[768px]:w-65 max-[768px]:min-w-65 max-[768px]:max-w-65 max-[768px]:flex-none max-[768px]:shadow-[4px_0_16px_var(--scrim)] max-[768px]:data-[collapsed=true]:w-65 max-[768px]:data-[collapsed=true]:min-w-65 max-[768px]:data-[collapsed=true]:max-w-65 max-[768px]:data-[collapsed=true]:-translate-x-full max-[768px]:data-[collapsed=true]:shadow-none class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none" id="chat-sidebar">
+      <aside class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none max-[768px]:absolute max-[768px]:top-0 max-[768px]:left-0 max-[768px]:z-30 max-[768px]:h-full max-[768px]:w-65 max-[768px]:min-w-65 max-[768px]:max-w-65 max-[768px]:flex-none max-[768px]:shadow-[4px_0_16px_var(--scrim)] max-[768px]:data-[collapsed=true]:w-65 max-[768px]:data-[collapsed=true]:min-w-65 max-[768px]:data-[collapsed=true]:max-w-65 max-[768px]:data-[collapsed=true]:-translate-x-full max-[768px]:data-[collapsed=true]:shadow-none" id="chat-sidebar">
         <div class="flex flex-none items-center justify-between border-b border-rule px-4 py-3 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-bold">
           <h2>Channels</h2>
           <button type="button" class="icon-btn inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>

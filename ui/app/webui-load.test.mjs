@@ -359,3 +359,25 @@ test("shared UI helpers are called only where they are imported or defined", fun
     }
   }
 });
+
+test("the page shell parses as written: tags nest and attributes are named", function () {
+  // A stray `</div>` closed the rail early and a class list pasted outside
+  // `class="…"` shipped as attributes; the browser recovered both silently and
+  // stacked the whole shell into one column.
+  const voids = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr", "circle", "rect", "path", "line", "polyline", "polygon", "ellipse", "use", "stop"]);
+  const body = markup.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "");
+  const stack = [];
+  for (const [tag, close, name, attrs, selfClose] of body.matchAll(/<(\/?)([a-zA-Z][\w-]*)((?:\s+[^\s=>/"']+(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g)) {
+    const lower = name.toLowerCase();
+    for (const [, attr] of attrs.matchAll(/\s+([^\s=>]+)(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?/g)) {
+      assert.match(attr, /^[a-zA-Z_:][\w:.-]*$/, `malformed attribute ${attr} on ${tag.slice(0, 60)}`);
+    }
+    if (lower === "html" || lower === "head" || lower === "body") continue;
+    if (close) {
+      assert.equal(stack.pop(), lower, `unbalanced ${tag}`);
+    } else if (!voids.has(lower) && !selfClose) {
+      stack.push(lower);
+    }
+  }
+  assert.deepEqual(stack, []);
+});

@@ -5,6 +5,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The web UI lays out the sidebar beside the conversation again. A stray
+  closing tag in the rail ended the page shell early, so the browser stacked
+  the rail above the chat at every window width, and the chat sidebar's
+  narrow-window classes sat outside its `class` attribute and styled nothing.
+
 ## [0.9.0] - 2026-09-28
 
 ### Changed
