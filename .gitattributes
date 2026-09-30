@@ -11,7 +11,15 @@
 #              the artifacts tools/ts/verify.sh diffs against.
 * text=auto
 
+# Every file reached through its own shebang is pinned LF, not just the shell
+# ones. scripts/sbom.py and scripts/imp-autorecover-loop/loop.py carry
+# `#!/usr/bin/env python3` and are run that way (the latter is exec'd by
+# run.sh and documented as `./loop.py`), and a CRLF line makes the kernel hand
+# the interpreter the name `python3\r`: `env: 'python3\r': No such file or
+# directory`. The `*.sh` rule below was written for the shell half of this and
+# never covered the Python half.
 *.sh text eol=lf
+*.py text eol=lf
 .githooks/pre-commit text eol=lf
 
 *.wasm binary
