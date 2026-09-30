@@ -629,9 +629,8 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
     return parseWithCommand(args, diag, null);
 }
 
-/// Parse CLI args, returning the resolved command through `cmd_out` (set on
-/// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
-/// actual command in a help hint even when a global flag precedes it.
+/// One row of a flag table: the spelling, the `Options` field it writes, and
+/// the `Flag` seen-flags records so `FlagNotForCommand` can name it.
 const BoolFlag = struct { spelling: []const u8, field: []const u8, value: bool, flag: Flag };
 const ValueFlag = struct { spelling: []const u8, field: []const u8, flag: Flag };
 
@@ -683,6 +682,9 @@ const value_flags = [_]ValueFlag{
     .{ .spelling = "--repo", .field = "update_repo", .flag = .update_repo },
 };
 
+/// Parse CLI args, returning the resolved command through `cmd_out` (set on
+/// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
+/// actual command in a help hint even when a global flag precedes it.
 pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
     var opts = Options{};
     var idx: usize = 1;
