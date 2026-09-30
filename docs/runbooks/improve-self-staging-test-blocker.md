@@ -21,9 +21,9 @@
 - Report: none yet
 ## Diagnose
 
-- The improve-self run ends each iteration with `iteration N: all attempts failed`, and the staging log shows `staging tests failed` plus `run test` / `run node failure` lines and a Zig compile error.
+- The improve-self run ends each iteration with `iteration N: all attempts failed`, and the staging log shows `staging tests failed` plus `run test` / `run bun failure` lines and a Zig compile error.
 - Zig compile error pattern: `error: expected type 'Io', found 'Io.Threaded'` at a `std.Io.Dir.*` call site. The test built a `std.Io.Threaded` and passed it where the std `Io` interface is required.
-- Node `node --test` failures on `ui/app/core/*.test.mjs` are usually a consequence of the same broken staged tree (the worktree was snapshotted before the fix), not independent defects — re-run them against the fixed tree before chasing them.
+- `bun test` failures on `ui/app/core/*.test.mjs` are usually a consequence of the same broken staged tree (the worktree was snapshotted before the fix), not independent defects — re-run them against the fixed tree before chasing them.
 - The `fsWriteIfImpl creates missing parent directories` test fails with `expected 0, found 1` at `expectEqual(Err.ok, rc)` only when the cwd has `state/` as a symlink — i.e. in every improve staging worktree (linkSharedState) and in any checkout that symlinks `state`. safeJoinSecure resolves `./state` as an escape (`Err.denied`).
 
 ## Recover

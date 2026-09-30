@@ -4,7 +4,7 @@
 
 - **Use when:** An improve-self staging build reports a missing local source
   file, especially a `file_hash FileNotFound` error; or an unrelated UI
-  proposal fails staging with `node --test ... exit code 1` because the
+  proposal fails staging with `bun test ... exit code 1` because the
   `ui/app/core/*.test.mjs` suites cannot find repo-root data (`themes/`,
   `commands/`).
 - **Recover by:** Keep repository build inputs in the shared improve-readable
@@ -24,11 +24,11 @@ The underlying incident is [Improve staging misses UI build inputs](../reports/b
 [`e10c868`](../../src/improve/engine.zig).
 
 A sibling of the same family: the `ui/app/core/*.test.mjs` suites run under
-`node --test` during the staging tests and read repo-root data *relative to
+`bun test` during the staging tests and read repo-root data *relative to
 their own directory* — `themes/*.json` (named palettes) and
 `commands/slash.json` (the slash catalog). When those roots are absent from
 `readable_roots` the stage is copied without them and every UI proposal fails
-staging with `node --test ... exit code 1` even though the proposal itself is
+staging with `bun test ... exit code 1` even though the proposal itself is
 fine. The roots are staged but deliberately kept out of `allowed_prefixes`, so
 the loop can judge UI work against the real data without patching it.
 

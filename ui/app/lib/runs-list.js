@@ -1,7 +1,7 @@
 // The Runs view's browsable list. `GET /api/runs` sends a page of run
 // summaries and nothing else — no start time, no failure flag until a graph is
 // re-recorded — so this module derives what a reader needs from what a
-// summary has, and stays pure so `node --test` can drive it.
+// summary has, and stays pure so `bun test` can drive it.
 //
 // Dating a row matters more here than it looks: every field the picker showed
 // (id, task, provider, duration) is timeless, which is how a listing that had

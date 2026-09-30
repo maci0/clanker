@@ -50,8 +50,8 @@ pub const Name = enum {
 fn defaultAcpArgv(name: Name) []const []const u8 {
     return switch (name) {
         .grok => &.{ "grok", "agent", "stdio" },
-        .claude => &.{ "npx", "-y", "@agentclientprotocol/claude-agent-acp" },
-        .codex => &.{ "npx", "-y", "@agentclientprotocol/codex-acp" },
+        .claude => &.{ "bunx", "--bun", "@agentclientprotocol/claude-agent-acp" },
+        .codex => &.{ "bunx", "--bun", "@agentclientprotocol/codex-acp" },
     };
 }
 
@@ -126,11 +126,11 @@ test "ACP and headless argv match the published vendor interfaces" {
     try std.testing.expectEqualStrings("stdio", grok_acp[2]);
 
     const claude_acp = defaultAcpArgv(.claude);
-    try std.testing.expectEqualStrings("npx", claude_acp[0]);
+    try std.testing.expectEqualStrings("bunx", claude_acp[0]);
     try std.testing.expectEqualStrings("@agentclientprotocol/claude-agent-acp", claude_acp[2]);
 
     const codex_acp = defaultAcpArgv(.codex);
-    try std.testing.expectEqualStrings("npx", codex_acp[0]);
+    try std.testing.expectEqualStrings("bunx", codex_acp[0]);
     try std.testing.expectEqualStrings("@agentclientprotocol/codex-acp", codex_acp[2]);
 
     const grok_h = try headlessArgv(std.testing.allocator, .grok, "do the thing");
