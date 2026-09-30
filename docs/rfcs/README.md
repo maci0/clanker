@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0038 — Should improve-self grade promotions against a held-out eval suite the proposer cannot see?](0038-holdout-eval-split.md) — Draft
 - [RFC 0037 — How a sandboxed guest reads an HTTP response header](0037-how-a-sandboxed-guest-reads-an-http-response-header.md) — Decided
 - [RFC 0036 — Which of an improve-self worktree's runtime state should rejoin the checkout](0036-improve-worktree-runtime-state-sharing.md) — Discussion
 - [RFC 0035 — How the REPL injects mid-stream like web steer](0035-repl-inject.md) — Decided
