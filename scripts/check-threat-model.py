@@ -241,6 +241,39 @@ ASSERTED = {
     ('docs/README.md', '1625'): ('What it binds',),
     ('docs/README.md', '1621-1625'): ('binds',),
     ('docs/README.md', '1627'): ('token',),
+    # The chat/mesh control-plane rows (R10-R13, T14). Each cites the line that
+    # carries the claim, and several of those lines are inside a function body
+    # rather than a definition, so the symbol rule has nothing to match and the
+    # entry has to assert the text itself.
+    ('src/peers/chatrooms.zig', '903'): ('.from = cfg.instance.name',),
+    ('src/peers/chatrooms.zig', '435'): ('acquireChatroomLock',),
+    ('src/cli.zig', '9210'): ('chatrooms.isSubscribed',),
+    ('src/cli.zig', '9289'): ('/api/chat/react',),
+    ('src/cli.zig', '8951'): ('.from = parsed.from', '.text = text'),
+    ('src/cli.zig', '12044'): ('installCatalogCacheLocked',),
+    ('src/cli.zig', '12780'): ('provider.api_key_env',),
+    ('src/cli.zig', '12793'): ('budget_s', 'httpGetDeadline'),
+    ('src/agent/loop.zig', '988'): ('[chatroom inbox]',),
+    ('src/agent/loop.zig', '979'): ('modules.chatrooms', 'chatrooms.on'),
+    ('src/cli.zig', '17918'): ('prompt_fence.neutralize',),
+    ('src/peers/chatrooms.zig', '900'): ('safe_text', 'utf8.sanitize'),
+    ('src/config.zig', '975'): ('admission',),
+    ('src/config.zig', '1072'): ('max_history',),
+    ('src/config.zig', '1118'): ('chatrooms: bool = true',),
+    ('src/config.zig', '1067'): ('on: bool = true',),
+    ('src/config.zig', '1128'): ('mesh: bool = false',),
+    ('src/cli.zig', '12048-12049'): ('installCatalogCacheLocked',),
+    ('src/sandbox/host.zig', '3014'): ('Compact re-encoding',),
+    ('src/serve/mesh_net.zig', '687'): ('max_pending_joins',),
+    ('src/serve/mesh_net.zig', '719-723'): ('parseHostPort', 'connectBounded'),
+    ('src/serve/mesh_net.zig', '833'): ('fn leave',),
+    ('src/serve/mesh_net.zig', '878'): ('fn resolvePending',),
+    ('src/serve/mesh_net.zig', '43'): ('max_pending_joins',),
+    ('src/peers/mesh.zig', '139'): ('join_id.len == 0',),
+    ('docs/README.md', '1617'): ('Chat edit/delete answer 404',),
+    ('docs/api.md', '40'): ('| 403 |', '/api/chat/react'),
+    ('src/peers/chatrooms.zig', '706'): ('error.NotOwner', 'm.from, from'),
+    ('src/peers/chatrooms.zig', '739'): ('error.NotOwner', 'm.from, from'),
 }
 
 

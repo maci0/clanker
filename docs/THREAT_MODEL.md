@@ -49,12 +49,23 @@ Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: no
 | R7 | **Unauthenticated internal-infrastructure recon: `GET /api/mcp/servers` returns every configured `[mcp_servers.*]` command and URL** (`src/cli.zig:8596`, handler `:12506`), and each stanza names a program that would run outside the WASM sandbox once `modules.mcp_client` is on (`src/config.zig:1087`, `:1248`). No authentication on the route. Lower impact than R1 because it exposes configuration rather than acting on it, but it is the one read-only route that names the operator's internal hosts | Low | Medium | Reads configuration only, but unauthenticated and loopback-default, like every other route. |
 | R8 | **Extension points that are less bounded than the sandbox they were added beside.** `clanker <name>` Tier 2 execs a PATH binary unsandboxed with inherited stdio (`src/cli.zig:6033-6043`); DAP, hooks and `!cmd` name programs from config (`src/config.zig:769`, `src/hooks/config.zig:10`). Each is gated on an operator-set enabled list rather than a sandbox. Local-only, but the one class where adding a convenience *reduces* the containment the rest of the tree enforces | High | Low | Needs an operator action first (install + enable), which is why likelihood is Low. |
 | R9 | **A native file reader over the workspace, unauthenticated.** `GET /api/files?path=` (`handleFiles`, `src/cli.zig:14354`) lists directories and returns file contents with the server's own authority, not through a sandboxed guest, so the descriptor grants that bound `read_file` do not bound it. Its own bounds hold: `..` is clamped at the root, a symlinked component answers 403 (`src/cli.zig:14416`), the body is capped at `file_preview_cap` (`src/cli.zig:14319`), and dotenv files are hidden and unread through the module `safeJoin` also applies to guests (`secret_dotenv.isSecretDotenvPath`, `src/util/secret_dotenv.zig:49`, applied `src/cli.zig:14402`, `:14402`). What remains is every non-dotenv file in the checkout, to any caller on the port — including one that reaches the agent only by transcript. Same trust as every other route (no authn), so it is not a new boundary; it is the widest *read* the control plane offers. | Medium-High | Medium | Bounded by the root clamp, the no-follow walk and the dotenv refusal. Those three are named above so a later pass can aim a check at them. |
+| R10 | **The chatrooms HTTP writes are a shared, cross-instance control plane with no caller identity, and their ownership check compares the wrong side.** `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` (`handleChatSend` `src/cli.zig:9190` through `handleChatTopic` `src/cli.zig:9379`) each write durable state attributed to `cfg.instance.name`, the *server's* identity: `sendMessageOpts` stamps `.from = cfg.instance.name` (`src/peers/chatrooms.zig:903`) and `editMessage`/`deleteMessage` accept a message when `m.from == from` (`src/peers/chatrooms.zig:706`, `src/peers/chatrooms.zig:739`) with each handler passing that same name (`handleChatEdit` `src/cli.zig:9297`, `handleChatDelete` `src/cli.zig:9336`). So the 403 fires for a *peer-authored* message and never for a second caller of this same instance, and `/api/chat/react` has no ownership check at all - any caller toggles a reaction attributed to this instance (`handleChatReact` `src/cli.zig:9267`). Worse, `send` auto-joins whatever room the body names (the `isSubscribed` guard `src/cli.zig:9210`, `subscribe` `src/peers/chatrooms.zig:1190`), and `receive` (`src/peers/chatrooms.zig:606`) logs any peer-shaped POST into any subscribed room, so the same anonymous caller can make this instance *speak* and *receive* in a fleet-wide room; what a peer's text then reaches is the model prompt (`readNew` `src/peers/chatrooms.zig:1266`, injected `src/agent/loop.zig:982`, `inbox_limit` 5). On by default in a stock install (`modules.chatrooms` `src/config.zig:1118`, `chatrooms.on` `src/config.zig:1067`). The shipped docs claimed "403 when the caller is not the sender" (`docs/README.md:1617`; the 403 row of `docs/api.md:40`); both now read what the code does. | High | Medium | Per-field caps hold (`max_text_len` 4096 `src/peers/chatrooms.zig:53`, `max_emoji_len` 64 `:83`, `max_topic_len` 1024 `:57`, UTF-8 sanitised on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) + atomic rewrite). A fix belongs to authz-review |
+| R11 | **The mesh operator controls sit on the same unauthenticated HTTP surface as everything else.** `POST /api/mesh/pending` admits or denies a queued peer (`resolvePending` `src/serve/mesh_net.zig:878`; `handleMeshPendingPost` `src/cli.zig:16818`) - prompt-mode admission is the only human check the mesh has, and any caller can answer it; `POST /api/mesh/leave` evicts one member or all of them (`leave` `src/serve/mesh_net.zig:833`; `handleMeshLeave` `src/cli.zig:16763`); `POST /api/mesh/join` dials an arbitrary `host:port` straight out of the request body (`parseHostPort` `src/serve/mesh_net.zig:316`; `handleMeshJoin` `src/cli.zig:16728`), an outbound connect on demand from an anonymous caller. `GET /api/mesh/pending` and `GET /api/mesh/status` disclose the queue and the membership. Off by default (`modules.mesh`, `src/config.zig:1128`), which is what keeps this below R10. | High | Low-Medium | Bounded by `join_wait_ns` on the dial and by `max_pending_joins` 8 (`src/config.zig:977`, clamped `src/serve/mesh_net.zig:687`). No caller check anywhere on the path |
+| R12 | **`POST /api/live` is the unauthenticated twin of the gated `ck_publish` channel.** The guest path refuses without `"live_publish": true` and a non-empty `tool_self_name` (`src/sandbox/host.zig:2997`); the HTTP path only checks that `from` is a valid session-id-shaped slug (`validPluginName` `src/cli.zig:13090`) and that `data` is JSON under `event_cap / 2` (`livePublishFromBody` `src/cli.zig:9806`; `handleLivePublish` `src/cli.zig:9820`). Any caller can therefore speak as any plugin to every `GET /api/events` subscriber, which is what the web UI renders from. Not a frame injection: the payload is re-stringified, so the reserved-topic defense `ckPublish` documents (`src/sandbox/host.zig:3008`-`:3014`) still holds - the impersonation is the *slug*, not the topic. | Medium | Medium | Data is bounded and JSON-compacted; only the `plugin` topic is reachable |
+| R13 | **Two routes let an anonymous caller spend the operator's egress and credentials.** `GET /api/providers/models` (`handleProviderModels` `src/cli.zig:12769`) attaches the configured provider's API key as a bearer (`src/cli.zig:12780`) and calls that provider's `/models`; `POST /api/catalog/refresh` (`handleCatalogRefresh` `src/cli.zig:12028`) refetches models.dev and reinstalls the in-process catalog (`installCatalogCacheLocked` `src/cli.zig:12049`). Neither is a sandboxed guest, so no descriptor bounds either. `GET /api/config/status` (`handleConfigStatus` `src/cli.zig:12561`) discloses the last validation error verbatim, which can carry file paths and config fragments. | Medium | Medium | `providers/models` runs under the provider check timeout (`budget_s`, `src/cli.zig:12793`) so one call cannot pin a thread forever; a caller can still repeat it |
+| R14 | **One untrusted-bytes-into-prompt path is not fenced: the chatroom inbox.** Every other place the harness puts third-party bytes in front of the model runs them through `prompt_fence.neutralize`, which rewrites the leading `<` of every harness fence tag so a document cannot close a block the harness drew around it: tool results (`capToolResult` `src/agent/loop.zig:4047`), retrieved knowledge and memory (`prompt_fence.neutralize` `src/cli.zig:17918`), and the Skills/Learnings sections (`neutralizeMarkers` `src/improve/history.zig:715`). The `[chatroom inbox]` block does not (`src/agent/loop.zig:988`): a peer message is UTF-8-capped (`max_chat_inbox_preview_bytes` 300, `src/agent/loop.zig:104`) and the block carries its own untrusted-data instruction, but its bytes reach the prompt verbatim. A peer in a room this instance subscribes to can therefore write a closing fence marker and continue as harness framing. | Medium | Medium | Bounds hold: `inbox_limit` 5 (`src/peers/chatrooms.zig:87`), 300-byte previews, and the block's own instruction (`src/agent/loop.zig:988`). The gap is the missing rewrite, not a missing warning. A fix belongs to sec-review |
 R7-R9 in one line each: the one read-only route that names internal hosts (`/api/mcp/servers`, R7),
 the extension points that escape the sandbox entirely (Tier 2 exec, DAP, hooks, `!cmd`, R8), and
-the native reader no descriptor bounds (`/api/files`, R9).
+the native reader no descriptor bounds (`/api/files`, R9). R10-R13 in one line each: the chat
+writes whose owner check compares the server's own name rather than the caller (R10), the mesh
+admission/membership controls on the same unauthenticated port (R11), `POST /api/live` without the
+`live_publish` grant its guest twin requires (R12), the two routes that spend the operator's
+provider credential on request (R13), and the one prompt-injection path whose fence markers are
+not neutralized (R14).
 
 Priority order for the next pass: R1/R2 (internet-facing + authentication boundary, covered
-below), then R3 abuse cases, then R4-R6, then R7-R9.
+below), then R10 (the shared chat write plane, default-on), then R14 (the one unfenced
+prompt-injection path), then R3 abuse cases, then R4-R6, then R7-R9, then R11-R13.
 
 ---
 
@@ -88,6 +99,10 @@ pass can split them; each is enumerated under T1's STRIDE rows and T7.
 | `/api/skills` (GET, POST) | `handleSkills` `src/cli.zig:14678`, input mapping `skillsRouteToToolInput` `src/cli.zig:14728` | `POST` toggles a skill's enable flag in `state/skills.json`, which decides what rides the next system prompt (`validSkillName` gate `src/cli.zig:14735`) |
 | `GET /api/sessions`, `/api/sessions/search`, `DELETE /api/sessions/<id>`, `GET /api/logs`, `GET /api/stats`, `GET /api/metrics`, `GET /api/status`, `GET /api/providers`, `GET /api/catalog`, `GET /api/janitor`, `/api/feedback` (GET, POST), `GET /api/mesh/*`, `POST /api/live`, `POST /api/notify`, `GET /api/events` | `handleSessions` `src/cli.zig:14033`, `handleLogs` `src/cli.zig:13757`, and the rest of the dispatch chain | Reads of transcripts, logs and metrics; the SSE stream; peer notifications (T1 disclosure, T3) |
 | `GET /api/mcp/servers` | `handleMcpServers` `src/cli.zig:12506` | R7: the operator's internal command/URL map, env values withheld |
+| `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` | `handleChatSend` `src/cli.zig:9190`, `handleChatSubscribe` `src/cli.zig:9252`, `handleChatReact` `src/cli.zig:9267`, `handleChatEdit` `src/cli.zig:9297`, `handleChatDelete` `src/cli.zig:9336`, `handleChatPin` `src/cli.zig:9363`, `handleChatTopic` `src/cli.zig:9379` | R10: durable writes to the shared room log and metadata on behalf of `cfg.instance.name`. Every handler is an unauthenticated mutation of a store a *fleet* of instances reads, and none of them knows who is calling. Reachable in a stock install: `modules.chatrooms` and `chatrooms.on` are both on by default (`src/config.zig:1118`, `src/config.zig:1067`) |
+| `POST /api/mesh/join`, `/leave`, `POST /api/mesh/pending`, `GET /api/mesh/pending`, `GET /api/mesh/status`, `GET /api/mesh/map` | `handleMeshJoin` `src/cli.zig:16728`, `handleMeshLeave` `src/cli.zig:16763`, `handleMeshPendingPost` `src/cli.zig:16818`, `handleMeshPendingGet` `src/cli.zig:16790`, `handleMeshStatus` `src/cli.zig:16692`, `handleMeshMap` `src/cli.zig:16854` | R4/T3: the operator's mesh membership is mutable by any caller. `join` dials an arbitrary `host:port` the body names (`parseHostPort` `src/serve/mesh_net.zig:316`, `join` `src/serve/mesh_net.zig:719`), `leave` evicts a named member or all of them (`leave` `src/serve/mesh_net.zig:833`), and `pending` POST *approves a peer admission* (`resolvePending` `src/serve/mesh_net.zig:878`) — the one prompt-mode control an operator has, exposed on the same unauthenticated surface. Off by default (`modules.mesh`, `src/config.zig:1128`) |
+| `POST /api/live` | `handleLivePublish` `src/cli.zig:9820`, body parsed by `livePublishFromBody` `src/cli.zig:9806` | Publishes onto the SSE bus under any slug that passes `validPluginName` (`src/cli.zig:13090`). The slug and data shape are checked; the *caller* is not, so any caller can speak as any plugin to every `GET /api/events` subscriber. The guest channel behind it is gated (`ckPublish` refuses without `"live_publish": true` and a non-empty `tool_self_name`); the HTTP route is not |
+| `POST /api/catalog/refresh`, `GET /api/providers/models`, `GET /api/config/status` | `handleCatalogRefresh` `src/cli.zig:12028`; `handleProviderModels` `src/cli.zig:12769`; `handleConfigStatus` `src/cli.zig:12561` | A network fetch and a live upstream call on behalf of the caller: `refresh` replaces `state/models-dev.json` from models.dev and installs the in-process copy (`installCatalogCacheLocked`, called `src/cli.zig:12049`); `providers/models` calls the configured provider's `/models` **carrying its API key** (`src/cli.zig:12780` builds the bearer from `provider.api_key_env`), so any caller can make the operator's credential talk to that provider for as long as the request takes. `config/status` discloses the last validation error verbatim |
 
 ### IPC / local-process surfaces
 
@@ -413,6 +428,68 @@ Privilege transitions:
 - **DoS**: a `tool_call_timeout_ms` per server (`src/config.zig:1257`) bounds a call, but
   nothing bounds the count of configured servers or their concurrent processes.
 
+### T14 (HTTP caller → the fleet-shared chat and mesh control plane)
+
+This boundary is T1's *persistence* half: the same listener, the same absent caller
+identity, but the store on the other side is shared with other instances and its writes
+land in the model's next prompt. Enumerated separately because the blast radius is
+different in kind from the T1 rows, which mostly read or configure this one host.
+
+- **Spoofing (the one that the shipped docs got wrong)**: `sendMessageOpts` stamps every
+  outbound message `.from = cfg.instance.name` (`src/peers/chatrooms.zig:903`), so a message
+  written through `POST /api/chat/send` (`handleChatSend` `src/cli.zig:9190`) is indistinguishable from one the
+  agent itself authored, to every reader and every peer it fans out to. `receive`
+  (`src/peers/chatrooms.zig:606`) takes the sender from the peer-shaped POST body
+  (`handleChatMessage` `src/cli.zig:8951`), so an inbound message's sender is whatever the body says - the mesh
+  admission check (`admit`, `src/peers/mesh.zig:133`) applies to a JOIN, not to a message on
+  an already-admitted connection.
+- **Elevation / authorization**: `editMessage` and `deleteMessage` are documented as
+  sender-only (`editMessage` `src/peers/chatrooms.zig:685`; `deleteMessage` `src/peers/chatrooms.zig:719`).
+  Each rejects a non-owner with `error.NotOwner` (`editMessage` `src/peers/chatrooms.zig:706`;
+  `deleteMessage` `src/peers/chatrooms.zig:739`), but the comparison is `m.from == from` and both
+  handlers pass `cfg.instance.name` (`handleChatEdit` `src/cli.zig:9297`; `handleChatDelete` `src/cli.zig:9336`).
+  So the check means "is this message one *I* sent", not "is this message the caller's": on a
+  single-instance install every message the instance sent is editable and deletable by every
+  caller, and every peer-authored message is editable by nobody.
+  `toggleReaction` has no owner check at all (`handleChatReact` `src/cli.zig:9267`;
+  `toggleReaction` `src/peers/chatrooms.zig:638`).
+  `setTopic` takes no owner argument (`handleChatTopic` `src/cli.zig:9379`;
+  `setTopic` `src/peers/chatrooms.zig:803`), and neither does `togglePin`
+  (`handleChatPin` `src/cli.zig:9363`; `togglePin` `src/peers/chatrooms.zig:820`).
+- **Tampering / membership**: `POST /api/chat/subscribe` writes the durable subscription set
+  (`subscribe` `src/peers/chatrooms.zig:1190`; `handleChatSubscribe` `src/cli.zig:9252`), and
+  `handleChatSend` auto-joins any room the body names before sending (`src/cli.zig:9210`).
+  An anonymous caller chooses which rooms this instance now receives into, and that
+  subscription set is what `receive` and `readNew` filter on (`isSubscribed`
+  `src/peers/chatrooms.zig:260`).
+- **Information disclosure**: `GET /api/chat/messages` serves the room log to any caller
+  (`handleChatMessages` `src/cli.zig:9031`); so do `GET /api/chat/rooms`
+  (`handleChatRooms` `src/cli.zig:9491`) and `GET /api/chat/pins`
+  (`handleChatPins` `src/cli.zig:9401`). A join-then-read gets a room's history, and the
+  board room folds Kanban cards and their work log out of the same log (ADR 0001,
+  `docs/README.md:501`).
+- **Injection across the boundary**: what `receive` accepts becomes the `[chatroom inbox]`
+  user message on the next agent run (`readNew` `src/peers/chatrooms.zig:1266`; injected
+  `src/agent/loop.zig:988`), capped at `inbox_limit` 5 messages
+  (`inbox_limit` `src/peers/chatrooms.zig:87`) and `max_chat_inbox_preview_bytes` 300 per
+  message (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`). The framing text tells the
+  model the messages are untrusted data (`src/agent/loop.zig:988`), but this inbox path does
+  **not** pass through `prompt_fence.neutralize`, which every other untrusted-bytes-into-prompt
+  path does: tool results (`capToolResult` `src/agent/loop.zig:4047`), knowledge and memory hits
+  (`prompt_fence.neutralize` `src/cli.zig:17918`), and the Skills/Learnings sections
+  (`neutralizeMarkers` `src/improve/history.zig:715`). So a peer that writes a harness fence
+  marker into a chat message reaches the model prompt with the marker intact, where every other
+  untrusted source has it neutralized. Same class as the T1 injection row, with a shorter hop and
+  a fence that is not rewritten. See R14.
+- **DoS**: each chat write rewrites the whole shared log under a lock
+  (`rewriteLog` `src/peers/chatrooms.zig:628`, lock `acquireChatroomLock`
+  `src/peers/chatrooms.zig:435`) with a
+  `max_history`-sized read (`chatrooms.max_history` 500, `src/config.zig:1072`), so a
+  caller that can fill the retained window pays that cost per write. Bounded, not free.
+- **Repudiation**: a chat mutation logs at `error_` only on failure (`src/cli.zig:9289`);
+  a successful write leaves the log line and the message's `from`, which by the above is the
+  server's name, not the caller's.
+
 ### Threats the history already demonstrates (recurring classes)
 1. Sandbox path handling: symlinks (ADR 0017), lock-path resolution
    (`2026-08-17-cas-lock-name-hashes-an-unresolved-path.md`), `.env` refusal.
@@ -455,6 +532,8 @@ Privilege transitions:
 | M20 | CLI Tier 2 requires membership in the same enabled list Tier 1 uses, so a bare `clanker <word>` cannot spawn an arbitrary `clanker-<word>` on PATH | `cli_plugins.resolveTier2` `src/cli.zig:6040`, `std.process.spawn` `:6044` | R8/T11 (consent gate only: the child is unsandboxed and inherits stdio) |
 | M21 | OAuth tokens are written owner-only (0600) under `agent.state_dir/oauth/`, and no callback listener is opened — the operator pastes the code back | `atomic_write.private_file` `src/util/atomic_write.zig:15`, applied `src/llm/oauth_store.zig:55`, path `:31`; flows `src/llm/oauth_command.zig:43-79` | T12 confidentiality |
 | M22 | `[mcp_servers.*]` shape is validated at config load, so a `stdio` stanza with no `command` is refused before anything could spawn, and the client bridge that connects stays behind `modules.mcp_client` (off by default) | `parseMcpServer` `src/config.zig:3292`, `McpServer` fields `:1249-1257`, `modules.mcp_client` `src/config.zig:1087` | T13/T11 elevation (partial: shape only, and `GET /api/mcp/servers` still discloses the configuration) |
+| M23 | Chat writes are bounded and serialized at the store: per-field caps (`max_text_len` `src/peers/chatrooms.zig:53`, `max_topic_len` `src/peers/chatrooms.zig:57`, `max_emoji_len` `src/peers/chatrooms.zig:83`), UTF-8 sanitation on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), a per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) and a `max_history`-sized window (`chatrooms.max_history` `src/config.zig:1072`) | see left | R10/R11 (bounds only: none of this is an authorization check) |
+| M24 | The chatroom inbox is bounded before it reaches the model: `inbox_limit` 5 messages (`inbox_limit` `src/peers/chatrooms.zig:87`) and a 300-byte UTF-8 preview per message (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`), inside a block whose own text says the messages are untrusted and must not be followed (`src/agent/loop.zig:988`) | see left | R14 (partial: the bytes are bounded and labelled, but the fence markers are not neutralized, which every other untrusted-bytes path does) |
 
 ### Highest-value gaps (ranked)
 
@@ -473,11 +552,13 @@ Privilege transitions:
 5. **Web UI plugins are unsigned code in the operator's origin** (T10): a drop-in
    `app.js` inherits the whole control plane in the browser, and the only control is the
    operator's own enable switch.
-6. **Configuration disclosure with no authentication**: `GET /api/mcp/servers` (R7,
+6. **The chat control plane has no caller identity and its owner check compares the wrong side** (R10): every message is stamped with the *server's* name, so the 403 in `editMessage`/`deleteMessage` means "is this one mine" rather than "is this one the caller's" (`src/peers/chatrooms.zig:706`, `src/peers/chatrooms.zig:739`), and `/api/chat/react` has no check at all. Default-on, fleet-shared, and its output reaches other instances and the model prompt.
+7. **One untrusted-bytes path is unfenced** (R14): the `[chatroom inbox]` does not run `prompt_fence.neutralize`, so a peer's fence markers survive into the prompt, where tool results, knowledge hits and the Skills/Learnings sections are all rewritten (`src/agent/loop.zig:988` against `src/agent/loop.zig:4047`).
+8. **Configuration disclosure with no authentication**: `GET /api/mcp/servers` (R7,
    `src/cli.zig:8596`) hands an unauthenticated caller every configured MCP command and
    URL. It is the one read-only route whose answer is a map of the operator's internal
    hosts, and it is easy to mistake for harmless because nothing in it is a credential.
-7. **Extension points that leave the sandbox** (R8): the CLI Tier 2 plugin exec
+9. **Extension points that leave the sandbox** (R8): the CLI Tier 2 plugin exec
    (`src/cli.zig:6033-6043`) and `[mcp_servers.*]` (`src/config.zig:1248`) both name
    programs that run with the operator's full authority. Both are gated on operator
    consent rather than containment, which is the right default, but it means the
@@ -502,6 +583,22 @@ Privilege transitions:
 
 *Authenticated* here means "can reach the port", which is the only authentication there is.
 
+- **Speaking as the fleet in a shared chat room**: `POST /api/chat/send`
+  (`handleChatSend` `src/cli.zig:9190`) stamps every message with `cfg.instance.name`
+  (`sendMessageOpts` `src/peers/chatrooms.zig:903`) and the same call auto-joins whatever room
+  the body names (`src/cli.zig:9210`). A caller that can reach the port therefore posts as this
+  instance into a room its *peers* subscribe to, and `fanOut` (`src/peers/chatrooms.zig:1115`, called `src/peers/chatrooms.zig:919`)
+  carries it onward: the message is attributed to a real instance name, so nothing downstream
+  distinguishes it from one the agent wrote. Editing or deleting it back is likewise possible
+  for any caller, because the owner check compares the same stamped name
+  (`src/peers/chatrooms.zig:706`). The business-logic abuse is impersonation inside a fleet
+  control plane, and the room log is the durable record of it.
+- **Answering the mesh admission prompt for the operator**: with `mesh.admission = "prompt"`
+  (`src/config.zig:975`), `POST /api/mesh/pending` (`handleMeshPendingPost` `src/cli.zig:16818`)
+  is the one place a human approves a peer. Any caller can send `{"allow":true}` for a queued
+  `join_id` and the peer is admitted (`resolvePending` `src/serve/mesh_net.zig:878`), so the
+  prompt mode is advisory against a caller that does not have to be the operator. The same
+  caller can evict members with `POST /api/mesh/leave` (`handleMeshLeave` `src/cli.zig:16763`).
 - **Credential spending via proxy**: `POST /v1/chat/completions` (or `/proxy/v1/...` on the
   shared socket) with any body spends the configured provider keys; with no
   `proxy_token_env` there is no per-request gate. Enabling `--host 0.0.0.0` without a token

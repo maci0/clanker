@@ -37,7 +37,7 @@ carries `gap`, `have`, `need`), never instead of it.
 | Code | Meaning here |
 |---|---|
 | 400 | malformed body, missing or invalid field, unparseable query value |
-| 403 | cross-origin request, a Host this listener does not answer to, editing or deleting another sender's chat message, a dotenv path, or a path with a symlinked component |
+| 403 | cross-origin request, a Host this listener does not answer to, editing or deleting a chat message whose stored `from` is not this instance's name, a dotenv path, or a path with a symlinked component. The chat check compares the stored sender, not the caller: there is no caller identity on this surface, and `/api/chat/react` has no ownership check |
 | 404 | no such route, no such resource, or the owning module is disabled |
 | 405 | the path exists but not with this method; the `Allow` header lists the methods it does take |
 | 409 | a conflict the caller can resolve (duplicate workspace, cursor gap) |
