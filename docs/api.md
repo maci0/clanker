@@ -266,7 +266,7 @@ restart serve"`, not the `<x> module disabled` form above.
 | GET | `/api/stats` | token usage aggregate (module `token_stats`) |
 | GET | `/api/mcp/servers` | names only, values redacted |
 | GET | `/api/feedback` , POST | duplicate-safe: the same `(session, turn, rating)` stores one row, so a replayed or double-clicked POST is a no-op; the other rating of a turn is a second row |
-| POST | `/api/notify` | peer notification delivery |
+| POST | `/api/notify` | peer notification delivery; duplicate-safe: a record that carries no `id` is given one derived from its own bytes, so a retried or re-delivered delivery stores one row rather than one per attempt |
 
 ## A2A
 

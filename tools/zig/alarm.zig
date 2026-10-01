@@ -6,7 +6,9 @@
 //!         {"action":"set","message":"...","at":1786540000}
 //!         {"action":"set","message":"...","in_minutes":5,"every_minutes":30}
 //!         {"action":"list"}
-//!         {"action":"done","id":"a-..."}   handled: recurring advances, one-shot is removed
+//!         {"action":"done","id":"a-..."}   handled: recurring advances, one-shot is
+//!         removed; repeating a done for the same alarm reports the same next fire
+//!         time and changes nothing
 //!         {"action":"cancel","id":"a-..."} delete outright, recurring or not
 //! Output: {"ok":true,...} (list carries alarms with "due" and "every_minutes");
 //!          `set` carries "already_set", true when the reminder was already there)
@@ -178,6 +180,15 @@ fn doList(out: *lib.Out) !void {
 /// recurring alarm advances to its next occurrence strictly after now, so
 /// handling a reminder that sat due for three intervals fires once next
 /// interval rather than three more times.
+///
+/// The advance is the shared, host-tested `advanceOnDone`, and it is
+/// deliberately a no-op for a reminder that is not due yet. That is what
+/// makes `done` idempotent: the first call lands the row strictly after
+/// `now`, so a repeat of that same call — a retried turn, a model calling
+/// `done` twice, a reply lost in transit — reads the row it already wrote and
+/// changes nothing instead of pushing the reminder a second interval out.
+/// The reply repeats the same `next_in_seconds` either way, so the caller
+/// cannot tell a repeat from the original and need not.
 fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
     const id = switch (obj.get("id") orelse return lib.fail(out, "done needs an id")) {
         .string => |s| s,
@@ -194,39 +205,35 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
             const a = &loaded.alarms.items[i];
             if (std.mem.eql(u8, a.id, id)) {
                 found = true;
-                if (a.every > 0) {
-                    // The store file is plain JSON a hand edit can corrupt, so
-                    // `every` and `ts` may be any i64. The advance below is
-                    // computed with saturating operators: an extreme stored
-                    // value must not overflow the guest's arithmetic and trap
-                    // it. A wrap used to be able to put the next fire in the
-                    // past, making the alarm permanently due.
-                    const step: i64 = @max(60, @max(1, @min(a.every, std.math.maxInt(i64) / 60)) * 60);
-                    const behind: i64 = if (a.ts >= now) 0 else if (now >= 0 and a.ts < now - std.math.maxInt(i64)) std.math.maxInt(i64) else now - a.ts;
-                    const slots = @divTrunc(behind, step) +| 1;
-                    const advance = slots *| step;
-                    // For valid data the advance already lands strictly after
-                    // `now`; the clamp only rescues the saturated case (a
-                    // corrupt ts so old that `behind` pinned at maxInt), which
-                    // would otherwise stay due forever.
-                    a.ts = @max(a.ts +| advance, now +| step);
-                    next_ts = a.ts;
-                } else {
+                if (alarm_store.advanceOnDone(now, a.ts, a.every)) |next| {
+                    a.ts = next;
+                    next_ts = next;
+                } else if (a.every <= 0) {
                     _ = loaded.alarms.orderedRemove(i);
+                } else {
+                    // Already handled for this window: the row is not due, so
+                    // the first `done` for it has been applied. Answer with
+                    // the stored fire time and write nothing.
+                    next_ts = a.ts;
+                    return doneReply(out, next_ts, now);
                 }
                 break;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no alarm with that id");
         if (try store(loaded)) {
-            if (next_ts > 0) {
-                const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"next_in_seconds\":{d}}}", .{next_ts - now});
-                return out.writeAll(reply);
-            }
+            if (next_ts > 0) return doneReply(out, next_ts, now);
             return out.writeAll("{\"ok\":true}");
         }
     }
     return lib.fail(out, "alarms file kept changing underneath; try again");
+}
+
+/// The reply both the first `done` and every repeat of it answer with, so a
+/// retry sees the same shape and the same fire time the original reported.
+fn doneReply(out: *lib.Out, next_ts: i64, now: i64) !void {
+    const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"next_in_seconds\":{d}}}", .{next_ts - now});
+    return out.writeAll(reply);
 }
 
 fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {

@@ -8904,10 +8904,47 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, e
 /// POST /api/notify body -> guest input `{"store": <body>}`. The body is
 /// parsed here so a malformed one answers 400 before any tool dispatch; the
 /// guest stamps `received_at` itself and ignores unknown fields.
+///
+/// A record that arrives without a usable `id` gets one derived from its own
+/// content, not from this request. The `id` is the only dedup token the
+/// `notifications` guest knows, so a sender that omits it had every retry —
+/// a network timeout, an at-least-once relay, a caller pressing send twice —
+/// land as a second durable inbox row. Hashing the body makes the same
+/// logical delivery hash the same on every attempt, which is the property
+/// the guest's dedup then enforces; a genuinely different record still gets
+/// its own row, and a caller that wants a real key still sends one.
+///
+/// The digest is the hash of the *raw* body, not of a re-serialised copy, so
+/// the id is stable across attempts even if a sender's key order changes:
+/// the same delivery is the same bytes twice. The re-serialised copy is only
+/// the vehicle, and it drops unknown fields, which the guest ignored anyway.
+/// The record is rebuilt rather than the bytes patched because a body
+/// carrying `"id": ""` would otherwise gain a second `id` key, and
+/// `std.json` refuses a duplicate field outright (a 400 for a valid
+/// delivery) — so an empty id is a delivery that dedups nothing and is
+/// replaced here.
 fn notifyRouteToToolInput(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
-    const parsed = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
-    _ = parsed;
-    return std.fmt.allocPrint(arena, "{{\"store\":{s}}}", .{body}) catch null;
+    var record = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+    if (hasNotifyId(record.id)) {
+        return std.fmt.allocPrint(arena, "{{\"store\":{s}}}", .{body}) catch null;
+    }
+    const digest = std.hash.Wyhash.hash(0xA2A0DACADE5EED1E, body);
+    record.id = std.fmt.allocPrint(arena, "d-{x}", .{digest}) catch return null;
+    var buf: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(.{ .store = record }, .{ .emit_null_optional_fields = false }, &buf.writer) catch {
+        buf.deinit();
+        return null;
+    };
+    // `toArrayList` hands the bytes over instead of freeing them, so the
+    // returned slice lives as long as the caller's arena.
+    return buf.toArrayList().items;
+}
+
+/// A present-but-empty `id` dedups nothing (every such record would share
+/// one key), so it is treated as absent and replaced by the content digest.
+fn hasNotifyId(id: ?[]const u8) bool {
+    const value = id orelse return false;
+    return value.len > 0;
 }
 
 test "notify route wraps the body as the guest's store input" {
@@ -8921,6 +8958,40 @@ test "notify route wraps the body as the guest's store input" {
     try std.testing.expect(notifyRouteToToolInput(arena, "not json") == null);
     // A bare array is not a notify record.
     try std.testing.expect(notifyRouteToToolInput(arena, "[1,2]") == null);
+}
+
+test "a notify delivery re-sent without an id dedups instead of landing twice" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const body = "{\"from\":\"peer\",\"kind\":\"message\",\"payload\":{\"text\":\"hi\"}}";
+    const first = notifyRouteToToolInput(arena, body) orelse return error.TestExpectedResult;
+    const second = notifyRouteToToolInput(arena, body) orelse return error.TestExpectedResult;
+    // Same logical delivery, identical input: the guest's id dedup sees one
+    // record, not two inbox rows from a retry.
+    try std.testing.expectEqualStrings(first, second);
+    try std.testing.expect(std.mem.indexOf(u8, first, "\"d-") != null);
+
+    // A different record is still its own delivery, so two distinct
+    // notifications are never merged into one.
+    const other = notifyRouteToToolInput(arena, "{\"from\":\"peer\",\"kind\":\"message\",\"payload\":{\"text\":\"bye\"}}") orelse
+        return error.TestExpectedResult;
+    try std.testing.expect(!std.mem.eql(u8, first, other));
+
+    // An id the sender did supply is the sender's key and is left alone.
+    const keyed = notifyRouteToToolInput(arena, "{\"from\":\"peer\",\"id\":\"mine\"}") orelse return error.TestExpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, keyed, "mine") != null);
+    try std.testing.expect(std.mem.indexOf(u8, keyed, "\"d-") == null);
+
+    // An empty id dedups nothing, so it is replaced rather than duplicated:
+    // the rebuilt record must still parse as a notify body (a second `id`
+    // key is refused outright by std.json, which would 400 a valid delivery).
+    const empty = notifyRouteToToolInput(arena, "{\"from\":\"peer\",\"id\":\"\"}") orelse return error.TestExpectedResult;
+    const envelope = std.json.parseFromSliceLeaky(struct { store: NotifyRequestBody }, arena, empty, .{}) catch
+        return error.TestExpectedResult;
+    try std.testing.expect(hasNotifyId(envelope.store.id));
+    try std.testing.expectEqualStrings("peer", envelope.store.from orelse "");
 }
 
 const ChatMessageBody = struct {

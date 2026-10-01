@@ -92,6 +92,36 @@ pub fn findSame(alarms: []const Alarm, message: []const u8, ts: i64, every: i64)
     return null;
 }
 
+/// The next fire time for a recurring alarm handled at `now`, or null when
+/// handling it changes nothing.
+///
+/// `done` is the one alarm operation that moves a row rather than setting a
+/// field to a fixed value, and it used to move it a whole interval on *every*
+/// call: a first `done` put `ts` strictly after `now`, and a repeat of that
+/// same `done` -- a retried turn, a model calling it twice, a request whose
+/// reply was lost -- read the advanced `ts`, saw it was not yet due, and
+/// pushed it a second interval out. A recurring reminder set to come back
+/// every 30 minutes came back at 60. What `done` consumes is one fire time,
+/// so an alarm that is not due has already been handled for the current
+/// window and is left alone; pushing a *pending* reminder out is a different
+/// operation from handling the one that just came due.
+///
+/// A one-shot has no next fire time, so the caller removes it instead.
+///
+/// The arithmetic is saturating throughout: the store is plain JSON a hand
+/// edit can corrupt, and an extreme stored `ts`/`every` must not overflow the
+/// guest (a wrapped next fire in the past is an alarm stuck permanently due).
+pub fn advanceOnDone(now: i64, ts: i64, every: i64) ?i64 {
+    if (every <= 0) return null;
+    if (ts > now) return null;
+    const step: i64 = @max(60, @max(1, @min(every, std.math.maxInt(i64) / 60)) * 60);
+    const behind: i64 = if (now >= 0 and ts < now - std.math.maxInt(i64)) std.math.maxInt(i64) else now -| ts;
+    const slots = @divTrunc(behind, step) +| 1;
+    // For valid data the advance already lands strictly after `now`; the
+    // clamp only rescues the saturated case.
+    return @max(ts +| (slots *| step), now +| step);
+}
+
 test "parseList rejects non-array JSON" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -126,4 +156,40 @@ test "setting the same reminder twice leaves one row" {
         }
     }
     try std.testing.expectEqual(@as(usize, 1), alarms.items.len);
+}
+
+test "handling the same recurring fire twice advances it once" {
+    // Due exactly now, 30-minute recurrence: one interval lands after it.
+    const first = advanceOnDone(1000, 1000, 30) orelse return error.TestExpectedResult;
+    try std.testing.expectEqual(@as(i64, 2800), first);
+    // The retry of that same `done` reads the row the first call wrote and
+    // changes nothing, which is the whole point: before the guard it advanced
+    // to 4600 and the reminder came back an interval late.
+    try std.testing.expectEqual(@as(?i64, null), advanceOnDone(1000, first, 30));
+}
+
+test "a recurring alarm that sat due for three intervals comes back once" {
+    // Due at 100, handled at 1000 on a 300s step: 100 + 3*300 is not strictly
+    // after now, so the next slot is the fourth, and handling that is a no-op.
+    const next = advanceOnDone(1000, 100, 5) orelse return error.TestExpectedResult;
+    try std.testing.expect(next > 1000);
+    try std.testing.expectEqual(@as(?i64, null), advanceOnDone(1000, next, 5));
+}
+
+test "a not-yet-due recurring alarm is already handled for this window" {
+    try std.testing.expectEqual(@as(?i64, null), advanceOnDone(1000, 2000, 30));
+    // A non-positive stored `every` is a one-shot: no recurrence to advance to.
+    try std.testing.expectEqual(@as(?i64, null), advanceOnDone(1000, 100, 0));
+    try std.testing.expectEqual(@as(?i64, null), advanceOnDone(1000, 100, -5));
+    // A hand-edited interval under the one-minute floor is still a minute,
+    // never a sub-minute loop that would keep the alarm permanently due.
+    try std.testing.expectEqual(@as(i64, 1060), advanceOnDone(1000, 1000, 1) orelse 0);
+}
+
+test "an absurd stored fire time cannot wrap the next fire into the past" {
+    // The store is plain JSON a hand edit can corrupt, and the guest ships as
+    // ReleaseSmall: a wrapped (negative) next fire is an alarm stuck due.
+    const next = advanceOnDone(std.math.maxInt(i64), std.math.minInt(i64) / 2, 30) orelse
+        return error.TestExpectedResult;
+    try std.testing.expect(next > 0);
 }
