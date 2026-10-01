@@ -5788,6 +5788,41 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
 /// callback (wired only inside sub-agent runs) for the parent target. When
 /// the requested answerer is not attached the call returns Err.not_found so
 /// the model can decide for itself.
+/// The sandbox a `ck_tool` callee runs under, derived from the *callee's*
+/// descriptor over the caller's sandbox.
+///
+/// Every field a descriptor decides has to be re-taken from `target` here.
+/// Leaving one out inherits the caller's value, and the two spell the same
+/// capability from opposite sides: `chain` and `goal_write` both declare
+/// `fs_read_only: true` yet are two of the four tools that can call others, so
+/// a nested `edit_file`/`file_ops`/`patch_apply` ran under the *caller's*
+/// read-only flag and every write came back denied. `session` is the other
+/// direction and worse: it is a grant, so a tool reached by `ck_tool` whose own
+/// descriptor never asked for the session store answered `ck_session` in full.
+/// The agent-loop wirings cleared below are not descriptor fields; they are
+/// cleared because they belong to the run that spawned, not to the callee.
+fn childSandbox(parent: *const Sandbox, target: *const registry.Tool) Sandbox {
+    var child: Sandbox = parent.*;
+    child.tool_call = false;
+    child.tool_allow = null;
+    child.tool_registry = null;
+    child.tool_call_depth = 0;
+    child.tool_self_name = target.name;
+    child.live_publish = target.live_publish;
+    child.subagent_runner = null;
+    child.own_ask = null;
+    child.fs_prefixes = target.fs_prefixes;
+    child.fs_read_only = target.fs_read_only;
+    child.exec_allow = target.exec_allow;
+    child.network_allow = target.network_allow;
+    child.env_allow = target.env_allow;
+    child.session = target.session;
+    child.fuel = target.fuel;
+    child.config_json = target.config_json;
+    child.llm = null;
+    return child;
+}
+
 /// ck_tool: a `tool_call:true` tool synchronously calls another tool.
 /// Input: {"tool":"name","args":{...} | "raw json string"}.
 /// Output: callee's JSON result (written to host arena).
@@ -5843,27 +5878,9 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         else => return Err.invalid,
     };
     defer h.sandbox.gpa.free(wasm_bytes);
-    var child_sb: Sandbox = h.sandbox.*;
+    var child_sb: Sandbox = childSandbox(h.sandbox, target);
     h.sandbox.tool_call_depth += 1;
     defer h.sandbox.tool_call_depth -= 1;
-    child_sb.tool_call = false;
-    child_sb.tool_allow = null;
-    child_sb.tool_registry = null;
-    child_sb.tool_call_depth = 0;
-    child_sb.tool_self_name = target.name;
-    child_sb.live_publish = target.live_publish;
-    // A child tool must not inherit the parent's ability to spawn agents
-    // or to answer on its behalf: those are wired by the agent loop for
-    // the tools that declared the capability, not inherited via chain.
-    child_sb.subagent_runner = null;
-    child_sb.own_ask = null;
-    child_sb.fs_prefixes = target.fs_prefixes;
-    child_sb.exec_allow = target.exec_allow;
-    child_sb.network_allow = target.network_allow;
-    child_sb.env_allow = target.env_allow;
-    child_sb.fuel = target.fuel;
-    child_sb.config_json = target.config_json;
-    child_sb.llm = null;
     if (target.network_from_config.len > 0) {
         if (h.sandbox.cfg) |cfg| {
             if (config_mod.configuredHosts(cfg, arena, target.network_from_config)) |extra| {
@@ -9265,6 +9282,78 @@ fn testSandboxAtRoot(gpa: std.mem.Allocator, io: std.Io) Sandbox {
         .fs_prefixes = &.{"."},
         .environ_map = undefined,
     };
+}
+
+test "a ck_tool callee runs under its own descriptor, not the caller's" {
+    // A nested call is bounded by the callee's descriptor, so every field that
+    // descriptor decides has to come from the callee. `session` is the grant
+    // that matters: inherited, a tool whose own manifest never asked for the
+    // session store answered ck_session in full. `fs_read_only` is the
+    // restriction, and it cut the other way — chain and goal_write declare it
+    // and can call any non-internal tool, so a nested edit_file had every
+    // write refused.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    const cfg = config_mod.Config{};
+
+    const caller = registry.Tool{
+        .name = "caller",
+        .description = "d",
+        .wasm = "c.wasm",
+        .input_schema = .{ .object = .{} },
+        .tool_call = true,
+        .fs_read_only = true,
+        .session = true,
+        .fs_prefixes = &.{"chains"},
+        .exec_allow = &.{"sh"},
+        .network_allow = &.{"example.invalid"},
+        .env_allow = &.{"CALLER_ONLY"},
+        .live_publish = true,
+    };
+    const callee = registry.Tool{
+        .name = "callee",
+        .description = "d",
+        .wasm = "k.wasm",
+        .input_schema = .{ .object = .{} },
+        .fs_prefixes = &.{"."},
+        .exec_allow = &.{"git"},
+        .network_allow = &.{"other.invalid"},
+        .env_allow = &.{"CALLEE_ONLY"},
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parent = try sandboxFor(std.testing.allocator, threaded.io(), arena_state.allocator(), &env_map, &cfg, &caller, null);
+    const child = childSandbox(&parent, &callee);
+
+    try std.testing.expectEqualStrings("callee", child.tool_self_name);
+    try std.testing.expect(!child.session);
+    try std.testing.expect(!child.fs_read_only);
+    try std.testing.expect(!child.live_publish);
+    try std.testing.expectEqual(@as(usize, 1), child.fs_prefixes.len);
+    try std.testing.expectEqualStrings(".", child.fs_prefixes[0]);
+    try std.testing.expectEqual(@as(usize, 1), child.exec_allow.len);
+    try std.testing.expectEqualStrings("git", child.exec_allow[0]);
+    try std.testing.expectEqualStrings("other.invalid", child.network_allow[0]);
+    try std.testing.expectEqualStrings("CALLEE_ONLY", child.env_allow[0]);
+
+    // Nesting is bounded, so the callee cannot chain onward whatever it was
+    // handed, and it is not the caller's own run: the agent-loop wirings the
+    // caller carries do not travel with the call.
+    try std.testing.expect(!child.tool_call);
+    try std.testing.expect(child.tool_allow == null);
+    try std.testing.expect(child.tool_registry == null);
+    try std.testing.expectEqual(@as(u8, 0), child.tool_call_depth);
+    try std.testing.expect(child.subagent_runner == null);
+    try std.testing.expect(child.own_ask == null);
+    try std.testing.expect(child.llm == null);
+
+    // The parent is untouched by the derivation.
+    try std.testing.expectEqualStrings("caller", parent.tool_self_name);
+    try std.testing.expect(parent.session);
+    try std.testing.expect(parent.fs_read_only);
 }
 
 test "fs_read_only refuses every ck_fs_* write and still reads" {
