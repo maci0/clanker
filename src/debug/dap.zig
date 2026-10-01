@@ -4,6 +4,7 @@
 const std = @import("std");
 const subprocess = @import("../agent/subprocess.zig");
 const config_mod = @import("../config.zig");
+const log = @import("../util/log.zig");
 
 pub fn encodeFrame(alloc: std.mem.Allocator, payload: []const u8) ![]u8 {
     return std.fmt.allocPrint(alloc, "Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
@@ -447,22 +448,36 @@ pub const Session = struct {
         return self.waitResponse(arena, id);
     }
 
+    /// Shuts the session down and reports what actually happened.
+    ///
+    /// Both the request and the kill below are best-effort by nature: an
+    /// adapter that already exited cannot be asked to disconnect, and one
+    /// that ignores SIGTERM is still SIGKILLed by `terminateWithin`. So the
+    /// session does end either way, and the previous reply said `ok` for
+    /// both. That is the silent-failure shape: an adapter wedged on a
+    /// disconnect (the process outliving the window) read to the caller as a
+    /// clean shutdown, and the next `launch` then found a live process
+    /// holding the port. The reply now names the arm, and the wedged one
+    /// says so, because the fix for it is a different tool call than the fix
+    /// for an already-dead adapter.
     pub fn disconnect(self: *Session, arena: std.mem.Allocator) ![]const u8 {
-        if (self.reg.get(self.session_id, self.kind) == null) return "{\"ok\":true}";
+        if (self.reg.get(self.session_id, self.kind) == null) return "{\"ok\":true,\"state\":\"already-gone\"}";
         const id = self.sendRequest(arena, "disconnect", "{\"terminateDebuggee\":true}") catch 0;
         if (id != 0) _ = self.waitResponse(arena, id) catch {};
         // The adapter was just told to shut down; give it
         // disconnect_timeout_ms to exit on its own before the SIGTERM.
-        _ = self.reg.terminateWithin(self.session_id, self.kind, self.disconnect_timeout_ms);
-        return "{\"ok\":true}";
+        const exited = self.reg.terminateWithin(self.session_id, self.kind, self.disconnect_timeout_ms);
+        if (exited) return "{\"ok\":true,\"state\":\"disconnected\"}";
+        log.log(.warn, "dap: adapter for session '{s}' ({s}) outlived its {d}ms disconnect window and was killed; a later launch may find its port held", .{ self.session_id, self.kind, self.disconnect_timeout_ms });
+        return "{\"ok\":true,\"state\":\"disconnected\",\"note\":\"adapter outlived the disconnect window and was killed\"}";
     }
 
     pub fn terminate(self: *Session, arena: std.mem.Allocator) ![]const u8 {
-        if (self.reg.get(self.session_id, self.kind) == null) return "{\"ok\":true}";
+        if (self.reg.get(self.session_id, self.kind) == null) return "{\"ok\":true,\"state\":\"already-gone\"}";
         const id = self.sendRequest(arena, "terminate", "{}") catch 0;
         if (id != 0) _ = self.waitResponse(arena, id) catch {};
         self.reg.terminate(self.session_id, self.kind);
-        return "{\"ok\":true}";
+        return "{\"ok\":true,\"state\":\"terminated\"}";
     }
 };
 
@@ -1304,6 +1319,62 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
     try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
+}
+
+test "a disconnect says whether the adapter actually went away" {
+    // The reply used to be an unconditional `{"ok":true}`, so an adapter that
+    // ignored the disconnect request AND outlived the kill window read to the
+    // caller as a clean shutdown -- and the next launch then found its port
+    // held. Both arms are named now, and a second disconnect is `already-gone`
+    // rather than a repeat of the first answer.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "fake_dap.py", .data = fake_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var sess = Session{ .io = io, .gpa = std.testing.allocator, .reg = &reg, .session_id = "dbg-disc" };
+    defer sess.deinit();
+
+    const argv = [_][]const u8{ "python3", "fake_dap.py" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "dbg-disc",
+        .enabled = true,
+        .adapters = &.{},
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    _ = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+
+    const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
+    try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
+    // Whatever the adapter did, the name of the arm is present, so the caller
+    // can tell a clean exit from a kill.
+    try std.testing.expect(
+        std.mem.find(u8, disc, "\"state\":\"disconnected\"") != null or
+            std.mem.find(u8, disc, "\"outlived the disconnect window\"") != null,
+    );
+    try std.testing.expect(reg.get("dbg-disc", "dap") == null);
+
+    // Nothing left to tear down: a second disconnect must say so rather than
+    // repeat the first answer's claim.
+    const again = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
+    try std.testing.expect(std.mem.find(u8, again, "\"already-gone\"") != null);
 }
 
 const ConcurrencyCtx = struct {

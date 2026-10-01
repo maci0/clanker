@@ -42,6 +42,16 @@ pub fn run(
             .failed => |err| log.log(.warn, "hook {s}: command '{s}' failed: {s}", .{ @tagName(event), argv0, @errorName(err) }),
             .ran => |outcome| {
                 defer outcome.deinit(sb.gpa);
+                // A hook that wrote output the runner cannot read is a
+                // misconfigured security control, and reading it as "allow"
+                // is how a deny hook silently stops denying. Say so against
+                // the command that misbehaved; the decision itself stays
+                // `.allow`, because unreadable output is not evidence of a
+                // verdict, and turning it into a block would let one garbled
+                // hook strand every turn.
+                if (unreadableHookOutput(outcome.stdout)) |why| {
+                    log.log(.warn, "hook {s}: command '{s}' wrote output the runner could not read ({s}); treating the hook as having no verdict", .{ @tagName(event), argv0, why });
+                }
                 var decoded = decode(arena, outcome.stdout);
                 if (outcome.code == 2) {
                     decoded.decision = .deny;
@@ -115,6 +125,25 @@ fn decode(arena: std.mem.Allocator, stdout: []const u8) Result {
         }
     }
     return result;
+}
+
+/// Why a hook's stdout is not a usable reply, or null when it is fine.
+///
+/// A hook that says nothing at all is a hook with no verdict, which is
+/// legal: a `PreToolUse` script that only inspects and exits 0 is the
+/// ordinary case. Anything it *did* write counts, because `decode` reads a
+/// verdict out of stdout or nothing, and a `deny` its author wrote but did not
+/// encode is a security control that reads as an `allow`. The exit code is
+/// still authoritative on its own: code 2 denies regardless of what is here.
+fn unreadableHookOutput(stdout: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    if (trimmed[0] != '{') return "stdout is not a JSON object";
+    // `validate` parses without building a value tree, so a hook reply up to
+    // the 64 KiB exec cap costs no allocation to check.
+    const valid = std.json.validate(std.heap.page_allocator, trimmed) catch return "the reply could not be read (out of memory)";
+    if (!valid) return "stdout is not valid JSON";
+    return null;
 }
 
 fn parseDecision(value: []const u8) Decision {
@@ -235,4 +264,54 @@ test "a blank command warns instead of indexing an empty argv" {
     const result = try run(arena_state.allocator(), cfg, &sb, .PreToolUse, "Write", "{}");
     try std.testing.expectEqual(Decision.allow, result.decision);
     try std.testing.expectEqualStrings("", result.context);
+}
+
+test "hook stdout that cannot be read is named, and a well-formed reply is not" {
+    // A hook is a security control, so a `deny` whose JSON is garbled must
+    // not read as a silent `allow` with no trace anywhere. The decision
+    // stays `allow` (unreadable output is not a verdict) but the runner says
+    // which command and why.
+    try std.testing.expect(unreadableHookOutput("") == null);
+    try std.testing.expect(unreadableHookOutput("   \n") == null);
+    try std.testing.expect(unreadableHookOutput("{\"decision\":\"deny\",\"reason\":\"no\"}") == null);
+    try std.testing.expect(unreadableHookOutput("{\"nested\":{\"decision\":\"ask\"}}") == null);
+    // A well-formed object whose values are the wrong shape is still a reply
+    // the decoder reads, so it is not reported here.
+    try std.testing.expect(unreadableHookOutput("{\"decision\":42}") == null);
+
+    try std.testing.expectEqualStrings("stdout is not a JSON object", unreadableHookOutput("42") orelse unreachable);
+    // Prose on stdout is the same fault: `decode` reads no verdict out of it,
+    // so a hook whose author meant it to deny has said nothing at all.
+    try std.testing.expectEqualStrings("stdout is not a JSON object", unreadableHookOutput("checked the path, all good") orelse unreachable);
+    try std.testing.expectEqualStrings("stdout is not a JSON object", unreadableHookOutput("[1,2]") orelse unreachable);
+    try std.testing.expectEqualStrings("stdout is not valid JSON", unreadableHookOutput("{\"decision\":") orelse unreachable);
+    try std.testing.expectEqualStrings("stdout is not valid JSON", unreadableHookOutput("{\"a\":1,}") orelse unreachable);
+}
+
+test "a hook whose deny is garbled is reported by the runner, not swallowed" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{"printf"},
+    };
+    // Exits 0 and writes the opening of a deny object. `decode` has nothing
+    // to read, so the hook contributes no verdict -- the same decision a
+    // silent hook reaches, now on a path that says why.
+    const cfg = hook_config.Config{ .hooks = &.{
+        .{ .event = .PreToolUse, .matcher = "Write", .command = "printf '{\"decision\":'", .timeout_ms = 1000 },
+    } };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const result = try run(arena_state.allocator(), cfg, &sb, .PreToolUse, "Write", "{}");
+    try std.testing.expectEqual(Decision.allow, result.decision);
+    try std.testing.expectEqualStrings("", result.reason);
 }
