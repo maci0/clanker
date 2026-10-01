@@ -194,6 +194,37 @@ class SbomTest(unittest.TestCase):
             with self.subTest(dependency=name):
                 self.assertIn(name, inventory)
 
+    def test_vendor_types_resolve_to_the_vendored_release(self) -> None:
+        # tsconfig.json maps the three /webui/vendor/* specifiers at npm
+        # packages so `tsc --noEmit` has type sources for code the browser
+        # loads from ui/vendor/. That mapping is a bare package name, so the
+        # type source is whatever version `bun install` resolved, not the
+        # release the vendored bytes came from: the preact 10.27.3 bump for
+        # GHSA-36hm-qxxp-pg3m moved the vendored file and the declared
+        # devDependency together, and nothing said so out loud. Left free, a
+        # package.json bump alone re-types the tree against types the shipped
+        # bytes never had. The two must name one release, so neither can move
+        # without the other.
+        tsconfig = sbom.read("tsconfig.json")
+        declared = json.loads(sbom.read("package.json"))["devDependencies"]
+        checked = 0
+        for w in sbom.vendored_web():
+            if f"/webui/vendor/{w['file']}" not in tsconfig:
+                continue
+            package = w["upstream"].strip()
+            version = w["version"].split()[0]
+            checked += 1
+            with self.subTest(package=package):
+                self.assertEqual(
+                    declared.get(package), version,
+                    f"{package} is declared {declared.get(package)!r} but "
+                    f"ui/vendor/{w['file']} is {version}, and tsconfig.json "
+                    "types that specifier at the declared package",
+                )
+        # The mapping exists for these three; a renamed table row must not
+        # silently leave this checking nothing.
+        self.assertEqual(checked, 3)
+
     def test_vendored_digests_match_the_committed_bytes(self) -> None:
         # ui/vendor/README.md calls its SHA-256 column "the integrity
         # reference for the committed bytes" and vendor/sqlite/README.md the

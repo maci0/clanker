@@ -63,21 +63,32 @@ friends" line.
 ## Resolved at build time by the package manager (not vendored)
 
 `package.json` and `tools/ts/package.json` declare only `devDependencies`
-(`oxlint`, `oxlint-tsgolint`, `@oxlint/plugins`, `@rikalabs/oxlint-standards`,
-`@shadcn/lint`, `typescript`, `zod`, `@types/bun`, `tailwindcss`, `@tailwindcss/cli` in the
-root, MIT except `typescript` which is Apache-2.0; `assemblyscript` in `tools/ts`), each pinned to an exact version, with `bun.lock` and
-`tools/ts/bun.lock` committed so `bun install --frozen-lockfile` resolves the
-same tree with the same integrity digests (CI, `scripts/verify.sh` and
-`tools/ts/verify.sh` all pass that flag). No package installs a post-install
-script: neither manifest grants a `trustedDependencies` entry, and bun runs
-lifecycle scripts only for packages listed there. Both lockfiles are read by
-`scripts/sbom.py`, so the release SBOM names every one of these packages with
-the digest the lockfile pins it to. Both manifests pin the package manager
-(`bun@1.4.2`), since `tools/ts/dist/` is committed and `tools/ts/verify.sh`
-rebuilds and diffs it with whatever bun the runner has. Each manifest's
-`devDependencies` must equal its lockfile's workspace block, so a manifest
-edited without re-locking fails `scripts/test_sbom.py` instead of resolving a
-different tree at the next install.
+(`@oxlint/plugins`, `@preact/signals-core`, `@rikalabs/oxlint-standards`,
+`@shadcn/lint`, `@tailwindcss/cli`, `@types/bun`, `htm`, `oxlint`,
+`oxlint-tsgolint`, `preact`, `tailwindcss`, `typescript`, `zod` in the root;
+`assemblyscript` in `tools/ts`), each pinned to an exact version, with
+`bun.lock` and `tools/ts/bun.lock` committed so `bun install
+--frozen-lockfile` resolves the same tree with the same integrity digests
+(CI, `scripts/verify.sh` and `tools/ts/verify.sh` all pass that flag). Two
+of those carry conditions that survive into a release: `typescript` and
+`htm` are Apache-2.0, the latter named individually in the vendored table
+above because the same bytes are both a declared devDependency and a
+vendored file. `preact` and `@preact/signals-core` are the other two names on
+both lists (MIT, types only: `tsconfig.json` maps the `/webui/vendor/*`
+specifiers at them and the vendored copies are what ships). `bun.lock`
+records no license field, so the release SBOM is the per-package inventory
+and this file the summary.
+
+No package installs a post-install script: neither manifest grants a
+`trustedDependencies` entry, and bun runs lifecycle scripts only for
+packages listed there. Both lockfiles are read by `scripts/sbom.py`, so the
+release SBOM names every one of these packages with the digest the lockfile
+pins it to. Both manifests pin the package manager (`bun@1.4.2`), since
+`tools/ts/dist/` is committed and `tools/ts/verify.sh` rebuilds and diffs it
+with whatever bun the runner has. Each manifest's `devDependencies` must
+equal its lockfile's workspace block, so a manifest edited without re-locking
+fails `scripts/test_sbom.py` instead of resolving a different tree at the
+next install.
 
 One entry there is a pre-release build: `tools/ts/bun.lock` pins
 `binaryen@131.0.0-nightly.20260721`, the exact transitive version
