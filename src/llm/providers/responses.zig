@@ -5,6 +5,7 @@ const api = @import("api.zig");
 const common = @import("common.zig");
 const types = @import("../types.zig");
 const fuzz_corpus = @import("../../util/fuzz_corpus.zig");
+const redact = @import("../../util/redact.zig");
 
 pub const BuildOptions = struct {
     /// Send a completion budget. Off for Codex, whose ChatGPT subscription
@@ -181,7 +182,20 @@ pub fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?
     const root = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .allocate = .alloc_always });
     if (root != .object) return error.BadResponse;
     if (root.object.get("error")) |e| if (e == .object) {
-        if (err_detail) |d| d.* = string(e.object, "message");
+        // A 200 carrying an error body never reaches client.httpErrorDetail,
+        // so this assignment is the only place the provider's message becomes
+        // the caller-facing reason: it then goes to the REPL transcript and to
+        // printUsageError's stderr, both raw writes. `error.message` is
+        // provider- or base_url-controlled bytes, so it takes the same cap,
+        // whitespace flattening and credential mask every other provider
+        // applies here (openai.zig, gemini.zig, anthropic.zig) — uncapped, a
+        // hostile endpoint picks both what clanker prints and how much of it.
+        if (err_detail) |d| {
+            d.* = if (string(e.object, "message")) |m|
+                redact.forCaller(arena, m) catch redact.forCaller(arena, @errorName(error.ApiError)) catch @errorName(error.ApiError)
+            else
+                "no error message";
+        }
         return error.ApiError;
     };
     var text: std.ArrayList(u8) = .empty;
@@ -243,6 +257,33 @@ pub fn parseStreamEvent(arena: std.mem.Allocator, payload: []const u8) api.Strea
         return event;
     }
     return .{};
+}
+
+test "a 200 carrying an error body is capped and masked like every other provider" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The provider picks the bytes; a credential echoed in the message must
+    // not survive into the caller's error string, which reaches stderr and
+    // the REPL transcript raw.
+    var detail: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, parseResponse(arena, "{\"error\":{\"message\":\"401 bad key sk-proj-AAAABBBBCCCCDDDD1234\"}}", &detail));
+    const out = detail.?;
+    try std.testing.expect(std.mem.indexOf(u8, out, "sk-proj-") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "AAAABBBBCCCCDDDD1234") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "[redacted]") != null);
+
+    // And it is bounded: an endpoint cannot choose how much clanker prints.
+    const long = "x" ** 4096;
+    var long_detail: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, parseResponse(arena, "{\"error\":{\"message\":\"" ++ long ++ "\"}}", &long_detail));
+    try std.testing.expect(long_detail.?.len <= redact.max_caller_detail_len);
+
+    // An error object with no message still gets a reason rather than silence.
+    var bare: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, parseResponse(arena, "{\"error\":{\"type\":\"server_error\"}}", &bare));
+    try std.testing.expect(bare.?.len > 0);
 }
 
 test "Responses codec maps text tools and usage into neutral types" {
