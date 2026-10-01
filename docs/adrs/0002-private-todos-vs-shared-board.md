@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. See `docs/prds/0003-run-todos.md` for the full design and its
+Accepted — 2026-08-11. See `docs/prds/0003-run-todos.md` for the full design and its
 current gaps (a leftover-todos summary is still sub-agent-only).
 
 ## Context

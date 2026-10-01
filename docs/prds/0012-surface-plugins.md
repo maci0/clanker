@@ -2,7 +2,7 @@
 
 ## Status
 
-**Web UI plugins: Shipped.** `ui/plugins/<name>/` (`plugin.json` +
+**Web UI plugins: Shipped** — 2026-08-13. `ui/plugins/<name>/` (`plugin.json` +
 `app.js` + optional `app.css`), created from chat by the `webui_addon`
 tool, discovered by the `webui_addon` guest (`list` scans `ui/plugins/`
 fresh; `handleWebuiPlugins` in `src/cli.zig` only relays to it),

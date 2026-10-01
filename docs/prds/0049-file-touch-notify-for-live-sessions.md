@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Later phases, not implement-now this round. Decision: [ADR 0038](../adrs/0038-live-sessions-get-advisory-file-touch-notify-from-a-host.md). RFC: [0026](../rfcs/0026-file-shift-notify.md).
+Draft — 2026-08-21. Later phases, not implement-now this round. Decision: [ADR 0038](../adrs/0038-live-sessions-get-advisory-file-touch-notify-from-a-host.md). RFC: [0026](../rfcs/0026-file-shift-notify.md).
 
 ## Problem
 

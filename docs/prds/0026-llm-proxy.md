@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. The serve surface is landed and off by default. `clanker serve --proxy` mounts `/proxy/v1/*` on the web UI socket. Same-protocol requests stay 1:1; `POST /v1/chat/completions` and `POST /v1/messages` transcode when the client's family and the provider's kind differ, so an OpenAI SDK or Claude Code can spend Vertex / Anthropic / openai_compat credentials already in `[providers.*]`. Black-box `zig build e2e` for the proxy is not wired yet.
+In progress — 2026-08-13. The serve surface is landed and off by default. `clanker serve --proxy` mounts `/proxy/v1/*` on the web UI socket. Same-protocol requests stay 1:1; `POST /v1/chat/completions` and `POST /v1/messages` transcode when the client's family and the provider's kind differ, so an OpenAI SDK or Claude Code can spend Vertex / Anthropic / openai_compat credentials already in `[providers.*]`. Black-box `zig build e2e` for the proxy is not wired yet.
 
 Sources of truth:
 

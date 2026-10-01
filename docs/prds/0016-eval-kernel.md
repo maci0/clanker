@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. Persistent Python supervisor, session subprocess registry,
+In progress — 2026-08-13. Persistent Python supervisor, session subprocess registry,
 disabled-by-default guest, magic prefixes, and ADR 0010/0011 are in.
 Sources of truth: `src/agent/subprocess.zig`, `src/sandbox/kernel.zig`,
 `src/config.zig` (`Kernel`), `tools/zig/kernel.zig`,

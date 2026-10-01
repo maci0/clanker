@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Later phases, not implement-now this round. Decision: [ADR 0039](../adrs/0039-foreign-transcripts-import-as-new-clanker-sessions-claude.md). RFC: [0027](../rfcs/0027-foreign-session-resume.md).
+Draft — 2026-08-21. Later phases, not implement-now this round. Decision: [ADR 0039](../adrs/0039-foreign-transcripts-import-as-new-clanker-sessions-claude.md). RFC: [0027](../rfcs/0027-foreign-session-resume.md).
 
 ## Problem
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. `clanker acp` (`cmdAcp` in `src/cli.zig`) and
+In progress — 2026-08-14. `clanker acp` (`cmdAcp` in `src/cli.zig`) and
 `src/acp/server.zig` exist: stdio JSON-RPC framing, `initialize`
 (protocol v1, baseline-only prompt capabilities), `authenticate` (empty
 success), and `session/cancel` as a silent notification. Gated by

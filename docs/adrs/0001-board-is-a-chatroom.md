@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. See `docs/prds/0002-kanban-board.md` for the full design.
+Accepted — 2026-08-11. See `docs/prds/0002-kanban-board.md` for the full design.
 
 ## Context
 

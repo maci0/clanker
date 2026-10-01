@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `src/hooks/` owns config loading, matching and hook execution;
+Shipped — 2026-08-14. `src/hooks/` owns config loading, matching and hook execution;
 the agent loop wires all five lifecycle points, and a bounded stdin process
 primitive now lives in
 `src/sandbox/host.zig` beside `execUnderPolicy`. Gated by `[hooks]` in

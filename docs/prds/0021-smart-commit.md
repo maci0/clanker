@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `smart_commit` groups a staged (or `--all`) diff via `ck_llm`,
+Shipped — 2026-08-13. `smart_commit` groups a staged (or `--all`) diff via `ck_llm`,
 validates conventional commit messages, topo-sorts on a grep graph, and
 falls back to one commit + `note` on a degenerate cycle. `clanker commit`
 dry-runs, confirms, then executes. Not shipped: the `commit.model` override

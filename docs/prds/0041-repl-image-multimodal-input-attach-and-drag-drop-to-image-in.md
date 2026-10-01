@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress — thin slice shipped; drag-drop/image paste is external-tracked follow-up.
+In progress — 2026-08-17, thin slice shipped; drag-drop/image paste is external-tracked follow-up.
 
 Single source `src/tui/repl.zig` (plus agent image_in path). `/attach` + image_in plumbing shipped; drag-drop/image paste deferred per thin-slice plan.
 

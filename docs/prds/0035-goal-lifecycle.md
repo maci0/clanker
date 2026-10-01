@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `write_goal` drafting, `add_goal` persistence, and the shared
+Shipped — 2026-08-15. `write_goal` drafting, `add_goal` persistence, and the shared
 continuing goal loop are implemented. A loop starts its first agent turn
 immediately, evaluates each completed turn, and continues until achieved,
 blocked, cancelled, or budget-limited. Sources of truth are `tools/zig/write_goal.zig`,

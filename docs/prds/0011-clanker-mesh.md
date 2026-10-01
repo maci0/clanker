@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
+In progress — 2026-08-13. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
 simultaneous-open, CHAT id-dedup, and the Fleet lamp map (`GET /api/mesh/map`)
 live in `src/peers/mesh.zig` (host tests, no NIC). Serve listener
 (`src/serve/mesh_net.zig`), HTTP join/leave/status/pending, and

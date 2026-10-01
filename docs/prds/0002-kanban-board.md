@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Single source of truth: `tools/zig/board.zig` + `tools/zig/cards.zig`.
+Shipped — 2026-08-12. Single source of truth: `tools/zig/board.zig` + `tools/zig/cards.zig`.
 Surface: web UI board view + ten agent-facing tools (`kanban_list`,
 `kanban_add`, `kanban_move`, `kanban_update`, `kanban_claim`, `kanban_log`,
 `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_delete`, plus the

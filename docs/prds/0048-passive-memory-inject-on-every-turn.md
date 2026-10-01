@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Later phases, not implement-now this round. Decision: [ADR 0037](../adrs/0037-every-agent-run-turn-injects-memory-hits-through-the.md). RFC: [0025](../rfcs/0025-passive-memory-inject.md).
+Draft — 2026-08-21. Later phases, not implement-now this round. Decision: [ADR 0037](../adrs/0037-every-agent-run-turn-injects-memory-hits-through-the.md). RFC: [0025](../rfcs/0025-passive-memory-inject.md).
 
 ## Problem
 

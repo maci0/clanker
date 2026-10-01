@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Implemented as a pure module `src/agent/loop_guard.zig`
+Shipped — 2026-08-14. Implemented as a pure module `src/agent/loop_guard.zig`
 (canonicalization + chain tracking, no I/O, unit-tested directly) plus a small
 call into `Agent.executeCalls`'s existing per-call loop in
 `src/agent/loop.zig`. Inspired by

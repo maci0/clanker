@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `read_file` accepts `hashes: true`; `edit_file` accepts
+Shipped — 2026-08-13. `read_file` accepts `hashes: true`; `edit_file` accepts
 `op: "hashline"` with hunks of `{anchor_hash, anchor_line, old_count,
 new_lines}`. Hashing and apply live in `tools/zig/hashline.zig` (host-
 tested). Tolerance is the v1 default ±10. Sources of truth:

@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped (libvaxis-based), with known gaps tracked below. Source of truth:
+Shipped (libvaxis-based) — 2026-08-12, with known gaps tracked below. Source of truth:
 `src/tui/repl.zig` (the `vxfw` app). Shared rendering with `clanker
 run`: `src/tui/transcript.zig`, `theme.zig`, `syntax.zig`, `width.zig`.
 Surface: `clanker repl`.

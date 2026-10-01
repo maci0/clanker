@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped, opt-in. `agent.auto_thinking = false` by default. When on, a
+Shipped — 2026-08-13, opt-in. `agent.auto_thinking = false` by default. When on, a
 fail-open classifier in `src/agent/thinking.zig` picks a 0024
 `reasoning_effort` row for the current turn. Sources of truth:
 `src/agent/thinking.zig`, `src/agent/loop.zig` (`classifyEffort`),

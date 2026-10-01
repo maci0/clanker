@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Not shipped: the per-entry `goal` field (open box under Acceptance
+Shipped — 2026-08-13. Not shipped: the per-entry `goal` field (open box under Acceptance
 criteria; no `goal` key in `state/schedule.json` and no `--goal` on `add`).
 Sources of truth: `tools/zig/schedule_cron.zig` (the dialect and the
 next-fire arithmetic, pure, host-tested), `src/schedule/store.zig`

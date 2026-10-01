@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Part of [PRD 0009 — Scheduled runs](../prds/0009-schedule.md).
+Accepted — 2026-08-13. Part of [PRD 0009 — Scheduled runs](../prds/0009-schedule.md).
 
 ## Context
 

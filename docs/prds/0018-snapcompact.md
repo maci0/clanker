@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. No source files yet. Affects `src/agent/loop.zig` (the `maybeCompactMessages`
+Draft — 2026-08-13. No source files yet. Affects `src/agent/loop.zig` (the `maybeCompactMessages`
 path). New compaction backend in `src/agent/snapcompact.zig`. Pixel-font renderer
 in `src/agent/pixelfont.zig`. Requires a vision-capable model.
 

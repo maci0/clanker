@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `gh_read` parses `gh://` / `github://`, calls `api.github.com`
+Shipped — 2026-08-13. `gh_read` parses `gh://` / `github://`, calls `api.github.com`
 with an allowlisted `GITHUB_TOKEN`, and caches responses under
 `state/gh_cache/` for 300s. `read_file` is unchanged. sqlite/ETag
 refresh is still open. Sources of truth: `tools/zig/gh_read.zig`,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Source of truth: `ui/app/*`
+Shipped — 2026-08-12. Source of truth: `ui/app/*`
 (`index.html`/`tailwind.css`/`app.js` + `core/*`/`lib/*`/`features/*` ES
 modules),
 comptime-embedded via `ui/webui.zig`, routed in `src/cli.zig`

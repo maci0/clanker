@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `agent.tools_dir` is a list (`[]const []const u8`); a bare string
+Shipped — 2026-08-13. `agent.tools_dir` is a list (`[]const []const u8`); a bare string
 still parses as one entry. `Registry.load` scans each directory in order,
 last-listed wins on a cross-directory `name` collision (with a warning),
 and a missing list entry warns and continues. `plugins` / `tools` guests

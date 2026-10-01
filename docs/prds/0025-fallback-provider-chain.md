@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `agent.fallback_provider` / `fallback_providers` parse as an
+Shipped — 2026-08-13. `agent.fallback_provider` / `fallback_providers` parse as an
 ordered list; a bare string is one entry. After `client.chat`/`chatStream`
 exhausts same-provider retries with no content delivered,
 `chatWithFallbackChain` in `src/agent/loop.zig` advances `self.provider`

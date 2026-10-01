@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Not built. Proposed: a `subprocs` WASM tool (or a `clanker doctor`
+Draft — 2026-08-14. Not built. Proposed: a `subprocs` WASM tool (or a `clanker doctor`
 section) that lists the 0016 registry: session id, kind (`python` / `dap` /
 …), pid, and age. Read-only. Sources once built: `src/agent/subprocess.zig`
 plus a guest at `tools/zig/subprocs.zig`.

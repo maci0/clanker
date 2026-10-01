@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `write_goal` is the draft-only half of the goal workflow. Its source
+Shipped — 2026-08-14. `write_goal` is the draft-only half of the goal workflow. Its source
 of truth is `tools/zig/write_goal.zig`; `clanker write-goal` and TUI
 `/write-goal` call it directly. The three related but independent operations
 are specified in [0035-goal-lifecycle.md](0035-goal-lifecycle.md).

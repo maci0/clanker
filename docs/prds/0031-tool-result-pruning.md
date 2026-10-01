@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `src/agent/prune.zig` owns the pure UTF-8-safe head/tail rewrite and
+Shipped — 2026-08-14. `src/agent/prune.zig` owns the pure UTF-8-safe head/tail rewrite and
 reclaim estimate. `Agent.maybeCompactMessages` uses the estimate before its
 LLM-summarization branch, while `Agent.requestMessages` prunes a shallow
 request copy so the canonical/saved transcript remains exact. Three

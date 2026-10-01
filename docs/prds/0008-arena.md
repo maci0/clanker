@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress (Phase 3 open). Sources of truth: `tools/zig/arena.zig`,
+In progress (Phase 3 open) — 2026-08-12. Sources of truth: `tools/zig/arena.zig`,
 `tools/zig/arena_match.zig`, `ui/app/features/arena.js`, and the
 CLI/HTTP routes in `src/cli.zig` (`cmdArena`, `GET /api/arena/<id>`).
 Surfaces: `clanker arena`, REPL `/arena`, Arena web UI view.

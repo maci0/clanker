@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `POST /api/config/model` and `POST /api/config/default` write
+Shipped — 2026-08-13. `POST /api/config/model` and `POST /api/config/default` write
 `config.local.toml` via the span-replace primitive in
 `src/util/toml_edit.zig`. The Models view confirms, then saves, and says the
 server reloads into the new config: `ConfigWatch` (`src/cli.zig`) watches

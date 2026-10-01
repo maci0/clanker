@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Later phases, not implement-now this round. Decision: [ADR 0040](../adrs/0040-browser-is-a-first-class-catalog-tool-phase-1-is-status.md). RFC: [0028](../rfcs/0028-first-class-browser.md).
+Draft — 2026-08-21. Later phases, not implement-now this round. Decision: [ADR 0040](../adrs/0040-browser-is-a-first-class-catalog-tool-phase-1-is-status.md). RFC: [0028](../rfcs/0028-first-class-browser.md).
 
 ## Problem
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Off by default (`advisor.enabled = false`). After a completed
+Shipped — 2026-08-13. Off by default (`advisor.enabled = false`). After a completed
 tool batch the loop calls `advisor.review`, which fail-opens on any
 error. A `note`/`concern` is injected as a one-turn system block;
 `blocker` asks via `ask_fn` (proceed/abort) and otherwise injects as a

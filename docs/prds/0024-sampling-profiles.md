@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. `src/llm/sampling_profiles.zig` holds the v1 table. 
+Shipped — 2026-08-13. `src/llm/sampling_profiles.zig` holds the v1 table. 
 `writeSamplingParams` consults it as the last `orelse` after per-run
 override and model config. `reasoning_effort` is written there too, so
 OpenAI no longer has a second writer. Sources of truth:

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends [ADR 0004](0004-providers-are-a-native-vtable-not-wasm.md)
+Accepted — 2026-08-12. Extends [ADR 0004](0004-providers-are-a-native-vtable-not-wasm.md)
 (the provider vtable); this ADR is about one of its entries, `authHeaders` /
 credential acquisition.
 

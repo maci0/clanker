@@ -2,9 +2,10 @@
 
 ## Status
 
-Shipped — 2026-09-27. The one sheet is ui/app/tailwind.src.css, compiled to the committed ui/app/tailwind.css: the cabinet tokens, the element layer in @layer base after preflight, every view's utilities, and the component rules for the rendered document and for the chrome vocabulary plugins write by name. ui/app/app.css, ui/app/views.css, the PatternFly sheet and every pf-v6-* class are gone.
-with all ten feature views, app.js, core/ui.js, core/kit.js, core/tools.js,
-core/usage.js and lib/graph.js on the ledger (re-counted 2026-09-30; the
+Shipped — 2026-09-27. The one sheet is ui/app/tailwind.src.css, compiled to the committed ui/app/tailwind.css: the cabinet tokens, the element layer in @layer base after preflight, every view's utilities, and the component rules for the rendered document and for the chrome vocabulary plugins write by name. ui/app/app.css, ui/app/views.css, the PatternFly sheet and every pf-v6-* class are gone. Every `ui/app` and
+`ui/plugins` module the cabinet rules covered is on the migration ledger in
+`ui/app/tailwind.test.mjs`: every view, `app.js`, `core/ui.js`, `core/kit.js`,
+`core/tools.js`, `core/usage.js` and `lib/graph.js` (re-counted 2026-09-30; the
 `bun test ui/app ui/plugins` suite is green at 411 pass). The single
 source of truth is `ui/app/tailwind.src.css` (the authoring sheet) compiled
 by `bun run css:build` into the committed `ui/app/tailwind.css`; the cabinet

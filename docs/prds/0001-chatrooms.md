@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Host side: `ck_chat` host function backed by `src/peers/chatrooms.zig`
+Shipped — 2026-08-12. Host side: `ck_chat` host function backed by `src/peers/chatrooms.zig`
 (all state, subscription filtering, and peer fan-out live host-side). Guest
 side: `tools/zig/chat.zig` backs fourteen descriptors — `chat_send`,
 `chat_dm`, `chat_history`, `chat_rooms`, `chat_subscribe`, `chat_react`,

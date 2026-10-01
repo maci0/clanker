@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress: the offline builtin path is shipped and wired, now entirely as
+In progress — 2026-08-12: the offline builtin path is shipped and wired, now entirely as
 a sandboxed WASM tool. The pluggable parts of the design (real embedding
 provider, real vector backend, config-driven chunking) were deleted, not
 stranded: the host-side `src/memory/` layer this PRD originally specified

@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Two layers, meant to be deliberately separate:
+Shipped — 2026-08-12. Two layers, meant to be deliberately separate:
 
 - **Private todos** — `todo_add` / `todo_claim` / `todo_close` / `todo_list`
   with no `room`. Routed host-side to the run's own in-memory list

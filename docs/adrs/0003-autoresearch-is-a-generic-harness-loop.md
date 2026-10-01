@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Shipped as [PRD 0004 — Autoresearch](../prds/0004-autoresearch.md);
+Accepted — 2026-08-12. Shipped as [PRD 0004 — Autoresearch](../prds/0004-autoresearch.md);
 the implementation is `src/autoresearch/loop.zig` (`Loop`) and
 `src/autoresearch/harness.zig`, with the ledger entry shape shared with the
 `autoresearch` WASM tool via `tools/zig/autoresearch_logic.zig`.

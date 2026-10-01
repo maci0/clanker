@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/toolhost/manifest.zig` (the schema, the validator,
+Shipped — 2026-08-13. Sources of truth: `src/toolhost/manifest.zig` (the schema, the validator,
 the scaffold templates) and `src/toolhost/registry.zig` (the loader, which is what
 the schema is derived from). Surfaces: CLI `clanker plugins list|validate|new`
 (`Command.plugins`, `cmdPlugins` in `src/cli.zig`), REPL `/plugins` and
