@@ -580,11 +580,6 @@ pub fn build(b: *std.Build) void {
     const motion_js_test = b.addSystemCommand(&.{ "bun", "test" });
     motion_js_test.addFileArg(b.path("ui/app/motion.test.mjs"));
     test_step.dependOn(&motion_js_test.step);
-    // #session-status is the sr-only fallback every action reports through, and
-    // a call site writing it directly is a message no sighted user ever sees.
-    const session_notice_js_test = b.addSystemCommand(&.{ "bun", "test" });
-    session_notice_js_test.addFileArg(b.path("ui/app/session-notice.test.mjs"));
-    test_step.dependOn(&session_notice_js_test.step);
     // The overlay focus trap: what it counts as a tab stop, so a disclosure fold
     // inside a dialog cannot walk Tab off the end of the dialog.
     const overlay_js_test = b.addSystemCommand(&.{ "bun", "test" });

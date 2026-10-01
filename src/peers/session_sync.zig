@@ -7,10 +7,11 @@
 //! burst convergence, backfill after downtime, hostile wire input held off by
 //! the cursor.
 //!
-//! Owner side: `pushTail` POSTs the owner's new events (since its last
-//! fan-out) to each configured peer. Replica side: `receive` accepts appends
-//! into `state/mesh/<owner>/sessions/<id>.db` at cursor+1; `pull` backfills a
-//! gap via GET /api/sessions/<id>/events?after=.
+//! Owner side: `pushTail` POSTs the owner's new events (since that peer's own
+//! last acknowledged fan-out) to each configured peer, so one unreachable peer
+//! does not strand the others. Replica side: `receive` accepts appends into
+//! `state/mesh/<owner>/sessions/<id>.db` at cursor+1; `pull` backfills a gap
+//! via GET /api/sessions/<id>/events?after=.
 
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
@@ -208,6 +209,37 @@ fn ownerId(cfg: *const config_mod.Config) []const u8 {
 
 const PeerView = struct { name: []const u8, url: []const u8 };
 
+/// The `meta` key holding how far one peer's fan-out has been carried for one
+/// session: `fanned:<peer>`, so each sink owns its own cursor.
+///
+/// One cursor for the whole peer list was the original shape, and it is the
+/// wrong model: a fan-out is N independent pushes, and the record said "the
+/// tail has been sent" whether it reached one peer or N. A single unreachable
+/// peer therefore stranded every other peer permanently — the next push read
+/// the advanced cursor, found an empty tail, and returned, so a peer that was
+/// never reached never got the events at all, and no failure was ever
+/// attributed to it. The per-peer cursor makes "delivered to this peer" the
+/// only thing a stored cursor claims, which is what the retry path assumes.
+fn fannedKey(arena: std.mem.Allocator, peer: []const u8) ?[]const u8 {
+    return std.fmt.allocPrint(arena, "fanned:{s}", .{peer}) catch null;
+}
+
+/// The cursor one peer last acknowledged, 0 for a peer this owner has never
+/// reached.
+fn readFanned(store: *session_events.Store, arena: std.mem.Allocator, peer: []const u8) i64 {
+    const key = fannedKey(arena, peer) orelse return 0;
+    return std.fmt.parseInt(i64, store.getMeta(key) orelse "0", 10) catch 0;
+}
+
+/// Records that `peer` took the tail up to `seq`. Beside `readFanned` so the
+/// two halves of the cursor contract cannot be spelled apart.
+fn writeFanned(store: *session_events.Store, arena: std.mem.Allocator, owner: []const u8, peer: []const u8, session_id: []const u8, seq: i64) void {
+    const key = fannedKey(arena, peer) orelse return;
+    store.setMeta(key, std.fmt.allocPrint(arena, "{d}", .{seq}) catch "0") catch |err| {
+        fanoutFailed("record fan-out cursor", owner, peer, session_id, err);
+    };
+}
+
 fn peersOf(cfg: *const config_mod.Config, arena: std.mem.Allocator) []const PeerView {
     var out: std.ArrayList(PeerView) = .empty;
     for (cfg.peers) |p| {
@@ -269,14 +301,23 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
         return;
     };
     defer store.close();
-    const last_fanned = std.fmt.parseInt(i64, store.getMeta("mesh_last_fanned") orelse "0", 10) catch 0;
-    const events = store.since(last_fanned) catch |err| {
+    // One cursor per peer, read per peer: a fan-out is N independent pushes,
+    // so the record of what has been delivered is a property of a peer, not of
+    // the session. A single shared cursor advanced past a tail that reached
+    // only some of them meant the rest were never retried at all.
+    const tip = store.lastSeq() catch |err| {
         fanoutFailed("read local events", owner, "-", session_id, err);
         return;
     };
-    if (events.len == 0) return;
-    const from: i64 = last_fanned;
+    if (tip == 0) return;
     for (peers) |peer| {
+        const from: i64 = readFanned(&store, arena, peer.name);
+        if (from >= tip) continue;
+        const events = store.since(from) catch |err| {
+            fanoutFailed("read local events", owner, peer.name, session_id, err);
+            continue;
+        };
+        if (events.len == 0) continue;
         var cursor: i64 = from;
         // A failure abandons this peer's fan-out rather than the others, but
         // it has to be visible: the tail below stays un-fanned, so the next
@@ -345,10 +386,11 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
         }
         if (!delivered) continue;
         _ = fanouts_total.fetchAdd(1, .monotonic);
+        // Only a peer that took the whole tail gets its cursor moved. A peer
+        // left behind keeps its old one, so the next push re-offers the tail it
+        // never received instead of reading an empty one and returning.
+        writeFanned(&store, arena, owner, peer.name, session_id, tip);
     }
-    store.setMeta("mesh_last_fanned", std.fmt.allocPrint(arena, "{d}", .{events[events.len - 1].seq}) catch "0") catch |err| {
-        fanoutFailed("record fan-out cursor", owner, "-", session_id, err);
-    };
 }
 
 pub fn backfill(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config) void {
@@ -476,6 +518,42 @@ test "a failed pull leaves the counter moved, so a silent peer is visible" {
     // otherwise see nothing at all.
     pullTranscript(io, gpa, arena, "http://127.0.0.1:1", owner, "session");
     try std.testing.expectEqual(before + 1, snapshotSyncMetrics().backfill_failures_total);
+}
+
+test "a fan-out cursor belongs to one peer, so a failed push never strands another" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/fanout-cursor.db", .{&env.tmp.sub_path});
+    var store = try session_events.Store.open(arena, try arena.dupeZ(u8, path));
+    defer store.close();
+    _ = try store.append(1000, session_events.EventKind.task, "{}");
+    _ = try store.append(1001, session_events.EventKind.assistant, "{}");
+    const tip = try store.lastSeq();
+    try std.testing.expectEqual(@as(i64, 2), tip);
+
+    // Nothing fanned yet: every peer is owed the whole stream.
+    try std.testing.expectEqual(@as(i64, 0), readFanned(&store, arena, "up"));
+    try std.testing.expectEqual(@as(i64, 0), readFanned(&store, arena, "down"));
+
+    // One peer took the tail. The other did not, and the record has to say so
+    // per peer: one shared cursor is what let an unreachable peer silently
+    // consume the fan-out owed to every other peer in the list.
+    writeFanned(&store, arena, "owner", "up", "sess", tip);
+    try std.testing.expectEqual(@as(i64, 2), readFanned(&store, arena, "up"));
+    try std.testing.expectEqual(@as(i64, 0), readFanned(&store, arena, "down"));
+
+    // The stranded peer is still owed the stream and the peer that took it is
+    // owed nothing, so `from >= tip` skips exactly one of them next push.
+    try std.testing.expect(readFanned(&store, arena, "down") < tip);
+    try std.testing.expect(!(readFanned(&store, arena, "up") < tip));
+
+    // A later turn does not move a cursor past what a peer never took.
+    _ = try store.append(1002, session_events.EventKind.assistant, "{}");
+    try std.testing.expect((try store.lastSeq()) > tip);
+    try std.testing.expectEqual(tip, readFanned(&store, arena, "up"));
+    try std.testing.expectEqual(@as(i64, 0), readFanned(&store, arena, "down"));
 }
 
 test "receive accepts appends at cursor+1, drops duplicates, and reports gaps" {
