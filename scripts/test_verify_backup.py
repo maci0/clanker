@@ -231,6 +231,48 @@ class VerifyBackupTest(unittest.TestCase):
             ["clanker-restore-verify.fresh00"],
         )
 
+    def test_unparseable_stale_bound_still_sweeps_and_only_warns(self) -> None:
+        # `$(( ... ))` on a non-numeric string is an expansion error, not an
+        # assignment error, so `set -e` does not catch it: an unvalidated bound
+        # would not fail the drill either, it would skip the sweep and let the
+        # garbage grow unbounded. So an unparseable bound warns and then
+        # behaves like the default. Zero is a different case, pinned next.
+        self.snapshot("20260901T120000Z", self.healthy_db())
+        scratch_parent = self.root / "restore-verify"
+        stale = scratch_parent / "clanker-restore-verify.stale00"
+        (stale / "state" / "sessions").mkdir(parents=True)
+        old = time.time() - 3 * DAY
+        os.utime(stale, (old, old))
+        result = self.run_verify(
+            env_extra={
+                "CLANKER_VERIFY_SCRATCH_DIR": str(scratch_parent),
+                "CLANKER_VERIFY_SCRATCH_STALE_HOURS": "not-a-number",
+            }
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("is not an hour count", result.stderr)
+        self.assertFalse(stale.exists(), "an unparseable bound skipped the sweep")
+
+    def test_zero_stale_bound_keeps_every_leftover_copy(self) -> None:
+        # CLANKER_BACKUP_RETENTION_DAYS=0 keeps every snapshot, so 0 means keep
+        # every copy here. It cannot be a bound of zero seconds: a leftover
+        # created a moment ago is younger than the cutoff then, and the sweep
+        # would delete a live drill's staging tree out from under it.
+        self.snapshot("20260901T120000Z", self.healthy_db())
+        scratch_parent = self.root / "restore-verify"
+        stale = scratch_parent / "clanker-restore-verify.stale00"
+        (stale / "state" / "sessions").mkdir(parents=True)
+        old = time.time() - 3 * DAY
+        os.utime(stale, (old, old))
+        result = self.run_verify(
+            env_extra={
+                "CLANKER_VERIFY_SCRATCH_DIR": str(scratch_parent),
+                "CLANKER_VERIFY_SCRATCH_STALE_HOURS": "0",
+            }
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(p.name for p in scratch_parent.iterdir()), [stale.name])
+
     def wait_for_scratch(self, scratch_parent: Path) -> bool:
         deadline = time.time() + 20
         while time.time() < deadline:

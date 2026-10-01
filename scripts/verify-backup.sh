@@ -133,11 +133,19 @@ check_freshness() {
             ;;
     esac
     local created age
+    # `|| created=""` plus the numeric case below, both load-bearing: `stat -c`
+    # is GNU and `stat -f` is BSD, and on a system with neither the last
+    # substitution fails non-zero while carrying its own stderr text on stdout.
+    # `set -e` does not stop on a failing *command substitution* inside an
+    # assignment, so the unvalidated string went straight into `$(( ... ))` and
+    # the drill died of an arithmetic error instead of reaching the warning.
     created=$(mtime_epoch "$snapshot") || created=""
-    if [ -z "$created" ]; then
-        printf 'warning: cannot read the age of %s; staleness unchecked\n' "$snapshot" >&2
-        return 0
-    fi
+    case "$created" in
+        ''|*[!0-9]*)
+            printf 'warning: cannot read the age of %s; staleness unchecked\n' "$snapshot" >&2
+            return 0
+            ;;
+    esac
     age=$(($(date +%s) - created))
     [ "$age" -lt 0 ] && age=0
     printf 'newest snapshot %s is %s old (bound %ss)\n' \
@@ -178,26 +186,56 @@ scratch=$(mktemp -d "${scratch_parent}/clanker-restore-verify.XXXXXXXXXX")
 # unit can send, so a drill cut off mid-restore still cleans up after itself.
 cleanup_scratch() { rm -rf -- "$scratch"; }
 trap cleanup_scratch EXIT
-# `exit` from the handler, not a re-raise: 143 is 128+SIGTERM, the status a
-# process killed by that signal reports, so the timer's journal records the
-# drill as signalled rather than as a pass. A re-raise of the signal the shell
-# is already handling does not terminate it (the default disposition is not
-# reapplied), which left the drill running after the unit's timeout.
-trap 'cleanup_scratch; exit 143' TERM INT HUP
+# `exit` from the handler, not a re-raise, and each signal reports its own
+# status: 128+signal is the convention, so TERM (15) is 143 and INT (2) is
+# 130, and the timer's journal then records which signal cut the drill off
+# rather than one number for all three. The reason for not re-raising is the
+# same in both handlers: a re-raise of the signal the shell is already handling
+# does not terminate it, because the default disposition is not reapplied,
+# which left the drill running past the unit's timeout.
+trap 'cleanup_scratch; exit 143' TERM
+trap 'cleanup_scratch; exit 130' INT
+trap 'cleanup_scratch; exit 129' HUP
+
+# Read before the sweep, not after its definition, because the sweep reads it:
+# it is input, and an arithmetic expansion on a non-numeric string is not an
+# assignment error under `set -e`, so an unvalidated bound does not fail the
+# drill either -- it skips the sweep, which is the one outcome the sweep exists
+# to prevent. Warn and fall back to the default; `0` skips the sweep outright,
+# as CLANKER_BACKUP_RETENTION_DAYS=0 keeps every snapshot.
+drill_stale_hours=${CLANKER_VERIFY_SCRATCH_STALE_HOURS:-48}
+case "$drill_stale_hours" in
+    0)
+        ;;
+    *[!0-9]*|'')
+        printf 'warning: CLANKER_VERIFY_SCRATCH_STALE_HOURS=%s is not an hour count; using the default\n' \
+            "$drill_stale_hours" >&2
+        drill_stale_hours=48
+        ;;
+esac
 
 # Leftovers from a drill this trap could not clean up (one that predates it, or
 # one SIGKILLed outright) are a full copy of the store each, and nothing else
 # reclaims them. Sweep any old enough that no live drill can still be writing
 # into one: this run's own scratch was created seconds ago, and a drill that
 # takes hours does not take days. The same age-bound reason, and the same
-# `stat -c`/`stat -f` split, the backup script uses for its staging sweep.
+# `stat -c`/`stat -f` split, the backup script uses for its staging sweep --
+# `mtime_epoch` above is that helper, so the two sweeps cannot spell it
+# differently.
 sweep_stale_scratch() {
     local dir mtime cutoff
+    # 0 keeps every copy, as CLANKER_BACKUP_RETENTION_DAYS=0 keeps every
+    # snapshot. It has to be the skip rather than a bound of zero seconds: a
+    # copy created a second ago is then older than the cutoff, and the sweep
+    # would delete a live drill's staging tree out from under it.
+    if [ "$drill_stale_hours" = 0 ]; then
+        return 0
+    fi
     cutoff=$(( $(date +%s) - drill_stale_hours * 3600 ))
     for dir in "$scratch_parent"/clanker-restore-verify.*; do
         [ -d "$dir" ] || continue
         [ "$dir" != "$scratch" ] || continue
-        mtime=$(stat -c %Y -- "$dir" 2>/dev/null || stat -f %m -- "$dir" 2>/dev/null || true)
+        mtime=$(mtime_epoch "$dir") || mtime=""
         case "$mtime" in
             ''|*[!0-9]*) continue ;;
         esac
@@ -206,7 +244,6 @@ sweep_stale_scratch() {
         printf 'pruned stale drill copy %s\n' "${dir##*/}" >&2
     done
 }
-drill_stale_hours=${CLANKER_VERIFY_SCRATCH_STALE_HOURS:-48}
 sweep_stale_scratch
 
 start=$(date +%s)

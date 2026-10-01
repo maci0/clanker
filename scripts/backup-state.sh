@@ -106,10 +106,14 @@ staging=$(mktemp -d "$backup_root/.${timestamp}.incomplete.XXXXXXXXXX")
 # run's stale sweep reached it (an hour later) it sat beside every good
 # snapshot, doubling the volume the backup lives on. `exit` from the handler
 # rather than a re-raise, because re-raising the signal the shell is already
-# handling does not terminate it; 143 is 128+SIGTERM, the status systemd
-# records for a signalled run.
-trap 'rm -rf -- "$staging"' EXIT
-trap 'rm -rf -- "$staging"; exit 143' TERM INT HUP
+# handling does not terminate it. The status is the signal's own, 128+signal
+# for the two systemd sends (SIGTERM 143, SIGINT 130); SIGHUP would read as the
+# 126 that is `command not found`, so it carries 129 instead.
+cleanup_staging() { rm -rf -- "$staging"; }
+trap cleanup_staging EXIT
+trap 'cleanup_staging; exit 143' TERM
+trap 'cleanup_staging; exit 130' INT
+trap 'cleanup_staging; exit 129' HUP
 
 # Every SQLite database in the store is WAL-mode (`src/util/sqlite.zig` sets
 # journal_mode=WAL on open) and stays open for the life of a serve/repl: one
