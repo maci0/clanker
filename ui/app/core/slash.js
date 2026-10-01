@@ -1,5 +1,15 @@
 // Composer slash commands. The catalog is commands/slash.json, served at
 // /webui/commands/slash.json so adding a command is a data edit.
+//
+// The catalog is fetched on first use, not at module scope. It used to be
+// fetched from the module body's last line, which is module *evaluation*: the
+// browser is still pulling the 32-module eager graph over an HTTP/1.1
+// six-connection pool at that moment, and this one request took a connection
+// away from modules nothing renders without. Nothing paints from the catalog
+// either — it is read only while someone types `/` in the composer, which is
+// long after first draw — so the eager request bought nothing and cost a slot
+// in the queue that gates interactivity. `slashReady()` is idempotent and
+// memoized, so the later caller gets the same single fetch.
 
 export var SLASH_CMDS = [];
 
@@ -26,8 +36,6 @@ export function slashReady() {
 
   return _promise;
 }
-
-slashReady();
 
 export function runSlashEntry(entry, arg, ctx) {
   if (!entry) { return; }

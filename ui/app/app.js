@@ -5111,7 +5111,6 @@ function runSlashModel(arg) {
   mpOpen(document.getElementById("composer-model") || document.getElementById("header-model"));
 }
 var slashCtx = { showView, runModel: runSlashModel };
-slashReady();
 function slashQuery(){
   var v = el.task.value;
   if (v.charAt(0) !== "/") return null;
@@ -5120,9 +5119,17 @@ function slashQuery(){
   var rest = sp===-1 ? "" : v.slice(sp+1);
   return { head: head.toLowerCase(), rest, raw: v };
 }
+/* The catalog loads on first use, so it can still be in flight the first time
+   someone types `/`: draw now off what is loaded, redraw once it settles. The
+   list must have grown — a failed fetch settles the memo with an empty list
+   forever, and redrawing off that would spin the microtask queue. */
+function drawSlashListWhenReady(){
+  if (SLASH_CMDS.length && slashQuery()) renderSlashList();
+}
 function renderSlashList(){
   var q = slashQuery();
   if (!q) { hideSlashList(); return; }
+  if (!SLASH_CMDS.length) slashReady().then(drawSlashListWhenReady, drawSlashListWhenReady);
   var matches = SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q.head) === 0; });
   // also match /model sub-query against provider list for hint
   el.promptList.textContent = "";
@@ -5220,8 +5227,15 @@ el.task.addEventListener("keydown", function (e) {
       return;
     }
     if (list === "slash") {
-      var q2=slashQuery(); var m=SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head)===0; })[at];
-      if(m) useSlash(m, q2.rest);
+      var q2 = slashQuery();
+      var pick = function () {
+        var m = SLASH_CMDS.filter(function(c){ return c.cmd.indexOf(q2.head) === 0; })[at];
+
+        if (m) useSlash(m, q2.rest);
+      };
+
+      if (SLASH_CMDS.length) pick();
+      else slashReady().then(pick, pick);
     } else {
       usePrompt(items[at].querySelector(".palette-label").textContent);
     }
