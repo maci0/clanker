@@ -14,6 +14,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the task text to agree, and a string id is no longer the same key as the
   integer with the same spelling.
 
+### Changed
+
+- HTTP API: a wrong method on a known route answers `405 Method Not Allowed`
+  with an `Allow` header naming the methods it takes, instead of the bare 404
+  an unknown URL gets. HEAD requests are unchanged.
+- `POST /api/knowledge/<id>/sync`: the reply carries `unindexed` (only when
+  nonzero) counting documents stored but missing from the search index. The
+  `knowledge` tool's `add_doc` reply now includes `indexed`, plus
+  `index_error` when the index write failed.
+
 ## [0.11.1] - 2026-09-29
 
 ### Security
