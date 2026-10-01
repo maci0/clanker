@@ -18,6 +18,7 @@ const log = @import("util/log.zig");
 const toml_bridge = @import("util/toml_bridge.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const utf8 = @import("util/utf8.zig");
+const env_names = @import("util/env_name.zig");
 const models_dev = @import("llm/models_dev.zig");
 const llm_registry = @import("llm/registry.zig");
 const acp_vendor = @import("acp/vendor.zig");
@@ -806,6 +807,15 @@ pub fn intFromFloatChecked(f: f64) ?i64 {
 pub fn firstToolsDir(dirs: []const []const u8) []const u8 {
     return if (dirs.len > 0) dirs[0] else "tools/manifests";
 }
+
+/// A config key that names a secret's source holds an *environment variable
+/// name*, so it has to be one a shell can actually export. `environ_map.get`
+/// answers null for a name that cannot exist, and this file's consumers treat
+/// null as "no secret configured" rather than as a bad config, so a typo like
+/// `proxy_token_env = "CLANKER PROXY TOKEN"` silently turns a token-protected
+/// proxy into an unauthenticated one. The rule itself lives in `util` because
+/// the `.env` loader, which *defines* those names, has to apply the same one.
+pub const isEnvVarName = env_names.isEnvVarName;
 
 /// Comma-separated `tools_dir` list for diagnostics. One entry is returned
 /// as-is so existing single-directory messages stay unchanged.
@@ -2121,8 +2131,12 @@ pub const Config = struct {
         }
         if (obj.get("api_key_env")) |k| {
             const env_name = try jsonStr(k, "api_key_env");
-            if (env_name.len == 0) {
-                cfgLog(.error_, "provider '{s}': \"api_key_env\" must name a non-empty environment variable", .{name});
+            // Same rule as [serve].proxy_token_env: a name no shell can
+            // export reads as a provider with no credential, and the first
+            // sign is a 401 from the upstream provider on the first chat
+            // request rather than anything naming this line.
+            if (!isEnvVarName(env_name)) {
+                cfgLog(.error_, "provider '{s}': \"api_key_env\" must name an environment variable (letters, digits, '_', '.' and '-' only)", .{name});
                 return error.ApiKeyEnvEmpty;
             }
             p.api_key_env = env_name;
@@ -2582,7 +2596,18 @@ pub const Config = struct {
             f.proxy_port = true;
         }
         if (obj.get("proxy_token_env")) |k| {
-            s.proxy_token_env = try jsonStr(k, "proxy_token_env");
+            const env_name = try jsonStr(k, "proxy_token_env");
+            // A name nothing can export is the one spelling of this key that
+            // does not protect anything: `proxy.token` resolves it, finds
+            // nothing, and the request site serves the proxy unauthenticated
+            // while the startup warning reports a *variable* that is unset.
+            // Refused here, beside the empty-`host` check, so the failure is
+            // a config error naming the key rather than an open proxy.
+            if (!isEnvVarName(env_name)) {
+                cfgLog(.error_, "[serve].proxy_token_env '{s}' is not an environment variable name (letters, digits, '_', '.' and '-' only); a name nothing can export leaves the proxy unauthenticated", .{env_name});
+                return error.ServeProxyTokenEnvInvalid;
+            }
+            s.proxy_token_env = env_name;
             f.proxy_token_env = true;
         }
         if (obj.get("proxy_aliases")) |k| {
@@ -5861,6 +5886,48 @@ test "a set-to-empty provider name or bind host is refused, not read as unset" {
         ,
     });
     try std.testing.expectError(error.ServeHostEmpty, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "a serve.proxy_token_env that can never name an environment variable is rejected at load" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    // The request site resolves this name with `environ_map.get`, and the
+    // startup warning reads the same resolver, so a name no shell can export
+    // does not refuse the proxy: it silently answers null on every request
+    // and the proxy serves unauthenticated. The operator who typed it was
+    // told a *variable* was not set, naming one that cannot exist.
+    for ([_][]const u8{ "", "CLANKER PROXY TOKEN", "CLANKER_PROXY_TOKEN=x", "CLANKER$PROXY" }) |bad_name| {
+        var buf: [512]u8 = undefined;
+        const text = try std.fmt.bufPrint(
+            &buf,
+            "default_provider = \"a\"\n" ++
+                "providers = {{ a = {{ base_url = \"https://a.test\" }} }}\n" ++
+                "models = {{ \"a/m\" = {{ provider = \"a\" }} }}\n" ++
+                "[serve]\n" ++
+                "proxy_token_env = \"{s}\"\n",
+            .{bad_name},
+        );
+        try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = text });
+        try std.testing.expectError(error.ServeProxyTokenEnvInvalid, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+    }
+
+    // The documented name still loads, so the check is about what can be
+    // exported and not about refusing the feature.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[serve]
+        \\proxy_token_env = "CLANKER_PROXY_TOKEN"
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("CLANKER_PROXY_TOKEN", cfg.serve.proxy_token_env.?);
 }
 
 test "a negative max_tokens is rejected instead of wrapping into a huge cap" {

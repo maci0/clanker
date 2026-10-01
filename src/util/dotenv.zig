@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const log = @import("log.zig");
+const env_name = @import("env_name.zig");
 
 /// Ceiling on the `.env` file (or its `CLANKER_ENV_FILE` override). Past
 /// this the file is refused rather than truncated, so a runaway file cannot
@@ -63,6 +64,17 @@ fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Env
         const key = std.mem.trim(u8, line[0..eq], " \t");
         if (key.len == 0) {
             log.log(.warn, "{s}:{d}: assignment has an empty key, skipped", .{ file_name, line_no });
+            continue;
+        }
+        // A key no shell can export is a line the operator believes set a
+        // secret and did not: the process environment accepts any string, so
+        // this one would be readable here and unreachable from every child
+        // process, a tool, or the next launch from a real shell. Named the
+        // same way as the other malformed lines rather than loaded in
+        // silence. The rule is `util/env_name`, shared with the config keys
+        // that name a secret's source.
+        if (!env_name.isEnvVarName(key)) {
+            log.log(.warn, "{s}:{d}: '{s}' is not an environment variable name a shell can export, skipped", .{ file_name, line_no, key });
             continue;
         }
         const raw_value = line[eq + 1 ..];
@@ -241,6 +253,7 @@ test "dotenv names a malformed line and still loads the rest of the file" {
         \\this line has no equals sign
         \\=orphan value
         \\HALF="unterminated
+        \\BAD KEY=value
         \\LAST=last
     });
 
@@ -255,6 +268,10 @@ test "dotenv names a malformed line and still loads the rest of the file" {
     try std.testing.expectEqualStrings("first", env.get("GOOD").?);
     try std.testing.expectEqualStrings("last", env.get("LAST").?);
     try std.testing.expectEqualStrings("\"unterminated", env.get("HALF").?);
+    // A key no shell could export must not be loaded: the process
+    // environment would answer for it here and no child or next launch
+    // would ever see it.
+    try std.testing.expect(env.get("BAD KEY") == null);
     const lines = capture.text();
     try std.testing.expect(std.mem.indexOf(u8, lines, ".env:2:") != null);
     try std.testing.expect(std.mem.indexOf(u8, lines, "not KEY=VALUE") != null);
@@ -262,6 +279,8 @@ test "dotenv names a malformed line and still loads the rest of the file" {
     try std.testing.expect(std.mem.indexOf(u8, lines, "empty key") != null);
     try std.testing.expect(std.mem.indexOf(u8, lines, ".env:4:") != null);
     try std.testing.expect(std.mem.indexOf(u8, lines, "never closes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, ".env:5:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lines, "shell can export") != null);
 }
 
 test "a quoted value closes, so it is not reported as unterminated" {

@@ -678,7 +678,11 @@ A second process on the same host uses another `id`, `listen_port`,
   listener with `/v1` at the root. `proxy_token_env` names an env var holding
   a local token (never a secret in TOML); a variable that is unset *or set to
   empty* means no token, so the proxy serves unauthenticated and warns at
-  startup when bound to a non-loopback host. `proxy_aliases` maps client-facing
+  startup when bound to a non-loopback host. A name that is not one a shell
+  can export (empty, or holding anything but letters, digits, `_`, `.` and
+  `-`) is refused at load instead, because it resolves to nothing and would
+  leave the proxy open while the warning reported an unset variable; the same
+  rule applies to a provider's `api_key_env`. `proxy_aliases` maps client-facing
   model names to configured `provider/model` ids. `proxy_first_byte_timeout_s`
   and `proxy_idle_timeout_s` default to 300 and 60 seconds respectively; `0`
   disables either ceiling. The weakest of three layers:

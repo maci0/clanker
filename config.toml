@@ -397,7 +397,9 @@ id = "main"
 # its own: the Host and Origin guards are all that hold it. `clanker doctor`
 # reports a broad bind, a proxy mounted on one without a working
 # proxy_token_env, and a `web.allow` of ["*"] in its network exposure section.
-# An empty `host` is refused at load, not read as "unset".
+# An empty `host` is refused at load, not read as "unset", and so is a
+# `proxy_token_env` that is not a name a shell can export: it would resolve
+# to nothing and leave the proxy serving without auth.
 # [serve]
 # host = "0.0.0.0"
 # webui_port = 17921
