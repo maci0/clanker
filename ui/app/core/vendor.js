@@ -106,18 +106,22 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
   /* No target meant "Copy unavailable" and no way onward, on a path plain
      http reaches every time: the clipboard API is withheld there. A value
      with no visible node gets one parked offscreen, so the hand-off to the
-     reader's own Ctrl+C is the same whatever they clicked. */
-  const parkedField = () => {
+     reader's own Ctrl+C is the same whatever they clicked. A range selects
+     nothing inside an input, and Ctrl+C copies an input's text only while it
+     has focus, so the field is focused and selected, labelled for the screen
+     reader that lands on it, and removed when focus leaves it. */
+  const selectParkedField = () => {
     const field = document.createElement("input");
 
     field.className = "sr-only";
-    field.setAttribute("aria-hidden", "true");
+    field.readOnly = true;
+    field.setAttribute("aria-label", String(restoreLabel));
     field.tabIndex = -1;
     field.value = String(text);
+    field.addEventListener("blur", () => { field.remove(); });
     document.body.append(field);
-    globalThis.setTimeout(() => { field.remove(); }, 1600);
-
-    return field;
+    field.focus({ preventScroll: true });
+    field.select();
   };
 
   function selectInstead() {
@@ -126,11 +130,17 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
     if (selection === null) {
       btn.textContent = "Copy unavailable";
     } else {
-      const range = document.createRange();
-
-      range.selectNodeContents(selectTarget ?? parkedField());
       selection.removeAllRanges();
-      selection.addRange(range);
+
+      if (selectTarget !== null && selectTarget !== undefined) {
+        const range = document.createRange();
+
+        range.selectNodeContents(selectTarget);
+        selection.addRange(range);
+      } else {
+        selectParkedField();
+      }
+
       btn.textContent = "Selected: press Ctrl+C";
     }
 

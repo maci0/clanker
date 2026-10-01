@@ -10,7 +10,7 @@ import { afterEach, expect, test } from "bun:test";
 import { copyText } from "./vendor.js";
 
 /**
- * @typedef {{ attrs: Record<string, string>, className?: string, remove: () => void, removed?: boolean, setAttribute: (key: string, value: string) => void, tabIndex?: number, value?: string }} FakeNode
+ * @typedef {{ addEventListener: (type: string, fn: () => void) => void, attrs: Record<string, string>, className?: string, focus: (options?: { preventScroll?: boolean }) => void, focused?: boolean, listeners: Record<string, () => void>, readOnly?: boolean, remove: () => void, removed?: boolean, select: () => void, selected?: boolean, setAttribute: (key: string, value: string) => void, tabIndex?: number, value?: string }} FakeNode
  * @typedef {{ writeText: (text: string) => Promise<void> }} FakeClipboard
  */
 
@@ -68,8 +68,16 @@ const globals = {
         body: { append: () => undefined },
         createElement: () => {
           created.push({
+            /**
+             * @param {string} type Event name.
+             * @param {() => void} fn Its listener.
+             */
+            addEventListener(type, fn) { this.listeners[type] = fn; },
             attrs: {},
+            focus() { this.focused = true; },
+            listeners: {},
             remove() { this.removed = true; },
+            select() { this.selected = true; },
             /**
              * @param {string} key Attribute name.
              * @param {string} value Attribute value.
@@ -105,13 +113,15 @@ test("a copy with nothing to select still hands the reader the value", () => {
 
   // The label must offer a way onward, not a dead end.
   expect(btn.textContent).toBe("Selected: press Ctrl+C");
-  // The value must be put on the clipboard path the reader can take.
-  expect(env.selection.added).toBe(env.range);
   // A stale selection would replace the new one.
   expect(env.selection.removed).toBe(true);
+  /* A range selects nothing inside an input, and Ctrl+C copies an input's
+     text only while it has focus: the field itself must be focused and selected. */
+  expect(env.created[0]).toMatchObject({ focused: true, selected: true });
+  expect(env.range.target).toBeUndefined();
 });
 
-test("the parked field is hidden from assistive tech and taken back off the page", () => {
+test("the parked field holds the value, is labelled, and leaves the page with focus", () => {
   const btn = { textContent: "Copy link" },
     env = globals.fakeDom({ secure: false });
 
@@ -120,16 +130,20 @@ test("the parked field is hidden from assistive tech and taken back off the page
   // A value with no visible node needs one to select, holding the value itself.
   expect(env.created).toHaveLength(1);
   expect(env.created[0]).toMatchObject({
-    attrs: { "aria-hidden": "true" },
+    attrs: { "aria-label": "Copy link" },
     className: "sr-only",
+    readOnly: true,
     tabIndex: -1,
     value: "https://example.test/#knowledge/k1",
   });
-  expect(env.range.target).toBe(env.created[0]);
 
-  // The field has to be reclaimed, or every copy leaks a node.
+  // The selection must outlive the label, or a slow Ctrl+C copies nothing.
   for (const fn of env.timers) { fn(); }
 
+  expect(env.created[0]).not.toHaveProperty("removed");
+
+  // The field has to be reclaimed, or every copy leaks a node.
+  env.created[0].listeners.blur();
   expect(env.created[0]).toHaveProperty("removed", true);
 });
 

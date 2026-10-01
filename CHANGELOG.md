@@ -24,6 +24,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `knowledge` tool's `add_doc` reply now includes `indexed`, plus
   `index_error` when the index write failed.
 
+### Fixed
+
+- Copy buttons select and focus the labelled fallback input when the Clipboard API is unavailable. The input is removed when focus leaves it.
+
 ## [0.11.1] - 2026-09-29
 
 ### Security
