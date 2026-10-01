@@ -16806,7 +16806,13 @@ fn handleMeshMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
 
     var rooms: []const mesh.MapRoom = &.{};
     if (cfg.modules.chatrooms) {
-        const listed = chatrooms.listRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch &.{};
+        // An unreadable chat log is not "this mesh has no rooms": the map
+        // would show an empty Fleet with nothing saying why.
+        const listed = chatrooms.listRooms(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg) catch |err| {
+            log.log(.error_, "GET /api/mesh/map: chat room list failed: {s}", .{@errorName(err)});
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"mesh map failed\"}");
+            return;
+        };
         var mapped: std.ArrayList(mesh.MapRoom) = .empty;
         for (listed) |r| {
             mapped.append(arena, .{

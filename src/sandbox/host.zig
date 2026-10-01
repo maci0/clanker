@@ -2656,12 +2656,23 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         // everything older than the newest page and folds a partial log.
         var msgs: []const chatrooms_mod.Message = undefined;
         var has_more = false;
+        // `Err.invalid` here would tell the caller it named its arguments
+        // wrong, which it did not: `LogUnreadable` is the host failing to read
+        // the room log, and the chat guest answers every non-ok code alike,
+        // so say it in the log rather than in a code the model reads as
+        // "your call was malformed".
         if (parsed.oldest orelse false) {
-            const asc = chatrooms_mod.readHistoryAsc(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size) catch return Err.invalid;
+            const asc = chatrooms_mod.readHistoryAsc(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size) catch |err| {
+                log.log(.warn, "[chat] history: room={s} oldest={s}", .{ room, @errorName(err) });
+                return Err.invalid;
+            };
             msgs = asc.msgs;
             has_more = asc.has_more;
         } else {
-            const page = chatrooms_mod.readHistory(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size + 1) catch return Err.invalid;
+            const page = chatrooms_mod.readHistory(base, h.sandbox.io, arena, state_dir, cfg, room, after, chat_history_page_size + 1) catch |err| {
+                log.log(.warn, "[chat] history: room={s} oldest={s}", .{ room, @errorName(err) });
+                return Err.invalid;
+            };
             has_more = page.len > chat_history_page_size;
             msgs = page[0..@min(page.len, chat_history_page_size)];
         }
@@ -2706,7 +2717,10 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         s.endObject() catch return Err.too_large;
         return h.writeResult(bytes, out_buf[0..w.end]);
     } else if (std.mem.eql(u8, op, "rooms")) {
-        const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
+        const rooms = chatrooms_mod.listRooms(base, h.sandbox.io, arena, state_dir, cfg) catch |err| {
+            log.log(.warn, "[chat] rooms list failed: {s}", .{@errorName(err)});
+            return Err.invalid;
+        };
         const subs = chatrooms_mod.subscribedRooms(base, h.sandbox.io, arena, state_dir, cfg) catch return Err.invalid;
         // Load room metadata for topics
         const meta = chatrooms_mod.loadMeta(base, h.sandbox.io, arena, state_dir) catch std.json.ArrayHashMap(chatrooms_mod.RoomMeta){};

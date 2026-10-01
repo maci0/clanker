@@ -71,9 +71,29 @@ fn statusRetires(status: []const u8) bool {
     return std.mem.eql(u8, status, "archived") or std.mem.eql(u8, status, "abandoned");
 }
 
-pub fn read(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) []Entry {
-    const raw = dir.readFileAlloc(io, registry_path, arena, .limited(1 << 20)) catch return &.{};
-    return std.json.parseFromSliceLeaky([]Entry, arena, raw, .{ .ignore_unknown_fields = true }) catch &.{};
+/// The registry as it stands. A missing file is a registry with no rows, which
+/// is what a first run has; every other failure (unreadable, past the cap, not
+/// JSON) is returned as the error it is, so a caller that rewrites the file
+/// can refuse instead of writing an empty registry over rows it never read.
+/// Both used to answer `&.{}`, and `register`'s
+/// read-modify-write plus `reconcile`'s rewrite each replaced a corrupt or
+/// momentarily-unreadable registry with a one-row file: every other
+/// worktree's row gone, with the loss reported as nothing at all.
+pub fn read(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![]Entry {
+    const raw = dir.readFileAlloc(io, registry_path, arena, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => return err,
+    };
+    return std.json.parseFromSliceLeaky([]Entry, arena, raw, .{ .ignore_unknown_fields = true });
+}
+
+/// `read` for the callers that only render, where a registry that cannot be
+/// read is no rows plus a line naming the file, not a wrong answer.
+fn readBestEffort(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) []Entry {
+    return read(io, dir, arena) catch |err| {
+        log.log(.warn, "could not read {s} ({s}); reporting no worktrees", .{ registry_path, @errorName(err) });
+        return &.{};
+    };
 }
 
 fn write(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator, entries: []const Entry) !void {
@@ -93,8 +113,12 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, entry: Entr
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    // The write below is read-modify-write over every row, so a failed read is
+    // not "there was nothing registered": it would drop every other worktree's
+    // row. Refuse, and say the row is unregistered.
+    const existing = read(io, dir, arena) catch |err| return log.log(.warn, "worktree {s} could not be recorded: {s} could not be read ({s}), and writing over it would drop the rows it holds", .{ entry.path, registry_path, @errorName(err) });
     var list: std.ArrayList(Entry) = .empty;
-    for (read(io, dir, arena)) |e| {
+    for (existing) |e| {
         // Re-registering a path replaces it rather than appending: the ids are
         // timestamps, but a re-run against a reused path should not leave two
         // rows disagreeing about which goal owns it.
@@ -182,7 +206,13 @@ pub fn reconcile(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, apply: boo
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const entries = read(io, dir, arena);
+    // A registry that cannot be read is not one with no rows: the rewrite at
+    // the end would replace every row it holds with a partial one. Report
+    // nothing retired and leave the file alone.
+    const entries = read(io, dir, arena) catch |err| {
+        log.log(.warn, "could not read {s} ({s}); no worktree was retired and the registry was left untouched", .{ registry_path, @errorName(err) });
+        return .{};
+    };
     if (entries.len == 0) return .{};
 
     var statuses: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -288,7 +318,7 @@ pub fn countUnregistered(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) us
     var d = dir.openDir(io, container, .{ .iterate = true }) catch return 0;
     defer d.close(io);
 
-    const rows = read(io, dir, arena);
+    const rows = readBestEffort(io, dir, arena);
     var n: usize = 0;
     var it = d.iterate();
     while (it.next(io) catch null) |ent| {
@@ -332,6 +362,55 @@ test "validBranchName refuses what git would read as a flag or a bad ref" {
     try std.testing.expect(!validBranchName("a/"));
 }
 
+test "a registry that cannot be read is never rewritten over" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    register(std.testing.allocator, io, env.tmp.dir, .{
+        .path = "/wt/1",
+        .branch = "clanker/run-1",
+        .base_branch = "main",
+        .goal_id = "g1",
+        .created = 1,
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try read(io, env.tmp.dir, arena)).len);
+
+    // A directory where the registry is: present, unreadable as a file, and
+    // not the missing file that legitimately reads as no rows.
+    try env.tmp.dir.deleteFile(io, registry_path);
+    try env.tmp.dir.createDirPath(io, registry_path);
+    try std.testing.expectError(error.IsDir, read(io, env.tmp.dir, arena));
+
+    // Both read-modify-write paths refuse rather than replacing the rows they
+    // could not read with their own view of an empty registry.
+    register(std.testing.allocator, io, env.tmp.dir, .{
+        .path = "/wt/2",
+        .branch = "clanker/run-2",
+        .base_branch = "main",
+        .goal_id = "g2",
+        .created = 2,
+    });
+    const out = reconcile(std.testing.allocator, io, env.tmp.dir, true);
+    try std.testing.expectEqual(@as(usize, 0), out.actionable());
+
+    // And a registry that will not parse is refused the same way, so a
+    // half-written file is repaired by a human rather than overwritten.
+    try env.tmp.dir.deleteTree(io, registry_path);
+    try env.tmp.dir.writeFile(io, .{ .sub_path = registry_path, .data = "{not json" });
+    try std.testing.expectError(error.UnexpectedToken, read(io, env.tmp.dir, arena));
+    register(std.testing.allocator, io, env.tmp.dir, .{
+        .path = "/wt/3",
+        .branch = "clanker/run-3",
+        .base_branch = "main",
+        .goal_id = "g3",
+        .created = 3,
+    });
+    const after = try env.tmp.dir.readFileAlloc(io, registry_path, arena, .limited(4096));
+    try std.testing.expectEqualStrings("{not json", after);
+}
+
 test "register replaces a row for the same path instead of appending" {
     var env: test_env.Env = .init();
     defer env.deinit();
@@ -361,7 +440,7 @@ test "register replaces a row for the same path instead of appending" {
         .created = 3,
     });
 
-    const rows = read(io, env.tmp.dir, arena);
+    const rows = try read(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 2), rows.len);
     // Order is preserved apart from the replaced row, which moves to the end.
     try std.testing.expectEqualStrings("/wt/2", rows[0].path);
@@ -406,7 +485,7 @@ test "reconcile classifies by goal status and drops rows whose worktree is gone"
     try std.testing.expectEqual(@as(usize, 0), out.actionable());
 
     // The vanished row is dropped; the other three survive the rewrite.
-    const rows = read(io, env.tmp.dir, arena);
+    const rows = try read(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), rows.len);
 }
 
@@ -445,7 +524,7 @@ test "reconcile never de-registers a live worktree when an allocation fails" {
         defer arena_state.deinit();
         for ([_][]const u8{ "live", "none", "missing-goal" }) |path| {
             var found = false;
-            for (read(io, tmp.dir, arena_state.allocator())) |row|
+            for (try read(io, tmp.dir, arena_state.allocator())) |row|
                 if (std.mem.eql(u8, row.path, path)) {
                     found = true;
                 };

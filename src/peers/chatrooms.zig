@@ -124,6 +124,26 @@ fn readLog(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []
     return base.readFileAlloc(io, path, arena, .limited(logReadCap(cfg.chatrooms.max_history)));
 }
 
+/// The log a read-side caller answers from. A missing log is genuinely empty
+/// and reads as one; every other failure is a read that never happened, so it
+/// is reported as `error.LogUnreadable` rather than as an empty room, board
+/// or history page.
+///
+/// The three `catch return <empty>` calls this replaced answered a failed read
+/// as "no messages" and "no rooms". `readNew` keeps its own shape (an
+/// unreadable inbox must not move the cursor) and reports the same failure in
+/// its own log line.
+fn readLogForRead(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![]u8 {
+    return readLog(base, io, arena, state_dir, cfg) catch |err| switch (err) {
+        // Nothing to find a message in is a real "no such message".
+        error.FileNotFound => &.{},
+        else => {
+            log.log(.warn, "[chat] {s} in '{s}' could not be read ({s}); answering no messages rather than none", .{ log_path, state_dir, @errorName(err) });
+            return error.LogUnreadable;
+        },
+    };
+}
+
 pub const Reaction = struct {
     emoji: []const u8,
     from: []const u8,
@@ -256,7 +276,7 @@ fn parseLog(arena: std.mem.Allocator, raw: []const u8, out: *std.ArrayList(Messa
 
 /// Newest-first messages in `room` with ts > `after`, limited to `limit`.
 pub fn readHistory(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, after: i64, limit: usize) ![]Message {
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]Message{};
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     var out: std.ArrayList(Message) = .empty;
     if (limit == 0) return out.toOwnedSlice(arena);
     // Walk lines from the end and stop at `limit`. Parsing every record
@@ -290,7 +310,7 @@ pub const AscPage = struct { msgs: []Message = &.{}, has_more: bool = false };
 /// `ts > after` (timestamps are seconds, so a burst shares one), and cutting
 /// a timestamp group mid-way would skip its remainder on the next page.
 pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, room: []const u8, after: i64, limit: usize) !AscPage {
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return .{};
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     if (limit == 0) return .{};
     var out: std.ArrayList(Message) = .empty;
     // Keep only this room's page candidates. The log is shared across every
@@ -321,7 +341,7 @@ pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, st
 
 /// Aggregate stats per room, newest-first by last activity.
 pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![]RoomInfo {
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]RoomInfo{};
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     // Folded line by line through a scratch arena rather than parsed into
     // `arena`: the answer is one row per room, but the log holds up to
     // `max_history` messages at `max_text_len` each (~5 MiB at the defaults),
@@ -629,7 +649,7 @@ pub fn toggleReaction(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -676,7 +696,7 @@ pub fn editMessage(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -709,7 +729,7 @@ pub fn deleteMessage(
     const lock_path = try subPath(arena, state_dir, lock_file_name);
     const lock = acquireChatroomLock(io, base, lock_path);
     defer if (lock) |f| f.close(io);
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return error.NotFound;
+    const raw = try readLogForRead(base, io, arena, state_dir, cfg);
     var messages: std.ArrayList(Message) = .empty;
     try parseLog(arena, raw, &messages);
 
@@ -2107,6 +2127,53 @@ test "edit, delete and react distinguish missing from not-owner" {
     try std.testing.expectError(error.NotFound, deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
     try std.testing.expectError(error.NotOwner, deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
     try deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
+}
+
+test "an unreadable chatrooms log reads as a failed read, not as an empty room" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "alice";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    _ = try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "alice",
+        .text = "mine",
+        .ts = 1,
+        .id = "m1",
+    });
+
+    // A directory where the log is: present, unreadable as a file, and not
+    // the missing file the readers legitimately read as empty.
+    try env.tmp.dir.deleteFile(io, log_path);
+    try env.tmp.dir.createDirPath(io, log_path);
+
+    // Every reader used to answer "no messages" / "no rooms" here, which is
+    // exactly what an operator sees when the log is intact and unreadable.
+    try std.testing.expectError(error.LogUnreadable, readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50));
+    try std.testing.expectError(error.LogUnreadable, readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50));
+    try std.testing.expectError(error.LogUnreadable, listRooms(env.tmp.dir, io, arena, "", &cfg));
+
+    // A mutation is not "no such message" either: the message is in the log,
+    // the log is what could not be read.
+    try std.testing.expectError(error.LogUnreadable, editMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "alice"));
+    try std.testing.expectError(error.LogUnreadable, deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice"));
+    try std.testing.expectError(error.LogUnreadable, toggleReaction(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "\u{1F44D}", "alice"));
+
+    // The inbox keeps its own answer (an unreadable log must not move the
+    // cursor, so every retained message comes back as new next run) and a
+    // missing log is still an empty room.
+    try std.testing.expectEqual(@as(usize, 0), (try readNew(env.tmp.dir, io, arena, "", &cfg, .{ .ts = 0 })).len);
+    try env.tmp.dir.deleteTree(io, log_path);
+    try std.testing.expectEqual(@as(usize, 0), (try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try listRooms(env.tmp.dir, io, arena, "", &cfg)).len);
+    try std.testing.expectError(error.NotFound, editMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "alice"));
 }
 
 test "an unreadable room_meta.json refuses the write instead of erasing the other rooms" {
