@@ -493,6 +493,26 @@ test("rooms message actions stay visible without hover", function () {
   assert.match(app, /CHAT_ACTIONS_CLASS/);
 });
 
+test("the channel topic is a keyboard control, not a clickable span", function () {
+  // Setting a topic is an action, so the control that does it has to be a
+  // control. It was a <span> with an onclick and nothing else: no role, no tab
+  // stop, no key handler, so the task was reachable by mouse only and a screen
+  // reader heard a text run rather than an action.
+  const tag = /<(span|button)\b[^>]*id="chat-channel-topic"/.exec(html);
+  assert.ok(tag, "no element carries the channel topic id");
+  assert.equal(tag[1], "button", "the channel topic must be a <button>, not a styled span");
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  // A real <button> answers Enter and Space itself, so the keyboard half is
+  // the markup rather than a second answer to the same key. What the script
+  // owes it is a name and a DM that is not a focusable control.
+  assert.match(app, /node\.setAttribute\("aria-label", dm \? "" : \(topic \? "Change channel topic: "/);
+  assert.match(app, /node\.onclick = dm \? null : setChannelTopic/);
+  assert.match(app, /node\.disabled = dm;/);
+  // Opening a room and setting its topic both draw the control through the one
+  // function, so the announced label cannot drift from the text on screen.
+  assert.match(app, /renderChannelTopic\(room\)/);
+});
+
 test("rooms channel rows are 44px on coarse pointers", function () {
   // The row is utilities now, so the guard is a variant on it rather than a
   // media block: `pointer-coarse:` compiles to `@media (pointer: coarse)`.

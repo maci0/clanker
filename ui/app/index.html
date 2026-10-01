@@ -544,7 +544,14 @@ tokens and the rules.
           <div class="flex min-w-0 flex-1 items-center gap-2">
             <button type="button" class="icon-btn hidden cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base text-fg-muted hover:bg-surface-2 hover:text-fg max-[768px]:inline-flex" id="chat-sidebar-toggle" title="Show channels" aria-label="Show channels" aria-controls="chat-sidebar" aria-expanded="false"></button>
             <span class="text-base font-bold whitespace-nowrap" id="chat-channel-title">Loading…</span>
-            <span class="ml-1 min-w-0 cursor-pointer overflow-hidden border-l border-rule pl-2 text-sm text-ellipsis whitespace-nowrap text-fg-muted hover:text-fg hover:underline hover:decoration-dotted data-[placeholder=true]:italic max-[768px]:whitespace-normal max-[768px]:[-webkit-line-clamp:2] max-[768px]:[display:-webkit-box] max-[768px]:[-webkit-box-orient:vertical]" id="chat-channel-topic"></span>
+            <!-- A control, not a styled span: setting a channel topic is an
+                 action, and a click handler on a span is mouse-only, so the
+                 task was unreachable by keyboard and a screen reader heard a
+                 text run rather than an action. A real <button> answers Enter
+                 and Space itself, so the keyboard half needs no key handler;
+                 app.js sets the name and disables it on a DM, which has no
+                 topic. -->
+            <button type="button" class="ml-1 min-w-0 cursor-pointer overflow-hidden border-0 border-l border-rule bg-transparent py-0 pl-2 text-left text-sm text-ellipsis whitespace-nowrap text-fg-muted hover:text-fg hover:underline hover:decoration-dotted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 data-[placeholder=true]:italic max-[768px]:whitespace-normal max-[768px]:[-webkit-line-clamp:2] max-[768px]:[display:-webkit-box] max-[768px]:[-webkit-box-orient:vertical]" id="chat-channel-topic"></button>
           </div>
           <div class="flex flex-none items-center gap-1">
             <button type="button" class="icon-btn inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-search-toggle" title="Search messages" aria-label="Search messages"></button>

@@ -3025,12 +3025,63 @@ function loadChatRooms() {
     });
 }
 
+/* Draw the header's topic control for `room`. One function, two callers:
+   opening a room and setting its topic both land here, so the label a screen
+   reader reads cannot drift from the text on screen.
+   The keyboard half is the markup: the control is a <button>, so Enter and
+   Space fire `click` natively and a key handler here would only be a second
+   answer to the same key. A DM has no topic, so it is disabled there rather
+   than left as a focusable control that announces itself and does nothing. */
+function renderChannelTopic(room) {
+  var node = el.chatChannelTopic;
+  if (!node) return;
+  var dm = isDm(room);
+  var topic = roomTopics[room];
+  // An empty topic still needs something on screen to click, or a topic could
+  // never be set the first time.
+  node.textContent = topic || (dm ? "" : "Add a topic");
+  node.title = topic || (dm ? "" : "Set a topic for this channel");
+  node.setAttribute("data-placeholder", String(!topic && !dm));
+  node.setAttribute("aria-label", dm ? "" : (topic ? "Change channel topic: " + topic : "Set a topic for this channel"));
+  node.onclick = dm ? null : setChannelTopic;
+  node.disabled = dm;
+}
+
+/* Set or clear the topic of the channel currently open. Called from the
+   header's topic control; the control being a <button> is what makes the
+   keyboard path work. */
+function setChannelTopic() {
+  var room = el.chatRoom.value;
+  if (!room || isDm(room)) return;
+  uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
+    if (newTopic === null) return;
+    fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room, topic: newTopic })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) {
+        roomTopics[room] = newTopic;
+        renderChannelTopic(room);
+        return;
+      }
+      var fail = "Could not set the topic: " + (d.error || "unknown error");
+      el.chatStatus.textContent = fail;
+      uiToast(fail);
+    }).catch(function (err) {
+      var fail = "Could not set the topic: " + err.message;
+      el.chatStatus.textContent = fail;
+      uiToast(fail);
+    });
+  });
+}
+
 function showRoomsComposerLocked(message, offerCreate) {
   if (el.chatChannelTitle) el.chatChannelTitle.textContent = offerCreate ? "No channels" : "Channels unavailable";
   if (el.chatChannelTopic) {
     el.chatChannelTopic.textContent = "";
     el.chatChannelTopic.setAttribute("data-placeholder", "false");
     el.chatChannelTopic.onclick = null;
+    el.chatChannelTopic.removeAttribute("aria-label");
+    el.chatChannelTopic.disabled = true;
   }
   if (el.chatText) el.chatText.placeholder = offerCreate
     ? "Create a channel to send a message"
@@ -3104,36 +3155,7 @@ function openChatRoom(room) {
   // Channel header: title + topic (click to set/change). DMs get no topic —
   // it is a per-channel concept, and a DM has nothing to name.
   if (el.chatChannelTitle) el.chatChannelTitle.textContent = isDm(room) ? "@" + dmPartner(room) : "#" + room;
-  if (el.chatChannelTopic) {
-    // An empty topic still needs something on screen to click, or a topic
-    // could never be set the first time.
-    el.chatChannelTopic.textContent = roomTopics[room] || (isDm(room) ? "" : "Add a topic");
-    el.chatChannelTopic.title = roomTopics[room] || (isDm(room) ? "" : "Set a topic for this channel");
-    el.chatChannelTopic.setAttribute("data-placeholder", String(!roomTopics[room] && !isDm(room)));
-    el.chatChannelTopic.onclick = isDm(room) ? null : function () {
-      uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
-        if (newTopic === null) return;
-        fetch("/api/chat/topic", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room, topic: newTopic })
-        }).then(function (r) { return r.json(); }).then(function (d) {
-          if (d.ok) {
-            roomTopics[room] = newTopic;
-            el.chatChannelTopic.textContent = newTopic || "Add a topic";
-            el.chatChannelTopic.title = newTopic || "Set a topic for this channel";
-            el.chatChannelTopic.setAttribute("data-placeholder", String(!newTopic));
-            return;
-          }
-          var fail = "Could not set the topic: " + (d.error || "unknown error");
-          el.chatStatus.textContent = fail;
-          uiToast(fail);
-        }).catch(function (err) {
-          var fail = "Could not set the topic: " + err.message;
-          el.chatStatus.textContent = fail;
-          uiToast(fail);
-        });
-      });
-    };
-  }
+  renderChannelTopic(room);
   // Active-room highlight in the sidebar.
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
