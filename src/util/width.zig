@@ -172,6 +172,14 @@ pub const Cluster = struct {
 const zwj: u21 = 0x200D;
 const vs16: u21 = 0xFE0F;
 
+/// One printable ASCII byte, followed by nothing that could attach to it.
+/// Everything that joins a base to the next codepoint -- a combining mark,
+/// VS16, U+200D -- is above ASCII, so an ASCII follower or end-of-input rules
+/// them all out with one compare.
+fn isPlainAscii(b: u8) bool {
+    return b >= 0x20 and b < 0x7F;
+}
+
 /// Display width of one codepoint's bytes, with the two rules that decide
 /// how a cluster adds up: a codepoint a joiner glued on contributes nothing
 /// of its own, and VS16 asks for the emoji-presentation glyph, which is wide
@@ -189,6 +197,17 @@ fn oneWidth(slice: []const u8) usize {
 pub fn nextCluster(s: []const u8, i: *usize) ?Cluster {
     if (i.* >= s.len) return null;
     const start = i.*;
+    // Fast path for the text that fills a transcript: a printable ASCII byte
+    // followed by another ASCII byte is one byte, one column, and the general
+    // path's cluster loop would break on the very first peek. The second byte
+    // is part of the test because anything that attaches to the base -- a
+    // combining mark, VS16, a joiner -- is above ASCII, so an ASCII follower
+    // rules them out in one compare. This runs per cell per frame in the draw
+    // loop, where the decode and width-table walk cost ~24 ns a character.
+    if (isPlainAscii(s[start]) and (start + 1 >= s.len or s[start + 1] < 0x80)) {
+        i.* = start + 1;
+        return .{ .bytes = s[start..i.*], .width = 1 };
+    }
     const base = nextCodepoint(s, i).?;
     if (isControl(base)) return .{ .bytes = base, .width = 1 };
     var w = oneWidth(base);
@@ -437,6 +456,27 @@ test "a joiner between ordinary letters does not collapse them into one cell" {
     const joined_letters = "a\xe2\x80\x8db";
     try std.testing.expectEqual(@as(usize, 2), displayWidth(joined_letters));
     try std.testing.expectEqualStrings("a\xe2\x80\x8d", truncateToWidth(joined_letters, 1));
+}
+
+test "the ASCII fast path takes a letter only when nothing can attach to it" {
+    // Two ASCII letters are two cells, and the fast path is what answers that.
+    var i: usize = 0;
+    try std.testing.expectEqualStrings("ab"[0..1], (nextCluster("ab", &i).?).bytes);
+    try std.testing.expectEqual(@as(usize, 1), (nextCluster("ab", &i).?).?.width);
+    try std.testing.expectEqualStrings("ab"[1..2], (nextCluster("ab", &i).?).bytes);
+    try std.testing.expect(nextCluster("ab", &i) == null);
+    try std.testing.expectEqual(@as(usize, 2), displayWidth("ab"));
+
+    // An ASCII base whose follower is above ASCII must take the general path,
+    // because the follower can be a combining mark, VS16 or a joiner and so may
+    // absorb the base or widen the cluster. These spellings are what the
+    // one-compare guard exists to hand back to it.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("a\xcc\x81")); // a + U+0301
+    try std.testing.expectEqual(@as(usize, 2), displayWidth("a\xe2\x80\x8db")); // a ZWJ b
+    try std.testing.expectEqual(@as(usize, 2), displayWidth("a\xef\xb8\x8f")); // a + VS16
+    // Space is one column and takes the fast path; a control byte does not.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth(" "));
+    try std.testing.expectEqual(@as(usize, 0), displayWidth("\t"));
 }
 
 test "nextCluster keeps a control byte in a cluster of its own" {
