@@ -8748,6 +8748,16 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleSteer(gpa, cfg, stream, body);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/run")) {
             handleRun(io, gpa, cfg, environ_map, stream, body);
+        } else if (methodIsWrongVerbFor(path)) |allow| {
+            // The path is real and only the verb was wrong. Every predicate
+            // above compares `method` as well as `path`, so a `PUT` on a
+            // `GET /api/status` fell through to the same bare 404 a nonexistent
+            // URL answers, indistinguishable from a typo and with no word
+            // about which verbs the path does take. RFC 9110 15.5.6 calls for
+            // 405 with `Allow` here, which is what the knowledge, prompts,
+            // arena, schedule and compare handlers already answered from
+            // inside themselves.
+            respondMethodNotAllowed(stream, allow);
         } else {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
         }
@@ -17924,6 +17934,143 @@ fn respondMethodNotAllowed(stream: std.Io.net.Stream, allow: []const u8) void {
     respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
 }
 
+/// The verbs to name in a 405, or null to leave the caller's 404 alone.
+///
+/// A `HEAD` is deliberately excluded. This server rewrites `HEAD` to `GET`
+/// before the dispatch chain (RFC 9110 9.3.2), so a HEAD is never a wrong verb
+/// here: it is the GET whose body is suppressed. Routing one out of the chain
+/// on a path whose GET *is* served would make it the one path where a HEAD is
+/// refused a method, and `/api/events` exists to prove the point: its GET is an
+/// unbounded stream a header-only request must not open, so it stays unmatched
+/// and 404s rather than being rewritten. A HEAD on `/api/run` is the same
+/// shape, and its 404 is the existing contract.
+fn methodIsWrongVerbFor(path: []const u8) ?[]const u8 {
+    // The HEAD-to-GET rewrite happens before the dispatch chain, so the
+    // caller's original verb is the threadlocal rather than the `method` a
+    // predicate compares against.
+    if (request_head) return null;
+    return allowListFor(path);
+}
+
+/// The verbs a known path takes, for the 404 fall-through that has already
+/// decided the path is real and only the verb was wrong.
+///
+/// Every dispatch predicate above tests `method` *and* `path`, so a wrong verb
+/// can never reach its handler: it falls out of the chain and answered the
+/// same bare `404` as a URL that does not exist at all. RFC 9110 15.5.6 wants
+/// `405` plus `Allow` for the first case, and this is the one place that can
+/// answer it for every route without thirty predicates each learning to
+/// answer it themselves.
+///
+/// A null return keeps the 404, so an unknown path is untouched. Entries are
+/// ordered longest-prefix-first: `/api/providers` must not swallow
+/// `/api/providers/models`, nor `/api/catalog` `/api/catalog/refresh`. The
+/// shorter rows match with `routePrefix`, which also refuses a longer sibling
+/// name (`/api/providersfoo` stays a 404); the longer ones match exactly.
+fn allowListFor(path: []const u8) ?[]const u8 {
+    const Entry = struct { path: []const u8, allow: []const u8, exact: bool };
+    const entries = [_]Entry{
+        .{ .path = "/api/config/model/set", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/model/remove", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/model", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/default", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/table/set", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/table/remove", .allow = "POST", .exact = true },
+        .{ .path = "/api/config/status", .allow = "GET", .exact = true },
+        .{ .path = "/api/config/raw", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/config", .allow = "GET", .exact = false },
+        .{ .path = "/api/plugins/config", .allow = "POST", .exact = true },
+        .{ .path = "/api/plugins", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/providers/models", .allow = "GET", .exact = false },
+        .{ .path = "/api/providers", .allow = "GET", .exact = true },
+        .{ .path = "/api/catalog/refresh", .allow = "POST", .exact = true },
+        .{ .path = "/api/catalog", .allow = "GET", .exact = false },
+        .{ .path = "/api/knowledge", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/prompts", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/arena", .allow = "GET", .exact = false },
+        .{ .path = "/api/schedule", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/compare", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/runs", .allow = "GET", .exact = false },
+        .{ .path = "/api/workspaces", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/sessions", .allow = "DELETE, GET, POST", .exact = false },
+        .{ .path = "/api/chat/messages", .allow = "GET", .exact = false },
+        .{ .path = "/api/chat/message", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/rooms", .allow = "GET", .exact = true },
+        .{ .path = "/api/chat/send", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/subscribe", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/react", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/edit", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/delete", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/pin", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/topic", .allow = "POST", .exact = true },
+        .{ .path = "/api/chat/pins", .allow = "GET", .exact = true },
+        .{ .path = "/api/mesh/map", .allow = "GET", .exact = true },
+        .{ .path = "/api/mesh/status", .allow = "GET", .exact = true },
+        .{ .path = "/api/mesh/pending", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/mesh/join", .allow = "POST", .exact = true },
+        .{ .path = "/api/mesh/leave", .allow = "POST", .exact = true },
+        .{ .path = "/api/goals", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/skills", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/webui/plugins", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/board", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/feedback", .allow = "GET, POST", .exact = true },
+        .{ .path = "/api/janitor", .allow = "GET", .exact = true },
+        .{ .path = "/api/stats", .allow = "GET", .exact = true },
+        .{ .path = "/api/metrics", .allow = "GET", .exact = true },
+        .{ .path = "/api/peers", .allow = "GET", .exact = true },
+        .{ .path = "/api/workflows", .allow = "GET", .exact = true },
+        .{ .path = "/api/mcp/servers", .allow = "GET", .exact = true },
+        .{ .path = "/api/files", .allow = "GET", .exact = true },
+        .{ .path = "/api/logs", .allow = "GET", .exact = false },
+        .{ .path = "/api/live", .allow = "POST", .exact = true },
+        .{ .path = "/api/events", .allow = "GET", .exact = true },
+        .{ .path = "/api/notify", .allow = "POST", .exact = true },
+        .{ .path = "/api/status", .allow = "GET", .exact = true },
+        .{ .path = "/api/run", .allow = "POST", .exact = true },
+        .{ .path = "/api/steer", .allow = "POST", .exact = true },
+        .{ .path = "/api/ask", .allow = "POST", .exact = true },
+        .{ .path = "/api/a2a/message", .allow = "POST", .exact = true },
+        .{ .path = "/.well-known/agent.json", .allow = "GET", .exact = true },
+        .{ .path = "/health/live", .allow = "GET", .exact = true },
+        .{ .path = "/health/ready", .allow = "GET", .exact = true },
+    };
+    for (entries) |e| {
+        if (e.exact) {
+            if (std.mem.eql(u8, path, e.path)) return e.allow;
+        } else if (routePrefix(path, e.path)) return e.allow;
+    }
+    // The five record stores answer the same verbs whatever the record is, and
+    // their paths come from an enum rather than a literal list.
+    if (recordStoreForPath(path) != null) return "GET, POST";
+    return null;
+}
+
+test "allowListFor names the verbs a known path takes, and nothing else" {
+    // This table is the fall-through's only source of truth, so a route whose
+    // verb set is missing here still answers 404 to a client probing it,
+    // exactly the gap it exists to close. Each row pins a path whose verbs the
+    // dispatch predicate it mirrors also asserts.
+    try std.testing.expectEqualStrings("GET", allowListFor("/api/status").?);
+    try std.testing.expectEqualStrings("POST", allowListFor("/api/run").?);
+    try std.testing.expectEqualStrings("GET, POST", allowListFor("/api/mesh/pending").?);
+    // The longer prefix must win over the shorter one it starts with.
+    try std.testing.expectEqualStrings("GET", allowListFor("/api/providers").?);
+    try std.testing.expectEqualStrings("GET", allowListFor("/api/providers/models").?);
+    try std.testing.expectEqualStrings("GET", allowListFor("/api/catalog").?);
+    try std.testing.expectEqualStrings("POST", allowListFor("/api/catalog/refresh").?);
+    // A prefix route's own sub-paths take the prefix's verbs.
+    try std.testing.expectEqualStrings("DELETE, GET, POST", allowListFor("/api/sessions/sess-1").?);
+    try std.testing.expectEqualStrings("DELETE, GET, POST", allowListFor("/api/knowledge/col-1/docs").?);
+    try std.testing.expectEqualStrings("GET", allowListFor("/api/runs/run-1787063448").?);
+    // A record store answers both verbs.
+    try std.testing.expectEqualStrings("GET, POST", allowListFor("/api/reports").?);
+    // Unknown paths keep the 404, and `routePrefix` still refuses a longer
+    // sibling name, so a typo is not answered as a wrong verb.
+    try std.testing.expect(allowListFor("/api/nope") == null);
+    try std.testing.expect(allowListFor("/api/statuses") == null);
+    try std.testing.expect(allowListFor("/api/providersfoo") == null);
+}
+
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy
 /// allows inline styles and scripts but no external origin: a page fronting
 /// `/api/run` (which executes agent tools) must never be able to pull code from
@@ -21633,4 +21780,76 @@ test "reports --help states the caps the reports tool enforces" {
             return error.CapNotDocumented;
         }
     }
+}
+
+test "a HEAD is never the wrong verb, so it keeps the 404 its contract states" {
+    // The server rewrites HEAD to GET before the chain, so a HEAD is the GET
+    // whose body is suppressed, never a method refusal. Promoting one to 405
+    // would make it the single path where a HEAD is refused a method, against a
+    // contract that already pins both of these at 404.
+    var req_buf: [128]u8 = undefined;
+    var buf: [4096]u8 = undefined;
+
+    const events = try routeCapture(&buf, try testRequest(&req_buf, "HEAD", "/api/events"));
+    try std.testing.expect(std.mem.startsWith(u8, events, "HTTP/1.1 404 Not Found\r\n"));
+
+    var run_buf: [4096]u8 = undefined;
+    const post_only = try routeCapture(&run_buf, try testRequest(&req_buf, "HEAD", "/api/run"));
+    try std.testing.expect(std.mem.startsWith(u8, post_only, "HTTP/1.1 404 Not Found\r\n"));
+    try std.testing.expect(std.mem.find(u8, post_only, "Allow:") == null);
+
+    // A HEAD on a GET route still answers the GET it is rewritten to, headers
+    // and no body, which is why it is not in scope for the 405 at all.
+    var ready_buf: [4096]u8 = undefined;
+    const ready = try routeCapture(&ready_buf, try testRequest(&req_buf, "HEAD", "/health/ready"));
+    try std.testing.expect(std.mem.startsWith(u8, ready, "HTTP/1.1 200 OK\r\n"));
+}
+
+test "a wrong verb on a real path answers 405 with the verbs it does take" {
+    // Every dispatch predicate tests method *and* path, so a wrong verb used to
+    // fall out of the chain and answer the same bare 404 a nonexistent URL
+    // answers: a client walking verbs could not tell a typo from a refusal,
+    // and nothing named the verbs the path does take. RFC 9110 15.5.6 wants
+    // 405 plus Allow, which is what knowledge/prompts/arena/schedule/compare
+    // already answered from inside their own handlers.
+    var req_buf: [256]u8 = undefined;
+    var buf: [8192]u8 = undefined;
+
+    // A GET-only read answers 405 + Allow: GET to a POST-only write, and PUT to
+    // a path nothing takes but the verbs listed.
+    const post_only = try routeCapture(&buf, try testRequest(&req_buf, "GET", "/api/run"));
+    try std.testing.expect(std.mem.startsWith(u8, post_only, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, post_only, "Allow: POST\r\n") != null);
+
+    const get_only = try routeCapture(&buf, try testRequest(&req_buf, "PUT", "/api/status"));
+    try std.testing.expect(std.mem.startsWith(u8, get_only, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, get_only, "Allow: GET\r\n") != null);
+
+    // A two-verb path names both, and a prefix route's own sub-path takes the
+    // prefix's verbs rather than 404ing as a stranger.
+    var ws_buf: [8192]u8 = undefined;
+    const two = try routeCapture(&ws_buf, try testRequest(&req_buf, "PATCH", "/api/mesh/pending"));
+    try std.testing.expect(std.mem.startsWith(u8, two, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, two, "Allow: GET, POST\r\n") != null);
+
+    var sub_buf: [8192]u8 = undefined;
+    const sub = try routeCapture(&sub_buf, try testRequest(&req_buf, "PUT", "/api/sessions/sess-1"));
+    try std.testing.expect(std.mem.startsWith(u8, sub, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, sub, "Allow: DELETE, GET, POST\r\n") != null);
+
+    // The longer prefix still wins over the shorter one it starts with, and a
+    // path that does not exist at all keeps its 404: the table must not turn a
+    // typo into a wrong-verb answer.
+    var cat_buf: [8192]u8 = undefined;
+    const refresh = try routeCapture(&cat_buf, try testRequest(&req_buf, "GET", "/api/catalog/refresh"));
+    try std.testing.expect(std.mem.startsWith(u8, refresh, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, refresh, "Allow: POST\r\n") != null);
+
+    var typo_buf: [8192]u8 = undefined;
+    const typo = try routeCapture(&typo_buf, try testRequest(&req_buf, "GET", "/api/providersfoo"));
+    try std.testing.expect(std.mem.startsWith(u8, typo, "HTTP/1.1 404 Not Found\r\n"));
+
+    var none_buf: [8192]u8 = undefined;
+    const none = try routeCapture(&none_buf, try testRequest(&req_buf, "GET", "/api/definitely-not-here"));
+    try std.testing.expect(std.mem.startsWith(u8, none, "HTTP/1.1 404 Not Found\r\n"));
 }
