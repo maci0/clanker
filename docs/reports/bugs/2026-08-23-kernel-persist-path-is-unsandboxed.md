@@ -3,7 +3,7 @@
 ## TL;DR
 
 - **What failed:** ck_kernel reaches a plain host python3 supervisor (src/sandbox/kernel.zig). runPythonCell and runPythonCellSandboxed, the WASI-confined functions ADR 0010 calls the primary Python path, have no production caller: only their own test. Every cell runs with the harness's full filesystem and network access, exec_allow applies to neither %%bash nor subprocess, and the deprecation warning the ADR promises never fired. Unfixed: WASI here is one-shot, and the kernel exists to keep __main__ across cells.
-- **Impact:** An operator who turns `kernel.enabled` on gets arbitrary code execution with the harness process's full ambient permissions, while ADR 0010 and the config docs tell them it is WASI-confined with fuel, memory and timeout limits. Not a regression: it has never been sandboxed on this path.
+- **Impact:** An operator who turns `kernel.enabled` on gets arbitrary code execution with the harness process's full ambient permissions, while the config docs and ADR 0010's original (now historical, corrected 2026-08-23) framing tell them it is WASI-confined with fuel, memory and timeout limits. Not a regression: it has never been sandboxed on this path.
 - **Resolution:** Open.
 
 ## Status

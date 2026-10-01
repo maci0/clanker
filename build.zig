@@ -421,6 +421,12 @@ pub fn build(b: *std.Build) void {
     const layout_js_test = b.addSystemCommand(&.{ "bun", "test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));
     test_step.dependOn(&layout_js_test.step);
+    // Which call sites may write the screen-reader-only live region by hand:
+    // an action that writes only it announces to a screen reader and stays
+    // invisible to everyone else.
+    const session_notice_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    session_notice_js_test.addFileArg(b.path("ui/app/session-notice.test.mjs"));
+    test_step.dependOn(&session_notice_js_test.step);
     // The page shell and the class lists views build it from: each case is a
     // defect the browser recovered from silently.
     const shell_js_test = b.addSystemCommand(&.{ "bun", "test" });

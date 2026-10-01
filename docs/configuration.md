@@ -561,9 +561,11 @@ by `runPythonCell` (`src/sandbox/host.zig`), which has no production caller,
 so running `./scripts/setup-python-wasi.sh` does not change what a `kernel`
 call does. Open defect, with the candidate fixes:
 [kernel cells run unsandboxed](reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md).
-ADR 0010 describes the WASI path as primary and is marked as not implemented
-as written. Do not flip `enabled` on in a recommended config: cgroups quotas
-are a pre-default-on requirement (PRD 0016) and nothing bounds a cell today.
+ADR 0010 records the same fact: its WASI-primary framing is the historical
+2026-08-14 revision, kept for the record and marked not implemented as written
+(corrected 2026-08-23). Do not flip `enabled` on in a recommended config:
+cgroups quotas are a pre-default-on requirement (PRD 0016) and nothing bounds a
+cell today.
 
 A cell's environment is the `kernel` tool's `env_allow` set, built by the
 same `execEnvironment` filter `ck_exec` and `ck_job` use, so no API key the

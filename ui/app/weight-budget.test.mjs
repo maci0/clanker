@@ -245,8 +245,15 @@ test("eager JS stays inside its weight budget", function () {
      or Arabic-Indic listing toasted its own row count on every load.
      lib/markdown.js's citation class truncated a non-ASCII path to its ASCII
      tail ("dokumentation/Übersicht.zig:12" matched as "bersicht.zig:12"), so
-     the chip opened the wrong file in the callgraph (~0.2K gz). */
-  assert.ok(eagerJsGz <= 162, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 162K`);
+     the chip opened the wrong file in the callgraph (~0.2K gz).
+     Raised to 163 because two later commits shipped without re-tightening it:
+     b413ab47 made the channel topic a keyboard-operable <button> (a screen
+     reader now reads the same label the screen shows, and a DM's control is
+     disabled instead of focusable) and 4c283665 made silent actions speak and
+     one number format the counts everywhere. Neither added a request, and the
+     gz grew by 39 bytes over the 162K line, so the wire cost of both is
+     noise. */
+  assert.ok(eagerJsGz <= 163, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 163K`);
 });
 
 test("first paint stays inside its weight budget", function () {
@@ -283,8 +290,16 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
 });
 
 test("single large files stay inside their budgets", function () {
+  // The raw figure is disk weight, not wire weight: webui_strip.zig strips
+  // first-party comments before a response is written, and ~63 KB of app.js is
+  // exactly that (the prose above and beside each step). It was tightened to
+  // 264 at 6d4bab05, where app.js stood at 269.5K, and two commits since then
+  // added the channel-topic control and the silent-action/count fixes without
+  // re-tightening it, so the shipped file sat 174 bytes over a line nothing
+  // re-asserted. 265 records that weight; the number moves on purpose, never by
+  // accreting edits nobody looked at.
   const appJsRaw = fileBytes("app.js").length / KiB;
-  assert.ok(appJsRaw <= 264, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 264K`);
+  assert.ok(appJsRaw <= 265, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 265K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
   assert.ok(htmlRaw <= 108, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 108K`);
 });

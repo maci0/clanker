@@ -6,8 +6,11 @@ In progress. Design is locked. Phase 1 codec, admission, leave-vs-unreachable,
 simultaneous-open, CHAT id-dedup, and the Fleet lamp map (`GET /api/mesh/map`)
 live in `src/peers/mesh.zig` (host tests, no NIC). Serve listener
 (`src/serve/mesh_net.zig`), HTTP join/leave/status/pending, and
-`clanker mesh` (`src/peers/command.zig`) are in. `ck_mesh` guest tools,
-CHAT_SYNC catch-up, and Phase 3 workspace/file share are still open.
+`clanker mesh` (`src/peers/command.zig`) are in. Session-event catch-up
+(CHAT_SYNC plus backfill after downtime, replica stores under
+`state/mesh/<owner>/sessions/`) shipped in `src/peers/session_sync.zig` as
+RFC 0019's staged path, over HTTP rather than the mesh socket. `ck_mesh`
+guest tools and Phase 3 workspace/file share are still open.
 
 Single source of truth once built: `src/peers/mesh.zig` (host-side, the
 same "thin guest, honest host" shape as `src/peers/chatrooms.zig`) plus

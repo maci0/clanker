@@ -192,16 +192,17 @@ kit only through the plugin API and a declared capability, gated in
 
 Phases 2 to 5 are done: every plugin app.js, feature view and the chat frame
 are utilities or component rules in ui/app/tailwind.src.css, and app.css is
-down to 44.7K raw — its token block, its element layer and a handful of media
-blocks. The chrome vocabulary (meta, section-head, toast, overlay, the run
-picker, the chip's lamp, the turn's live/found marks) moved into the sheet's
-component layer rather than becoming utilities: a plugin's markup is its own
-document and cannot import a JavaScript constant, so those names are the
-page's public surface. The rendered document (mermaid, fenced code, tables and
-the markdown body) moved there for the same reason: its shapes are the
-renderer's class names.
+gone — its token block and element layer moved into that file, so it is now
+the page's only stylesheet. The chrome vocabulary (meta, section-head, toast,
+overlay, the run picker, the chip's lamp, the turn's live/found marks) moved
+into the sheet's component layer rather than becoming utilities: a plugin's
+markup is its own document and cannot import a JavaScript constant, so those
+names are the page's public surface. The rendered document (mermaid, fenced
+code, tables and the markdown body) moved there for the same reason: its
+shapes are the renderer's class names.
 
 Two guards grew rather than weakened along the way: ui/app/tailwind.test.mjs's
 class scanner skips a token ending in `-` (the front half of a composed name,
 which is highlight.js's own convention), and the assertions that compare rule
-positions now read app.css and tailwind.src.css in cascade order.
+positions read tailwind.src.css alone now that there is no second sheet to
+place it against.

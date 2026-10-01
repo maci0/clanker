@@ -13,10 +13,14 @@ Two successive cells in one session share `__main__`; `reset: true` kills
 the process and starts fresh; session end SIGTERMs via the registry.
 `kernel.enabled = false` (default) still refuses. JS/Bun, the loopback
 bridge, a dedicated venv for `%pip`, and WASI-sandboxed persistence are
-still open. The leftover WASI one-shot in `src/sandbox/python_wasi.zig` is
-not the persist path; ADR 0010 (revised) instead describes `runPythonCell`
-(`src/sandbox/host.zig`) as WASI-primary, which disagrees with the shipped
-`ck_kernel` → `kernel_mod.eval` host-`python3` path (see Known issues).
+still open. The leftover WASI one-shot in `src/sandbox/python_wasi.zig` and
+the WASI-confined `runPythonCell` in `src/sandbox/host.zig` are not the
+persist path: what runs is the host `python3` supervisor behind
+`ck_kernel` → `kernel_mod.eval`, unsandboxed. ADR 0010 was corrected on
+2026-08-23 to say so and now keeps its earlier WASI-primary text as history;
+the open decision it still wants is in
+[the bug record](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md)
+(see Non-goals).
 
 ## Problem
 
