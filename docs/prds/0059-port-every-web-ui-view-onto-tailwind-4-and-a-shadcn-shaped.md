@@ -4,12 +4,12 @@
 
 Shipped — 2026-09-27. The one sheet is ui/app/tailwind.src.css, compiled to the committed ui/app/tailwind.css: the cabinet tokens, the element layer in @layer base after preflight, every view's utilities, and the component rules for the rendered document and for the chrome vocabulary plugins write by name. ui/app/app.css, ui/app/views.css, the PatternFly sheet and every pf-v6-* class are gone.
 with all ten feature views, app.js, core/ui.js, core/kit.js, core/tools.js,
-core/usage.js and lib/graph.js on the ledger (re-counted 2026-09-27; the
-`bun test ui/app ui/plugins` suite is green at 371 pass). The single
+core/usage.js and lib/graph.js on the ledger (re-counted 2026-09-30; the
+`bun test ui/app ui/plugins` suite is green at 411 pass). The single
 source of truth is `ui/app/tailwind.src.css` (the authoring sheet) compiled
 by `bun run css:build` into the committed `ui/app/tailwind.css`; the cabinet
-token block in `ui/app/app.css` stays the source of values until the last
-rule moves. The component kit is `ui/app/core/kit.js`. Surface: the web UI
+token block moved into that file with the element layer, so it holds the
+values too. The component kit is `ui/app/core/kit.js`. Surface: the web UI
 only, no tool, HTTP or CLI surface changes.
 
 ## Problem
@@ -99,9 +99,9 @@ kit only through the plugin API and a declared capability, gated in
 - tailwindcss and @tailwindcss/cli as devDependencies (package.json,
   bun.lock), used only by `bun run css:build`; the compiled sheet is
   committed, so no build step runs at serve time.
-- The cabinet token block in ui/app/app.css stays the single authoring site
-  until the last rule moves: ui/app/tailwind.src.css maps it by var()
-  reference.
+- The cabinet token block was the single authoring site in ui/app/app.css
+  until the last rule moved; it now lives in ui/app/tailwind.src.css, which
+  maps its values by var() reference.
 - ui/app/tailwind.test.mjs is the migration ledger and the guard: its
   migrated list holds each file whose cabinet rules were deleted, and every
   class such a file names must resolve in a shipped sheet.
