@@ -115,7 +115,13 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
 
 /// Appends one usage record. Best-effort: failures are logged, never fatal;
 /// a stats write must not break a chat completion. O(1) append via a
-/// truncate-free open + seek to end (the caller holds the only writer).
+/// truncate-free open + seek to end.
+///
+/// The writer is not single: this is the LLM client choke point, so every
+/// connection thread, every `ToolWorker` and every subagent thread reaches
+/// it, and several clanker processes write the same file. The `file_lock`
+/// below, not any caller-side assumption, is what keeps the read-size-then-
+/// write pair from two writers landing on the same offset.
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, rec: Record) void {
     if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "[stats] mkdir failed: {s}", .{@errorName(err)});
