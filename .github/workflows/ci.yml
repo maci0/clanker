@@ -208,6 +208,16 @@ jobs:
           python3 -B -m unittest scripts.test_check_threat_model
           python3 scripts/check-threat-model.py
 
+      # scripts/release-checksum.sh is the last gate before a tag becomes a
+      # published release: release-publish runs `verify` on the merged artifact
+      # directory and refuses to attach anything whose sidecars do not check
+      # out. Nothing in the build ran its tests, so a regression that turned it
+      # into a step that passes on a dist holding fewer binaries than the
+      # release is made of would ship a release quietly missing an
+      # architecture -- the exact failure it exists to prevent.
+      - name: Check release checksum contract
+        run: python3 -B -m unittest scripts.test_release_checksum
+
       # The ruff release is read from ruff.toml rather than restated here, the
       # same one-place pin the Zig and bun steps take. The literal used to live
       # only in the run block below, so the pre-commit hook and
@@ -493,3 +503,34 @@ jobs:
               --title "${GITHUB_REF_NAME}" \
               --notes-file release-notes.md
           fi
+
+      # `--clobber` deletes the assets it is about to replace *before* it
+      # uploads them, and gh documents the consequence directly: "if the upload
+      # fails, the original assets will be lost". On the create path that only
+      # costs the bytes; on the re-run path it empties a release that already
+      # carried every target, and the tag is immutable so no later build can
+      # put them back. `gh release upload` still exits 0 when it replaces what
+      # is there, so nothing upstream notices.
+      #
+      # So read the asset list back and compare it to what was in dist/. A
+      # release missing a target then fails here, naming it, rather than
+      # passing a green publish on an install that cannot succeed.
+      - name: Verify every target reached the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/release-checksum.sh targets > "$RUNNER_TEMP/ck-targets"
+          present=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')
+          missing=""
+          # Word splitting is what is wanted here: a target has no whitespace,
+          # and the same list drives the check inside release-checksum.sh.
+          # shellcheck disable=SC2013
+          for target in $(cat "$RUNNER_TEMP/ck-targets"); do
+            echo "$present" | grep -q -- "-${target}\$" || missing="$missing $target"
+          done
+          if [ -n "$missing" ]; then
+            echo "release ${GITHUB_REF_NAME} has no binary for:$missing" >&2
+            echo "upload the missing assets by hand: gh release upload ${GITHUB_REF_NAME} dist/* --clobber" >&2
+            exit 1
+          fi
+          echo "every matrix target is attached to ${GITHUB_REF_NAME}"

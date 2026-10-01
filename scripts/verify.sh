@@ -101,8 +101,14 @@ step "State backup and restore drills (CI: Check state backup drills)"
 if command -v python3 >/dev/null 2>&1; then
     python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup \
         scripts.test_install_state_backup || status=1
+    # release-checksum.sh is the last check a tag passes before it becomes a
+    # published release, and release-publish refuses to create anything whose
+    # sidecars do not verify. The test drives it over a directory holding every
+    # matrix target, one missing, and one tampered, so a check that stopped
+    # refusing an incomplete dist fails here rather than at a release.
+    python3 -B -m unittest scripts.test_release_checksum || status=1
 else
-    skip "python3 is not installed (state backup drills)"
+    skip "python3 is not installed (state backup drills, release checksum contract)"
 fi
 
 # The threat model claims in its own header that every file:line reference in

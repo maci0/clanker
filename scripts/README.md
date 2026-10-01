@@ -275,10 +275,28 @@ sha256sum --check --strict clanker-v0.5.0-x86_64-linux-musl.sha256
 ```
 
 `verify` fails on a checksum mismatch, on a directory with no sidecar at all,
-and on a `clanker-*` binary that has no sidecar beside it: a matrix leg that
-never uploaded would otherwise leave a release that verified clean and was
-missing a target. macOS has no `sha256sum`, so the script uses `shasum -a 256`
-there; both write the same sidecar format.
+on a `clanker-*` binary that has no sidecar beside it, and on a directory
+missing any target the matrix builds. macOS has no `sha256sum`, so the script
+uses `shasum -a 256` there; both write the same sidecar format.
+
+The first three checks are per-file, so each passes vacuously on a directory
+holding fewer binaries than a release is made of: a dist with two of the four
+shipped targets verified clean and published as a release missing an
+architecture. `verify` therefore also requires one binary per target, reading
+that list out of the `release-build` matrix rather than restating it — the
+matrix is the one place that says what a release is made of, so a target added
+there and not published is refused at the publish step instead of noticed by
+whoever tries to install it. A matrix that cannot be read is a hard failure,
+not an empty list:
+
+```bash
+./scripts/release-checksum.sh targets   # print what verify requires
+```
+
+`scripts/test_release_checksum.py` drives the shipped script over a complete
+dist, one missing a target, one with an unpaired binary and one tampered; CI
+runs it (`Check release checksum contract`) because `release-publish` is the
+last thing standing between a broken release and a published one.
 
 ## Release contract
 

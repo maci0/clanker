@@ -84,7 +84,12 @@ Before creating a tag:
    both the binaries and the sidecars are attached to the Release. Re-running
    the publish job after a failure finishes the release rather than refusing the
    tag: it uploads onto the release the tag already carries, replacing files of
-   the same name with the identical bytes.
+   the same name with the identical bytes. That replace is a `--clobber`, which
+   deletes an asset before re-uploading it, so the job's last step reads the
+   release's asset list back and fails if any target the matrix builds is not
+   attached. A clobber that dies mid-upload therefore ends as a named red job
+   naming the targets to re-upload by hand, not as a green publish on a release
+   that has quietly lost an architecture.
 7. If you generate an SBOM locally rather than letting the tag's
    `release-publish` job do it, export `SOURCE_DATE_EPOCH` first. The
    generated document is byte-identical for a given tag only with it set;

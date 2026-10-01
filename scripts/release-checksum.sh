@@ -14,14 +14,60 @@
 # Usage:
 #   scripts/release-checksum.sh create FILE...   # write FILE.sha256 beside each FILE
 #   scripts/release-checksum.sh verify DIR       # check every sidecar in DIR
+#   scripts/release-checksum.sh targets          # print the targets verify requires
 #
-# Exit 0: every sidecar written, or every sidecar in DIR matches and every
-# `clanker-*` binary in DIR has one. Exit 1 otherwise, naming what failed.
+# Exit 0: every sidecar written, or every sidecar in DIR matches, every
+# `clanker-*` binary in DIR has one, and every target the release matrix
+# builds is present. Exit 1 otherwise, naming what failed.
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 create FILE... | $0 verify DIR" >&2
+    echo "usage: $0 create FILE... | $0 verify DIR | $0 targets" >&2
     exit 2
+}
+
+# The targets a release must carry, read out of the release-build matrix in
+# the workflow rather than restated here.
+#
+# The sidecar check answers "are the bytes I have intact, and does every
+# binary here have a sidecar?" It does not answer "did every target the matrix
+# builds arrive?", so a dist holding two of the four shipped targets -- a
+# matrix leg that uploaded nothing, or an artifact that merged empty -- verified
+# clean and published as a healthy release missing an architecture. The matrix is
+# the one place that says what a release is made of, so that is where the list is
+# read from; a target added there and not published is refused here rather than
+# noticed by whoever later tries to install it.
+#
+# The sed range starts at the release-build job and ends at the next 2-space
+# job key, so a `target:` key in any other job cannot widen the list. A matrix
+# that cannot be read is a hard failure rather than an empty list, which would
+# otherwise make every target optional exactly when the file moved.
+#
+# The matrix spells an entry `- os: ...` followed by `  target: ...` on the next
+# line, not `- target: ...`, so the value is matched as a bare `target:` key.
+shipped_targets() {
+    # The repo root from this script's own path, not $PWD: `verify DIR` is
+    # documented as runnable by hand against a downloaded release, so the
+    # caller is very often standing somewhere that is not the checkout. A
+    # $PWD-relative lookup then found no workflow, and because the call sat in
+    # a command substitution inside a `for` list its failure was swallowed —
+    # verify reported success with the check silently not run. Same resolution
+    # apply-patches.sh and the other scripts/ entry points use.
+    local repo
+    repo=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+    local workflow="$repo/.github/workflows/ci.yml"
+    [ -f "$workflow" ] || {
+        echo "release-checksum: no $workflow; cannot tell what a release must carry" >&2
+        return 1
+    }
+    local targets
+    targets=$(sed -n '/^  release-build:/,/^  [a-z][a-z-]*:$/p' "$workflow" |
+        sed -n 's/^ *target: *//p')
+    if [ -z "$targets" ]; then
+        echo "release-checksum: release-build in $workflow declares no matrix targets" >&2
+        return 1
+    fi
+    printf '%s\n' "$targets"
 }
 
 # macOS ships perl's shasum and no coreutils sha256sum; the runner matrix
@@ -96,6 +142,42 @@ verify_dir() {
             failures=$((failures + 1))
         fi
     done
+    # Both loops above are per-file, so both pass vacuously on a directory
+    # holding fewer binaries than a release is made of: two of the four shipped
+    # targets verified clean. Name every target the matrix builds and require
+    # one to be here, so a leg that uploaded nothing is a refusal rather than a
+    # release quietly missing an architecture.
+    #
+    # Read the list into a variable and check it is non-empty before looping.
+    # `for target in $(shipped_targets)` cannot report the function's failure:
+    # a command substitution that fails inside a `for` list leaves the list
+    # empty and the loop simply does not run, so an unreadable matrix made
+    # this check pass vacuously instead of refusing to publish.
+    local base target found missing_targets=0
+    local required
+    if ! required=$(shipped_targets) || [ -z "$required" ]; then
+        echo "release-checksum: cannot read the release matrix; refusing to publish" >&2
+        exit 1
+    fi
+    # `clanker-*-$target` rather than an exact name, because the tag in front of
+    # the target contains dashes too (v0.11.1-x86_64-linux-musl) and the file
+    # name carries whichever tag built it. Matching the tail is also what lets
+    # `verify DIR` be run by hand against a downloaded release.
+    for target in $required; do
+        found=""
+        for file in "${binaries[@]}"; do
+            case "$file" in *.sha256) continue ;; esac
+            base=$(basename -- "$file")
+            case "$base" in
+                clanker-*-"$target") found=1; break ;;
+            esac
+        done
+        if [ -z "$found" ]; then
+            echo "release-checksum: $dir holds no binary for target $target, which the release matrix builds" >&2
+            missing_targets=$((missing_targets + 1))
+        fi
+    done
+    failures=$((failures + missing_targets))
     if [ "$failures" -ne 0 ]; then
         echo "release-checksum: $failures problem(s) in $dir; refusing to publish" >&2
         exit 1
@@ -116,6 +198,10 @@ case "$mode" in
     verify)
         [ "$#" -eq 1 ] || usage
         verify_dir "$1"
+        ;;
+    targets)
+        [ "$#" -eq 0 ] || usage
+        shipped_targets
         ;;
     *)
         usage
