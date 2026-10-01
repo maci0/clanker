@@ -459,11 +459,16 @@ test "a joiner between ordinary letters does not collapse them into one cell" {
 }
 
 test "the ASCII fast path takes a letter only when nothing can attach to it" {
-    // Two ASCII letters are two cells, and the fast path is what answers that.
+    // Two ASCII letters are two clusters of one cell each, and the fast path is
+    // what answers that. Each nextCluster call advances the index, so the walk
+    // reads one cluster per line.
     var i: usize = 0;
-    try std.testing.expectEqualStrings("ab"[0..1], (nextCluster("ab", &i).?).bytes);
-    try std.testing.expectEqual(@as(usize, 1), (nextCluster("ab", &i).?).?.width);
-    try std.testing.expectEqualStrings("ab"[1..2], (nextCluster("ab", &i).?).bytes);
+    const first = nextCluster("ab", &i).?;
+    try std.testing.expectEqualStrings("ab"[0..1], first.bytes);
+    try std.testing.expectEqual(@as(usize, 1), first.width);
+    const second = nextCluster("ab", &i).?;
+    try std.testing.expectEqualStrings("ab"[1..2], second.bytes);
+    try std.testing.expectEqual(@as(usize, 1), second.width);
     try std.testing.expect(nextCluster("ab", &i) == null);
     try std.testing.expectEqual(@as(usize, 2), displayWidth("ab"));
 
@@ -474,9 +479,12 @@ test "the ASCII fast path takes a letter only when nothing can attach to it" {
     try std.testing.expectEqual(@as(usize, 1), displayWidth("a\xcc\x81")); // a + U+0301
     try std.testing.expectEqual(@as(usize, 2), displayWidth("a\xe2\x80\x8db")); // a ZWJ b
     try std.testing.expectEqual(@as(usize, 2), displayWidth("a\xef\xb8\x8f")); // a + VS16
-    // Space is one column and takes the fast path; a control byte does not.
+    // Space is one column and takes the fast path; a control byte does not take
+    // it, but still occupies one column as a cluster of its own (the rule
+    // "nextCluster keeps a control byte in a cluster of its own" pins): the
+    // caller decides what to draw for it, this only measures.
     try std.testing.expectEqual(@as(usize, 1), displayWidth(" "));
-    try std.testing.expectEqual(@as(usize, 0), displayWidth("\t"));
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\t"));
 }
 
 test "nextCluster keeps a control byte in a cluster of its own" {

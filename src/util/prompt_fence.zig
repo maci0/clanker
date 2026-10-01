@@ -197,8 +197,11 @@ test "a marker not beginning with `<` is still broken, by the byte-wise walk" {
     const out = neutralizeMarkers(arena, "a [[BEGIN]] b [[END]] c", &own);
     try std.testing.expect(std.ascii.findIgnoreCase(out, "[[END]]") == null);
     try std.testing.expect(std.ascii.findIgnoreCase(out, "[[BEGIN]]") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, " a ") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, " c") != null);
+    // Every byte around a marker survives: the text the model is meant to read
+    // is untouched, only the marker's first byte is rewritten.
+    try std.testing.expect(std.mem.indexOf(u8, out, "a ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, " b ") != null);
+    try std.testing.expect(std.mem.endsWith(u8, out, " c"));
 }
 
 test "neutralizeMarkers rewrites a caller-owned list, not the module's" {
