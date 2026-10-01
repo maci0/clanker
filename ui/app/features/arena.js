@@ -11,11 +11,25 @@
 
 import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh, plural } from "../core/utils.js";
 import * as kit from "../core/kit.js";
-import { showLoadError } from "../core/ui.js";
+import { showLoadError, toast } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive } from "../core/stream.js";
 
 function byId(id) { return document.getElementById(id); }
+
+/* #arena-status is off the app's status mirror (app.js says why): the running
+   match rewrites it every poll tick, so mirroring it would toast every round.
+   The failures that would then have nowhere to go are shown here instead —
+   a poll that gave up leaves the last frame standing with nothing saying why,
+   which is the one state a user cannot act on. Announced and shown, in that
+   order, so a missing toast host costs the screen reader nothing. */
+function arenaToast(msg) {
+  var status = byId("arena-status");
+
+  if (status) { status.textContent = msg; }
+
+  toast(msg);
+}
 
 // Same hash-to-hue as the Fleet roster, so the same peer is the same colour in
 // both views.
@@ -145,15 +159,13 @@ function fetchMatch(id, quiet) {
       state.pollFails += 1;
       if (state.pollFails < POLL_GIVE_UP) return null;
       stopPolling();
-      if (status) {
-        status.textContent = "Lost track of match " + id + " after " + state.pollFails +
-          " failed updates (" + err.message + "). Refresh to pick it up again.";
-      }
+      arenaToast("Lost track of match " + id + " after " + state.pollFails +
+        " failed updates (" + err.message + "). Refresh to pick it up again.");
       return null;
     }
     stopPolling();
     var msg = "Could not load match: " + err.message;
-    if (status) status.textContent = msg;
+    arenaToast(msg);
     // Same trap as Compare: a failed open used to leave the last match's
     // transcript and stage up, so the picker click looked like it worked.
     var chips = byId("arena-combatants");
@@ -194,7 +206,7 @@ export function loadArenaView() {
     return fetchMatch(state.id || matches[0].id, false);
   }).catch(function (err) {
     var msg = "Could not load matches: " + err.message;
-    if (status) status.textContent = msg;
+    arenaToast(msg);
     showLoadError(byId("arena-list"), msg, loadArenaView);
   });
 }
@@ -471,9 +483,10 @@ function ensure3d() {
     mode3d = false;
     try { window.localStorage.setItem("arena3d", "0"); } catch (_) {}
     syncStageMode();
-    var status = byId("arena-status");
-    if (status) status.textContent = "3D stage unavailable (" + err.message + "); using the 2D stage.";
     renderMatch();
+    // After the re-render: renderMatch rewrites #arena-status with the match's
+    // own line, so announcing first would be overwritten in the same tick.
+    arenaToast("3D stage unavailable (" + err.message + "); using the 2D stage.");
     return null;
   });
 }

@@ -4925,15 +4925,14 @@ SUGGESTIONS.forEach(function (text) {
 
 /* ---------- status, said out loud and shown ---------- */
 
-/* Every view writes progress and failures into its own sr-only live region.
-   Fifty call sites did that and none of them were visible: clicking Compact
-   or Export or Save prompt produced no sign anything had happened unless you
-   were using a screen reader. Rather than change fifty call sites and leave
-   the two able to drift, the regions are observed and mirrored here. */
+/* Every view writes progress and failures into its own sr-only live region,
+   and fifty call sites did that with nothing visible on the page. Rather than
+   change them and leave the two channels able to drift, the regions are
+   observed and mirrored to a toast here. */
 function showToast(text) { return uiToast(text); }
 
 /* Plugin views build their own live region with their chrome, well after this
-   runs, so the mirror has to be joinable rather than a fixed list of ids. */
+   runs, so the mirror has to be joinable. */
 var observeStatusNode = function () {};
 
 if (window.MutationObserver) {
@@ -4964,15 +4963,16 @@ if (window.MutationObserver) {
       if (shown) statusToasts.set(el0, shown);
     });
   });
-  ["session-status", "run-status", "chat-status", "board-status", "webui-plugins-status", "tools-status", "logs-status", "goals-status",
-   "knowledge-status", "prompts-status", "models-status", "fleet-status",
-   "progress-status", "settings-status", "skills-status", "workflows-status"].forEach(function (id) {
-    var node = document.getElementById(id);
-    if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
-  });
-  observeStatusNode = function (node) {
+  /* Derived from the markup, not kept by hand: the list this replaced was
+     missing #models-live-status and #models-catalog-status, so Models' Live
+     and Discover panels said their failures to a screen reader alone.
+     #arena-status is the exemption; the view toasts its own failures. */
+  var watch = function (node) {
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   };
+
+  document.querySelectorAll(".sr-only[aria-live]:not(#arena-status)").forEach(watch);
+  observeStatusNode = watch;
 }
 
 /* ---------- saved prompts ---------- */

@@ -46,11 +46,18 @@ function ensure3dHarness(stubBehaviour) {
   const from = js.indexOf("function ensure3d() {");
   const to = js.indexOf("\nfunction toggle3d()", from);
   assert.ok(from >= 0 && to > from, "ensure3d is still a top-level function in arena.js");
-  const source = js.slice(from, to).replace("import(", "__import(");
+  // arenaToast rides along: ensure3d's fallback reaches a sighted user through
+  // it, so the harness runs the shipped one rather than a stand-in. It is a
+  // slice of its own because everything between the two functions is exports
+  // the vm cannot parse.
+  const toastFrom = js.indexOf("function arenaToast(msg) {");
+  const toastTo = js.indexOf("\n}\n", toastFrom) + 3;
+  assert.ok(toastFrom >= 0 && toastTo > toastFrom, "arenaToast is still a top-level function in arena.js");
+  const source = js.slice(toastFrom, toastTo) + js.slice(from, to).replace("import(", "__import(");
 
   const box = {
     imports: 0, mounts: 0, unmounts: 0, statusText: "", mode3dAfter: null,
-    stored: {}
+    stored: {}, toasted: []
   };
 
   const stub = {
@@ -79,6 +86,7 @@ function ensure3dHarness(stubBehaviour) {
     function byId(id) { return (nodes[id] = nodes[id] || { id: id, textContent: "", hidden: false, setAttribute: function () {} }); }
     function syncStageMode() {}
     function renderMatch() {}
+    function toast(msg) { box.toasted.push(msg); return msg; }
     function __import() { box.imports += 1; if (importFails) return Promise.reject(new Error("404")); return Promise.resolve(stub); }
   `;
 
@@ -139,6 +147,10 @@ test("a mount that fails falls back to the 2D stage and says so", async function
     assert.equal(h.box.mode3dAfter, false, mode + ": the view drops back to 2D");
     assert.equal(h.box.stored.arena3d, "0", mode + ": the browser preference is cleared");
     assert.match(h.box.statusText, /3D stage unavailable/, mode + ": the status line says why");
+    // #arena-status is off the app's status mirror (it is rewritten every poll
+    // tick), so this message also has to reach a sighted user directly.
+    assert.equal(h.box.toasted.length, 1, mode + ": the fallback is shown, not only announced");
+    assert.match(h.box.toasted.at(0), /3D stage unavailable/, mode + ": the toast says why");
   }
 });
 
