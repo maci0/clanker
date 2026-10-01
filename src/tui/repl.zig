@@ -3389,7 +3389,7 @@ const Model = struct {
         if (official) {
             const t = turn.?;
             self.session_tokens +|= t.prompt_tokens +| t.completion_tokens;
-            if (t.cost_usd) |c| self.session_cost = (self.session_cost orelse 0) + c;
+            if (t.cost_usd) |c| self.session_cost = stats_mod.addSessionCost(self.session_cost, c);
             self.session_prompt +|= t.prompt_tokens;
             self.session_completion +|= t.completion_tokens;
             self.session_cache_hit +|= t.cache_hit_tokens;

@@ -26,6 +26,7 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const session = @import("../agent/session.zig");
+const token_stats = @import("../stats/tokens.zig");
 
 /// Everything one completed turn is worth reporting. Zero-valued fields are
 /// omitted from the rendered line rather than printed as zeroes (see the
@@ -155,6 +156,19 @@ fn writeTurn(w: *std.Io.Writer, s: TurnStats) !void {
         });
     }
     try w.writeAll("]");
+}
+
+/// Folds one turn's cost into a running session total, saturating.
+///
+/// The status bar prints the total with `{d:.2}`, which writes `inf` verbatim,
+/// so a non-finite total is a literal `$inf` on a repainting row. A plain `+`
+/// reaches it: the per-turn cost is itself a saturating total
+/// (`token_stats.addCost`), and adding two of those overflows. `token_stats`
+/// owns the one saturating rule for a cost sum, so the REPL borrows it rather
+/// than keeping a second, unchecked one.
+pub fn addSessionCost(running: ?f64, turn: f64) ?f64 {
+    const base = running orelse 0;
+    return token_stats.addCost(base, turn);
 }
 
 /// Session-lifetime strip, same fields as the web UI's `#run-metrics`.
@@ -330,6 +344,32 @@ pub fn formatSummaryNotice(alloc: std.mem.Allocator, swallowed: usize) ![]u8 {
 }
 
 // ------------------------------------------------------------------ tests --
+
+test "a session cost total stays finite, and the status row never prints $inf" {
+    // The status bar formats the total with `{d:.2}`, which writes a
+    // non-finite value as the literal `inf`. A plain `+` reached that after
+    // two turns whose per-turn cost was itself the saturated maximum.
+    const big = std.math.floatMax(f64);
+    const folded = addSessionCost(addSessionCost(null, big), big);
+    try std.testing.expect(folded != null);
+    const total = folded orelse unreachable;
+    try std.testing.expect(std.math.isFinite(total));
+
+    // And the value the status bar formats is a number, not `inf`. The
+    // buffer is wide because `{d:.2}` on a saturated total is 309 digits; the
+    // point of the check is what the string holds, not how long it is.
+    var buf: [400]u8 = undefined;
+    const printed = try std.fmt.bufPrint(&buf, "${d:.2}", .{total});
+    try std.testing.expect(std.mem.indexOf(u8, printed, "inf") == null);
+
+    // The ordinary path is untouched: a first priced turn starts the total
+    // (rather than printing $0.00 for an unpriced session), and turns add.
+    const unpriced = addSessionCost(null, 0.0031);
+    try std.testing.expect(unpriced != null);
+    const two = addSessionCost(unpriced, 0.0031);
+    try std.testing.expect(two != null);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0062), two orelse unreachable, 1e-9);
+}
 
 test "tokensPerSecond divides completion tokens by wall seconds" {
     try std.testing.expectApproxEqAbs(@as(f64, 100), tokensPerSecond(500, 5000), 0.001);

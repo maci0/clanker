@@ -100,10 +100,26 @@ pub const Stat = struct {
 /// reports a cost prints it with `{d:.6}`, which writes `inf`: an invalid JSON
 /// token in `/api/stats` and in the `cost` field of the next
 /// state/token_stats.jsonl record. Saturating keeps the output parseable.
+///
+/// Saturation is not the negative guard. `addCost(0, -1.5)` is a finite sum,
+/// so a negative term survives it and subtracts real spend from a real total.
+/// `sanitizedCost` is where that is refused.
 pub fn addCost(a: f64, b: f64) f64 {
     if (!std.math.isFinite(a) or !std.math.isFinite(b)) return std.math.floatMax(f64);
     const sum = a + b;
     return if (std.math.isFinite(sum)) sum else std.math.floatMax(f64);
+}
+
+/// What a logged cost contributes. A cost is never negative and never
+/// non-finite, so a record carrying one is not a cost record: `1e999` parses
+/// to `+inf` (`std.json` does not refuse an out-of-range float) and a
+/// hand-edited or truncated line can carry a negative.
+///
+/// Both parsers of the log call this. `parseRecords` carried the rule inline
+/// and `aggregateFold` did not, so one file reported one cost through
+/// `clanker stats` and another through `loadAll`.
+pub fn sanitizedCost(c: f64) f64 {
+    return if (std.math.isFinite(c) and c >= 0) c else 0;
 }
 
 fn subPath(arena: std.mem.Allocator, state_dir: []const u8) ![]const u8 {
@@ -213,13 +229,12 @@ fn parseRecords(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, path: []
     while (lines.next()) |line| {
         if (line.len == 0) continue;
         var rec = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
-        // A hand-edited or truncated line can carry a cost no arithmetic
-        // downstream can survive: `1e999` parses to +inf, and every sum this
-        // record feeds (`aggregate`, `totals`) and every surface that prints
-        // it (`{d:.6}` in statsJSON) then emits the invalid JSON token `inf`,
-        // breaking the next read of the file. A cost is never negative and
-        // never non-finite, so a record carrying one is not a cost record.
-        if (!std.math.isFinite(rec.cost) or rec.cost < 0) rec.cost = 0;
+        // Same rule `aggregateFold` applies below, so one file reports one
+        // cost whichever path reads it. See `sanitizedCost` for why a logged
+        // cost needs refusing at all: `1e999` parses to +inf, and the surface
+        // that prints it (`{d:.6}` in statsJSON) then writes the invalid JSON
+        // token `inf` back into this file.
+        rec.cost = sanitizedCost(rec.cost);
         try out.append(arena, rec);
     }
     return out.toOwnedSlice(arena);
@@ -447,7 +462,7 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
         gop.value_ptr.total_tokens += r.total_tokens;
         gop.value_ptr.cache_hit += r.cache_hit;
         gop.value_ptr.cache_miss += r.cache_miss;
-        gop.value_ptr.cost = addCost(gop.value_ptr.cost, r.cost);
+        gop.value_ptr.cost = addCost(gop.value_ptr.cost, sanitizedCost(r.cost));
         gop.value_ptr.duration_ms += r.duration_ms;
         if (r.ok) gop.value_ptr.ok_calls += 1 else gop.value_ptr.error_calls += 1;
         if (r.ok) if (r.thinking_level) |level| {
@@ -638,6 +653,38 @@ test "a non-finite or absurd cost in the log cannot reach the JSON surfaces" {
     try std.testing.expect(std.mem.indexOf(u8, json, "inf") == null);
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{});
     try std.testing.expectEqual(@as(i64, 4), parsed.object.get("stats").?.array.items[0].object.get("calls").?.integer);
+}
+
+test "a negative cost in the log reads as zero, on the cached path too" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // The non-finite test above only proves the SUM is finite: its `-1` rides
+    // along with two 1e308 records, so the sum saturates and the negative is
+    // invisible. A log whose only damage is the negative is the shape that
+    // shows it. `parseRecords` (the `loadAll` path) has always refused a
+    // negative cost outright; `aggregateFold` -- the cached path every
+    // `clanker stats`, `GET /api/stats` and `ck_stats` takes -- folded it in
+    // unguarded, so the same file reported no cost on one path and a negative
+    // cost on the other.
+    const lines =
+        \\{"ts":1,"provider":"p","model":"m","prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"cache_hit":0,"cache_miss":0,"cost":-1.5,"duration_ms":10,"ok":true}
+        \\
+    ;
+    try env.tmp.dir.writeFile(io, .{ .sub_path = stat_path, .data = lines });
+
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), stats.len);
+    try std.testing.expect(stats[0].cost >= 0);
+    try std.testing.expectEqual(@as(f64, 0), stats[0].cost);
+
+    // Same rule through the other parser of the same file, so the two cannot
+    // drift again: the divergence was that only one of them had the guard.
+    const all = try loadAll(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), all.len);
+    try std.testing.expectEqual(@as(f64, 0), all[0].cost);
 }
 
 test "append + aggregate groups by provider/model and sums" {
