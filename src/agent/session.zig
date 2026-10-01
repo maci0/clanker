@@ -423,14 +423,22 @@ fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator) !StoredMessage
 
 const StoredMessageList = struct { items: []const StoredMessage };
 
+/// An empty column is an absent list, which is the common case and the one
+/// the `[]` the writer stores makes cheap. Anything else that will not parse
+/// is a row this process cannot read, not an empty list: `catch &.{}` here
+/// turned a corrupted `tool_calls` column into an assistant message with no
+/// tool calls, and the transcript then went to the model missing the call it
+/// had made (and the tool result that answered it), or 400'd on a `tool`
+/// message with no preceding call. The error reaches `loadStored`'s caller,
+/// which reports the session rather than rendering a half-conversation.
 fn decodeImages(arena: std.mem.Allocator, raw: []const u8) ![]const StoredImage {
     if (std.mem.trim(u8, raw, " \t\r\n").len == 0 or std.mem.eql(u8, raw, "[]")) return &.{};
-    return std.json.parseFromSliceLeaky([]StoredImage, arena, raw, .{ .ignore_unknown_fields = true }) catch &.{};
+    return std.json.parseFromSliceLeaky([]StoredImage, arena, raw, .{ .ignore_unknown_fields = true });
 }
 
 fn decodeToolCalls(arena: std.mem.Allocator, raw: []const u8) ![]const StoredToolCall {
     if (std.mem.trim(u8, raw, " \t\r\n").len == 0 or std.mem.eql(u8, raw, "[]")) return &.{};
-    return std.json.parseFromSliceLeaky([]StoredToolCall, arena, raw, .{ .ignore_unknown_fields = true }) catch &.{};
+    return std.json.parseFromSliceLeaky([]StoredToolCall, arena, raw, .{ .ignore_unknown_fields = true });
 }
 
 /// Loads a session from `<sessions_dir>/<id>.db`.
@@ -1391,6 +1399,53 @@ test "a saved session round-trips messages, attachments and the system prompt" {
     try std.testing.expectEqual(@as(usize, 1), metas.len);
     try std.testing.expectEqual(@as(usize, 3), metas[0].messages);
     try std.testing.expect(metas[0].bytes > 0);
+}
+
+test "a session whose images or tool_calls column will not parse is reported, not read as empty" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{
+        .{ .role = .assistant, .content = "", .tool_calls = &.{
+            .{ .id = "call_1", .name = "read_file", .arguments = "{}" },
+        } },
+        .{ .role = .tool, .tool_call_id = "call_1", .content = "{\"ok\":true}" },
+    };
+    try saveSession(io, arena, dir, .{
+        .id = "corruptcols",
+        .title = "corrupt columns",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+    });
+
+    // Corrupt the stored columns the way a truncated or hand-edited row
+    // would. Reading these back as empty is what used to happen: the load
+    // succeeded, the assistant message arrived with no tool_calls, and the
+    // transcript went to the model missing the call and its answer -- or the
+    // `tool` row was sent with nothing to answer and the provider 400'd.
+    var conn = try openDb(arena, dir, "corruptcols");
+    defer conn.close();
+    try conn.exec(
+        \\UPDATE messages SET tool_calls = '[{"id":' WHERE role = 'assistant';
+        \\UPDATE messages SET images = 'not json at all' WHERE role = 'tool';
+    );
+    // Whatever the JSON layer names it, the point is that the error reaches
+    // the caller at all: `catch &.{}` made this a success carrying a
+    // transcript whose tool_calls had silently vanished.
+    try std.testing.expectError(
+        error.UnexpectedEndOfInput,
+        loadSession(io, std.testing.allocator, arena, dir, "corruptcols"),
+    );
+
+    // The empty fast path is unchanged: an absent column is an absent list.
+    try std.testing.expectEqual(@as(usize, 0), (try decodeImages(arena, "[]")).len);
+    try std.testing.expectEqual(@as(usize, 0), (try decodeToolCalls(arena, " ")).len);
+    // And a well-formed column still reads back as the list it was.
+    try std.testing.expectEqual(@as(usize, 1), (try decodeToolCalls(arena, "[{\"id\":\"a\",\"name\":\"n\",\"arguments\":\"{}\"}]")).len);
 }
 
 test "a steered message round-trips as the user's own words plus the flag" {

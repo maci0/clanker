@@ -67,8 +67,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // views (--dump-config, {"section":...}) already withhold both. This
         // dump is what an agent run calls, so leaving it raw would put a
         // credential in every transcript that asked to see the config.
-        const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml unreadable");
-        const local = lib.readConfigFile("config.local");
+        const base = lib.readConfigFile("config") catch |err| {
+            return lib.failErr(out, err, "reading config.toml");
+        } orelse return lib.fail(out, "config.toml unreadable");
+        // A local override that exists but cannot be read is not an absent
+        // override: reporting the committed file alone hands back a config
+        // dump missing the settings that are actually in force, with nothing
+        // saying so.
+        const local = lib.readConfigFile("config.local") catch |err| return lib.failErr(out, err, "reading config.local.toml");
         try text.appendSlice(lib.alloc, "=== ");
         try text.appendSlice(lib.alloc, base.name);
         try text.appendSlice(lib.alloc, " ===\n");
@@ -154,7 +160,13 @@ fn setKey(parsed: std.json.Value, out: *lib.Out) !void {
         error.OutOfMemory => return error.OutOfMemory,
     };
 
-    const original: []const u8 = if (lib.readConfigFile("config.local")) |l| l.text else "";
+    // Only an absent file means "start the document here". A file that exists and
+    // cannot be read must refuse the set: `original` is the whole document the
+    // write below replaces, so treating a denied or over-cap read as `""`
+    // rewrote the operator's entire local override with the one key being set,
+    // and the reply named only that key as the change.
+    const original: []const u8 = if (lib.readConfigFile("config.local") catch |err|
+        return lib.failErr(out, err, "reading config.local.toml")) |l| l.text else "";
     // `fileKey`, not `key`: the merged JSON is keyed by struct field names, and
     // `[memory.vector]`'s two keys are the one place those differ on disk.
     const new_text = try logic.setKey(lib.alloc, original, logic.fileKey(key), rendered);

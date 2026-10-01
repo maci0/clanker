@@ -806,13 +806,20 @@ pub fn fsRead(path: []const u8) FsError![]const u8 {
 pub const ConfigSource = struct { name: []const u8, text: []const u8 };
 
 /// Reads `<stem>.toml`. TOML is canonical; there is no `.json` fallback,
-/// matching src/config.zig. Returns null when the file doesn't exist, so a
+/// matching src/config.zig. Returns null when the file *does not exist*, so a
 /// config layer that simply isn't there (e.g. no local override) is a normal
-/// skip, not an error. For structured fields prefer `harnessConfig()`; this
-/// is for tools that need the raw file bytes (config's dump).
-pub fn readConfigFile(comptime stem: []const u8) ?ConfigSource {
-    if (fsRead(stem ++ ".toml") catch null) |t| return .{ .name = stem ++ ".toml", .text = t };
-    return null;
+/// skip, not an error. Every other read failure is reported instead of
+/// folded into that null: `config_view`'s `set` uses the read as the document
+/// it then rewrites in full, so a denied or over-cap `config.local.toml` read
+/// as "absent" and the write replaced every existing override with the one
+/// key being set. For structured fields prefer `harnessConfig()`; this is for
+/// tools that need the raw file bytes (config's dump).
+pub fn readConfigFile(comptime stem: []const u8) FsError!?ConfigSource {
+    const t = fsRead(stem ++ ".toml") catch |err| switch (err) {
+        error.NotFound => return null,
+        else => |e| return e,
+    };
+    return ConfigSource{ .name = stem ++ ".toml", .text = t };
 }
 
 /// Lists file names under an allowed directory (JSON string array).

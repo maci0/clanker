@@ -14112,9 +14112,19 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
-            const new_id = session.forkSession(io, gpa, arena, "state/sessions", src_id) catch {
-                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
-                return;
+            // Only a missing database means "no such session"; the fork refused because
+            // the transcript would not load is the server's fault, and 404 sent
+            // the operator looking for a conversation that exists.
+            const new_id = session.forkSession(io, gpa, arena, "state/sessions", src_id) catch |err| switch (err) {
+                error.FileNotFound => {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                    return;
+                },
+                else => |other| {
+                    log.log(.error_, "POST /api/sessions/{s}/fork: could not be read: {s}", .{ src_id, @errorName(other) });
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the session database could not be read\"}");
+                    return;
+                },
             };
             var fork_buf: [256]u8 = undefined;
             const fork_body = std.fmt.bufPrint(&fork_buf, "{{\"ok\":true,\"id\":\"{s}\"}}", .{new_id}) catch return;
@@ -14130,9 +14140,19 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
-            const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch {
-                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
-                return;
+            // Only a missing database means "no such session"; a transcript that will
+            // not load is a server-side fault and 404 pointed the operator at
+            // a session that has been there the whole time.
+            const bytes = compactSession(io, gpa, arena, src_id, cfg.agent.compact_threshold_bytes) catch |err| switch (err) {
+                error.FileNotFound => {
+                    respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                    return;
+                },
+                else => |other| {
+                    log.log(.error_, "POST /api/sessions/{s}/compact: could not be read: {s}", .{ src_id, @errorName(other) });
+                    respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the session database could not be read\"}");
+                    return;
+                },
             };
             var cbuf: [128]u8 = undefined;
             const cbody = std.fmt.bufPrint(&cbuf, "{{\"ok\":true,\"bytes\":{d}}}", .{bytes}) catch return;
@@ -14205,9 +14225,20 @@ fn handleSessions(
             respond(stream, 200, "OK", "{\"ok\":true}");
             return;
         }
-        const s = session.loadSession(io, gpa, arena, "state/sessions", id) catch {
-            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
-            return;
+        // Only a missing database means "no such session". Anything else --
+        // a row this process cannot read, a messages column that will not
+        // parse -- is the server's problem, and answering 404 sent an operator
+        // looking for a conversation that has been there the whole time.
+        const s = session.loadSession(io, gpa, arena, "state/sessions", id) catch |err| switch (err) {
+            error.FileNotFound => {
+                respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+                return;
+            },
+            else => |other| {
+                log.log(.error_, "GET /api/sessions/{s}: could not be read: {s}", .{ id, @errorName(other) });
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the session database could not be read\"}");
+                return;
+            },
         };
         const one = sessionJSON(arena, s) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"session encode failed\"}");
