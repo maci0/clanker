@@ -241,8 +241,8 @@ pub fn contextMeter(buf: []u8, used: usize, window: u32) ?[]const u8 {
 //   * `Agent.maybeCompactMessages` replaces the middle of the conversation
 //     with an LLM-written summary mid-turn once it passes
 //     `agent.compact_threshold_bytes`. That one happens inside `Agent.run`,
-//     which reports it only to the log, so it is detected after the fact from
-//     the summary message it leaves behind (`summaryState`).
+//     which reports it through `Agent.on_compact` with the number of messages
+//     it swallowed, so nothing has to be recovered from the transcript.
 
 /// A `session.compactMessages` call, weighed either side.
 pub const Compaction = struct {
@@ -297,68 +297,19 @@ pub fn historyTokens(messages: []const types.Message) usize {
     return n;
 }
 
-/// How many mid-turn compactions a conversation carries, and how many
-/// messages they swallowed between them.
-pub const SummaryState = struct {
-    /// One per compaction that has happened in this conversation.
-    markers: usize = 0,
-    /// Messages named as compacted by those markers. Only the summarizing
-    /// forms of the placeholder carry a count, so this can lag `markers`.
-    messages: usize = 0,
-};
-
-/// Counts the summary messages `Agent.maybeCompactMessages` leaves behind.
-///
-/// A marker scan rather than a callback because `Agent` exposes no compaction
-/// hook (it logs and moves on), and the REPL's alternative was to say nothing
-/// at all about the compaction the roadmap called out as invisible. Both
-/// placeholder spellings the agent can write start with one of these two
-/// prefixes, and the summarizing ones name the number of messages they
-/// replaced, which is parsed out when present.
-///
-/// The cost of the shortcut: a user message that itself opens with one of the
-/// prefixes would be miscounted. A proper `Agent.on_compact` hook in
-/// `agent/loop.zig` would retire this function; it is tracked as follow-up
-/// work in `docs/prds/0005-repl-tui.md`.
-pub fn summaryState(messages: []const types.Message) SummaryState {
-    var st: SummaryState = .{};
-    for (messages) |m| {
-        const c = m.content orelse continue;
-        if (!std.mem.startsWith(u8, c, "[conversation summary") and
-            !std.mem.startsWith(u8, c, "[earlier conversation compacted")) continue;
-        st.markers += 1;
-        if (firstNumber(c)) |n| st.messages +|= n;
-    }
-    return st;
-}
-
-/// The first run of digits in `s`, or null. Used only to lift the message
-/// count out of a summary placeholder.
-fn firstNumber(s: []const u8) ?usize {
-    var i: usize = 0;
-    while (i < s.len and !std.ascii.isDigit(s[i])) : (i += 1) {}
-    if (i == s.len) return null;
-    var n: usize = 0;
-    while (i < s.len and std.ascii.isDigit(s[i])) : (i += 1) {
-        n = n *| 10 +| (s[i] - '0');
-    }
-    return n;
-}
-
 /// `[context compacted: 42 earlier messages replaced by a summary to fit the
-/// model window]`, or null when no new summary appeared over the turn. The
-/// count is omitted when the placeholder did not carry one (the static
-/// fallback the agent writes when summarization itself fails).
-pub fn formatSummaryNotice(alloc: std.mem.Allocator, before: SummaryState, after: SummaryState) !?[]u8 {
-    if (after.markers <= before.markers) return null;
-    const grew = after.messages -| before.messages;
-    if (grew == 0) {
+/// model window]`. The count is the one the agent loop reports, so the notice
+/// says what the model lost even when the placeholder it left behind names no
+/// count (the static fallback the loop writes when summarization itself
+/// fails).
+pub fn formatSummaryNotice(alloc: std.mem.Allocator, swallowed: usize) ![]u8 {
+    if (swallowed == 0) {
         return try alloc.dupe(u8, "[context compacted: earlier messages replaced by a summary to fit the model window]");
     }
     return try std.fmt.allocPrint(
         alloc,
         "[context compacted: {d} earlier {s} replaced by a summary to fit the model window]",
-        .{ grew, if (grew == 1) "message" else "messages" },
+        .{ swallowed, if (swallowed == 1) "message" else "messages" },
     );
 }
 
@@ -521,36 +472,19 @@ test "historyBytes counts tool-call arguments, not just content" {
     try std.testing.expectEqual(@as(usize, 5), historyTokens(&msgs));
 }
 
-test "summaryState finds both placeholder spellings and lifts the count out" {
-    const msgs = [_]types.Message{
-        .{ .role = .system, .content = "sys" },
-        .{ .role = .user, .content = "[conversation summary \u{2014} 42 earlier messages compacted]\nblah" },
-        .{ .role = .user, .content = "[earlier conversation compacted \u{2014} the context is summarized above]" },
-        .{ .role = .assistant, .content = "ordinary answer mentioning 7 things" },
-    };
-    const st = summaryState(&msgs);
-    try std.testing.expectEqual(@as(usize, 2), st.markers);
-    try std.testing.expectEqual(@as(usize, 42), st.messages);
-}
-
-test "formatSummaryNotice fires only on a new summary, with or without a count" {
-    const quiet = try formatSummaryNotice(std.testing.allocator, .{ .markers = 1, .messages = 42 }, .{ .markers = 1, .messages = 42 });
-    try std.testing.expectEqual(@as(?[]u8, null), quiet);
-
-    const counted = (try formatSummaryNotice(
-        std.testing.allocator,
-        .{ .markers = 0, .messages = 0 },
-        .{ .markers = 1, .messages = 42 },
-    )).?;
+test "formatSummaryNotice names what the agent loop said it swallowed, or not at all" {
+    const counted = try formatSummaryNotice(std.testing.allocator, 42);
     defer std.testing.allocator.free(counted);
     try std.testing.expectEqualStrings("[context compacted: 42 earlier messages replaced by a summary to fit the model window]", counted);
 
-    // The static fallback placeholder names no count; the notice still fires.
-    const uncounted = (try formatSummaryNotice(
-        std.testing.allocator,
-        .{ .markers = 0, .messages = 0 },
-        .{ .markers = 1, .messages = 0 },
-    )).?;
+    const one = try formatSummaryNotice(std.testing.allocator, 1);
+    defer std.testing.allocator.free(one);
+    try std.testing.expectEqualStrings("[context compacted: 1 earlier message replaced by a summary to fit the model window]", one);
+
+    // A compaction the loop reported as swallowing nothing still happened (the
+    // static fallback placeholder names no count); the notice says so rather
+    // than inventing a number.
+    const uncounted = try formatSummaryNotice(std.testing.allocator, 0);
     defer std.testing.allocator.free(uncounted);
     try std.testing.expectEqualStrings("[context compacted: earlier messages replaced by a summary to fit the model window]", uncounted);
 }

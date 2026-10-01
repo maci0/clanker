@@ -23,6 +23,11 @@ var EDGE_CLASS = "fill-none stroke-border stroke-[1.5] forced-colors:stroke-[Can
 export function metricsFor(n) {
   if (n.kind === "llm") return fmtInt(n.prompt_tokens) + "/" + fmtInt(n.completion_tokens) + " tok \u00b7 " + fmtMs(n.duration_ms);
   if (n.kind === "tool") return fmtInt(n.result_bytes) + " B \u00b7 " + fmtMs(n.duration_ms);
+  // A check node's metric is its verdict, which is the same mark the CLI
+  // renderer writes (`tools/zig/graph.zig`); a decision node carries the
+  // answer the human gave, not a byte count.
+  if (n.kind === "check") return n.ok ? "pass" : "FAIL";
+  if (n.kind === "decision") return "answered by hand";
   return "answer " + fmtUnit(n.result_bytes, "byte");
 }
 
@@ -31,7 +36,11 @@ export function buildStages(nodes) {
   var final = null;
   nodes.forEach(function (n) {
     if (n.kind === "llm") stages.push({ iteration: n.iteration, llm: n, tools: [] });
-    else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
+    // A verdict and an answered ask are steps of the iteration that produced
+    // them, exactly as the tool call beside them is; dropping them because
+    // they are neither `tool` nor `final` hid a failed gate from the run graph
+    // while the CLI renderer printed it.
+    else if ((n.kind === "tool" || n.kind === "check" || n.kind === "decision") && stages.length) stages[stages.length - 1].tools.push(n);
     else if (n.kind === "final") final = n;
   });
   return { stages, final };
@@ -75,10 +84,17 @@ export function slowestWorthNaming(totals) {
 
 export function graphSummaryText(built) {
   var parts = ["Execution graph:"];
+  // The list holds the iteration's tool calls and, beside them, the verdict a
+  // check tool returned and an answered ask, so each step names its own kind
+  // rather than being counted as a tool call.
+  function stepName(t) {
+    var kind = t.kind === "check" ? "check" : t.kind === "decision" ? "question" : "tool";
+    return kind + " " + (t.label || "");
+  }
   built.stages.forEach(function (stage) {
     var seg = "iteration " + stage.iteration + " called the model";
-    if (stage.tools.length === 1) seg += ", then ran 1 tool (" + stage.tools[0].label + ")";
-    else if (stage.tools.length > 1) seg += ", then ran " + stage.tools.length + " tools in parallel (" + stage.tools.map(function (t) { return t.label; }).join(", ") + ")";
+    if (stage.tools.length === 1) seg += ", then ran " + stepName(stage.tools[0]);
+    else if (stage.tools.length > 1) seg += ", then ran " + stage.tools.length + " steps in parallel (" + stage.tools.map(stepName).join(", ") + ")";
     parts.push(seg + ".");
   });
   parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
@@ -111,7 +127,10 @@ export function toDagInput(built) {
     if (stage.tools.length) {
       parents = stage.tools.map(function (tn) {
         var tid = "n" + data.length;
-        data.push({ id: tid, parentIds: [llmId], kind: "tool", node: tn, iteration: stage.iteration });
+        // The step's own kind, like `stage.llm`'s: a verdict or an answered
+        // ask is not a tool call, and stamping "tool" on it is what the
+        // `kind` filter and the node's own styling key off.
+        data.push({ id: tid, parentIds: [llmId], kind: tn.kind || "tool", node: tn, iteration: stage.iteration });
         return tid;
       });
     } else {

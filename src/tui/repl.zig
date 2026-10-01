@@ -508,6 +508,18 @@ fn onToolResult(elapsed_ms: u64) void {
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
 
+/// The agent loop's own report of a mid-turn compaction, which used to be
+/// recovered afterwards by counting the summary placeholders the transcript
+/// happened to hold. It rides `bridge_tool_lines`, drained by `finishTurn`
+/// once the run returns, so the notice lands in the turn in the order the
+/// compaction happened rather than at the end of it.
+fn onCompact(swallowed: usize) void {
+    bridge_mutex.lockUncancelable(bridge_io);
+    defer bridge_mutex.unlock(bridge_io);
+    const line = stats_mod.formatSummaryNotice(bridge_gpa, swallowed) catch return;
+    bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
+}
+
 fn onUsage(stats: agent_loop.RunStats) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
@@ -953,6 +965,7 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.on_tool_call = onToolCall;
     a.on_tool_result = onToolResult;
     a.on_usage = onUsage;
+    a.on_compact = onCompact;
     a.stop_flag = &bridge_stop_flag;
     // Mid-run steering: messages typed into the composer while this turn
     // runs are drained between iterations, exactly as POST /api/steer feeds
@@ -3135,9 +3148,6 @@ const Model = struct {
     /// history on every frame is real work for a number that only moves when
     /// a turn ends.
     context_tokens: usize = 0,
-    /// Mid-turn compaction detector: the summary-marker state as it stood
-    /// when the current turn was submitted (see `stats.summaryState`).
-    summary_before: stats_mod.SummaryState = .{},
     /// `/theme <name>` sets this for the session, overriding `CLANKER_THEME`.
     /// Arena-owned. Null = fall back to the env var (then the default).
     theme_override: ?[]const u8 = null,
@@ -3510,21 +3520,6 @@ const Model = struct {
             if (f.anim != target) any = true;
         }
         return any;
-    }
-
-    /// Reports the *other* compaction: the one `Agent.maybeCompactMessages`
-    /// performs inside a turn once the history passes
-    /// `agent.compact_threshold_bytes`, replacing the middle of the
-    /// conversation with an LLM-written summary. That one is not a call this
-    /// file makes, and `Agent` offers no hook for it, so it is detected after
-    /// the fact from the summary message it leaves behind
-    /// (`stats.summaryState`) against the baseline `submitTask` took. Called
-    /// on the UI thread with the worker already joined.
-    fn reportMidTurnCompaction(self: *Model) void {
-        const after = stats_mod.summaryState(self.messages.items);
-        const notice = stats_mod.formatSummaryNotice(self.arena, self.summary_before, after) catch return;
-        if (notice) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
-        self.summary_before = after;
     }
 
     /// Writes the conversation to `state/sessions/<id>.db`, called after
@@ -4726,9 +4721,6 @@ const Model = struct {
         bridge_stop_flag.store(false, .release);
         bridge_turn_done.store(false, .release);
         errdefer bridge_streaming = false;
-        // Baseline for the mid-turn compaction check the tick handler makes
-        // once the worker is joined.
-        self.summary_before = stats_mod.summaryState(self.messages.items);
 
         const owned_task = self.expandMentions(try self.arena.dupe(u8, task));
         if (self.session_title.len == 0) {
@@ -5435,11 +5427,11 @@ const Model = struct {
                     bridge_mutex.lockUncancelable(bridge_io);
                     bridge_streaming = false;
                     bridge_mutex.unlock(bridge_io);
-                    // The worker is joined, so self.messages is stable:
-                    // report any compaction the agent did mid-turn, then
-                    // persist the conversation as it stands after this turn
-                    // (which may compact it again, and says so too).
-                    self.reportMidTurnCompaction();
+                    // The worker is joined, so self.messages is stable: a
+                    // mid-turn compaction was already reported by the agent
+                    // loop through `onCompact` while it ran. Persist the
+                    // conversation as it stands after this turn, which may
+                    // compact it again, and says so too.
                     self.persistSession();
                     self.context_tokens = stats_mod.historyTokens(self.messages.items);
                 }
@@ -10306,10 +10298,8 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     model.reloadTuiPlugins();
     model.command_candidates = buildCommandCandidates(arena) catch &.{};
     // A resumed conversation already occupies part of the window, so the
-    // meter and the mid-turn compaction baseline start from what was loaded
-    // rather than from zero.
+    // meter starts from what was loaded rather than from zero.
     model.context_tokens = stats_mod.historyTokens(model.messages.items);
-    model.summary_before = stats_mod.summaryState(model.messages.items);
     defer model.text_field.deinit();
     // Search state is gpa-owned rather than arena-owned (it is rebuilt on
     // every keystroke, so the arena would grow by a hit list per character),

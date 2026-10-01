@@ -452,6 +452,16 @@ pub const Agent = struct {
     /// Fired after each LLM usage fold so a live viewer can tick tokens
     /// without waiting for the run's final `done` trailer.
     on_usage: ?*const fn (RunStats) void = null,
+    /// Fired right after `maybeCompactMessages` replaces the middle of the
+    /// conversation, with the number of messages it swallowed — the same
+    /// count the summary placeholder names, so a viewer reporting the
+    /// compaction says what the model lost without re-reading the history.
+    /// Without it the REPL counted the summary placeholders it found in the
+    /// transcript, which mistook a user message opening with the same prefix
+    /// for a compaction, and reported nothing at all for the static fallback
+    /// placeholder, which names no count.
+    /// Fired on the run thread, like `on_tool_call`.
+    on_compact: ?*const fn (usize) void = null,
     /// Cumulative session-level stats across multiple runs (e.g. REPL).
     /// Updated at the end of each run() call so callers can inspect totals.
     session_stats: RunStats = .{},
@@ -1825,6 +1835,10 @@ pub const Agent = struct {
         // repeated compaction cannot turn an active task into guesswork.
         const placeholder = try compactionSummaryWithOriginalRequest(self.arena, messages.items[1..keep_start], summary);
         try compactMiddle(messages, self.arena, keep_start, placeholder);
+        // The count the placeholder carries, handed over rather than recovered
+        // from the transcript: `keep_start - 1` is exactly the number of
+        // messages that were in `messages.items[1..keep_start]`.
+        if (self.on_compact) |cb| cb(keep_start - 1);
         // Measured the same way on both sides, and the same way the threshold
         // decision measures. Comparing raw totals here would call a compaction
         // productive whenever the middle it dropped held a large tool result,
@@ -5736,4 +5750,32 @@ test "a repeated Stop-hook denial does not append the same feedback twice" {
     try std.testing.expect(try appendSystemOnce(arena, &messages, "run the e2e suite too"));
     try std.testing.expectEqual(@as(usize, 4), messages.items.len);
     try std.testing.expectEqualStrings("run the e2e suite too", messages.items[3].content.?);
+}
+
+test "the compaction count handed to on_compact is the messages the placeholder swallowed" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const filler = "x" ** 256;
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, .{ .role = .system, .content = "system prompt" });
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        try messages.append(arena, .{ .role = .user, .content = filler });
+        try messages.append(arena, .{ .role = .assistant, .content = filler });
+    }
+    const before_len = messages.items.len;
+    const estimated = Agent.estimateMessageTokens(messages.items);
+    const keep_start = Agent.compactionKeepStart(messages.items, estimated, 16) orelse return error.TestExpectedCompaction;
+
+    // What `maybeCompactMessages` passes the hook: `keep_start - 1` skips the
+    // system prompt, which is never swallowed. The REPL's notice names this
+    // number, so it must count the dropped middle and not the kept head.
+    const swallowed = keep_start - 1;
+    try std.testing.expectEqual(@as(usize, 2), swallowed);
+    // The swallowed messages become one summary placeholder, so the list
+    // shrinks by one fewer than the count the hook reports.
+    try Agent.compactMiddle(&messages, arena, keep_start, "[test summary]");
+    try std.testing.expectEqual(before_len - (swallowed - 1), messages.items.len);
 }

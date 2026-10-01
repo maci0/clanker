@@ -527,7 +527,10 @@ function renderSimpleGraph(container, g) {
   var final = null;
   nodes.forEach(function (n) {
     if (n.kind === "llm") stages.push({ llm: n, tools: [] });
-    else if (n.kind === "tool" && stages.length) stages[stages.length - 1].tools.push(n);
+    // Same three step kinds the run graph lists: a verdict and an answered ask
+    // are steps of their iteration, and the `FAIL` marker below is a check
+    // node's whole point.
+    else if ((n.kind === "tool" || n.kind === "check" || n.kind === "decision") && stages.length) stages[stages.length - 1].tools.push(n);
     else if (n.kind === "final") final = n;
   });
   stages.forEach(function (st, idx) {
@@ -539,7 +542,13 @@ function renderSimpleGraph(container, g) {
     if (st.tools.length) {
       var ul = el("ul", STAGE_TOOLS_CLASS);
       st.tools.forEach(function (t) {
-        var li = el("li", "meta", t.label + " \u00b7 " + fmtUnit(t.result_bytes || 0, "byte") + " \u00b7 " + fmtUnit(t.duration_ms || 0, "millisecond") + (t.ok === false ? " \u00b7 FAIL" : ""));
+        // A verdict names itself, the way the CLI renderer prints it: a check
+        // node records no result bytes and no timing, so the tool row's
+        // `0 B \u00b7 0 ms` was the whole line.
+        var text = t.kind === "check"
+          ? "check " + t.label + " \u00b7 " + (t.ok ? "pass" : "FAIL") + (t.detail ? " \u00b7 " + t.detail : "")
+          : t.label + " \u00b7 " + fmtUnit(t.result_bytes || 0, "byte") + " \u00b7 " + fmtUnit(t.duration_ms || 0, "millisecond") + (t.ok === false ? " \u00b7 FAIL" : "");
+        var li = el("li", "meta", text);
         if (t.ok === false) li.className += " text-danger";
         ul.appendChild(li);
       });

@@ -4,7 +4,7 @@
 // drops, so the bar never drew.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildNodeBox, graphTotals, slowestWorthNaming } from "./graph.js";
+import { buildNodeBox, buildStages, graphTotals, graphSummaryText, metricsFor, slowestWorthNaming, toDagInput } from "./graph.js";
 
 // The smallest element the builder needs: children, a className, textContent,
 // dataset, and a style object the assertions read back.
@@ -84,4 +84,48 @@ test("the slowest step is only named when one step dominates", function () {
     final: null,
   };
   assert.equal(slowestWorthNaming(graphTotals(even)), null);
+});
+
+// A verdict (`check`) and an answered ask (`decision`) are steps of the
+// iteration that produced them, exactly as the tool call beside them is. The
+// agent loop writes both (`src/agent/loop.zig`) and the CLI renderer prints
+// both (`tools/zig/graph.zig`); buildStages' `kind === "tool"` arm dropped
+// them, so a failed gate had no node at all in the web run graph.
+const verdict = { kind: "check", iteration: 1, label: "gate", detail: "3 tests failed", ok: false, duration_ms: 0 };
+const answered = { kind: "decision", iteration: 1, label: "Which backend?", output: "sqlite", ok: true };
+const readFile = { kind: "tool", iteration: 1, label: "read_file", detail: "", ok: true, duration_ms: 12 };
+const answer = { kind: "final", iteration: 2, label: "final", detail: "stop", result_bytes: 40 };
+
+const staged = buildStages([
+  { kind: "llm", iteration: 1, label: "chat", prompt_tokens: 10, completion_tokens: 5, duration_ms: 100 },
+  readFile,
+  verdict,
+  answered,
+  answer,
+]);
+
+function stepLabels(stage) {
+  return stage.tools.map(function (t) { return t.label; });
+}
+
+test("a verdict and an answered ask are steps of their iteration, not dropped", function () {
+  assert.equal(staged.stages.length, 1);
+  assert.deepEqual(stepLabels(staged.stages[0]), ["read_file", "gate", "Which backend?"]);
+  assert.equal(staged.final, answer);
+});
+
+test("a step carries its own kind into the layout, so the filter and the box agree", function () {
+  const data = toDagInput(staged);
+  assert.deepEqual(data.map(function (d) { return d.kind; }), ["llm", "tool", "check", "decision", "final"]);
+});
+
+test("a check node reads as its verdict, the mark the CLI renderer prints", function () {
+  assert.equal(metricsFor(verdict), "FAIL");
+  assert.equal(metricsFor(Object.assign({}, verdict, { ok: true })), "pass");
+});
+
+test("the spoken summary does not call a verdict a tool call", function () {
+  const said = graphSummaryText(staged);
+  assert.ok(said.indexOf("check gate") !== -1, said);
+  assert.ok(said.indexOf("question Which backend?") !== -1, said);
 });

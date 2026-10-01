@@ -350,12 +350,3 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 - Order of the remaining open items (truecolor autodetection, multimodal) is
   operator preference; ask/confirm is no longer the surprise gap relative to
   the web UI.
-- **`Agent.on_compact` hook.** Mid-turn compaction is currently *detected*
-  rather than reported: `Agent.maybeCompactMessages` logs and moves on, so
-  `stats.summaryState` recognises the summary message it left behind by its
-  two placeholder prefixes and diffs that against a baseline taken at submit.
-  It works and is unit-tested, but it couples the REPL to loop.zig's wording,
-  and a user message opening with the same prefix would be miscounted. A
-  one-field `on_compact` hook on `Agent`, fired next to the existing
-  `on_tool_call`/`on_todos` hooks, would retire the scan and let the web UI
-  surface the same event on `/api/run`'s `\x01` channel.
