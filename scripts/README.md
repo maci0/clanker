@@ -208,6 +208,17 @@ The drill stages its copy in `restore-verify/` beside the store (override with
 takes the machine down before the drill can report. `CLANKER_BACKUP_ROOT`
 points the drill at snapshots that are not under `<storage_root>/backups`.
 
+That staged copy is removed when the drill ends, and when systemd ends it for
+running past the unit's `TimeoutStartSec=2h` — the signal that timeout sends
+is handled, because an `EXIT` trap alone does not fire for it and every drill
+the timer cut off left a full second copy of the store on the volume. Copies
+left by a `SIGKILL`, or by a drill from before that handler existed, are swept
+by the next run once they are older than `CLANKER_VERIFY_SCRATCH_STALE_HOURS`
+(default 48; a live drill's copy is younger than that and is never touched).
+`backup-state.sh` does the same for its own staging directory, and the reason
+is the same in both: one full copy of the store per abandoned run is how the
+volume the backup lives on fills up while every individual backup still passes.
+
 **RPO / RTO.** RPO is bounded by the timer interval: at most 30 minutes of
 writes are lost, and `Persistent=true` runs a catch-up snapshot after downtime.
 Retention (default 30 days) also bounds how far back a point-in-time restore

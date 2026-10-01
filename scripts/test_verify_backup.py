@@ -182,6 +182,63 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("checkout-data", result.stdout)
 
+    def test_sigterm_during_the_restore_removes_the_store_sized_copy(self) -> None:
+        # The unit that runs this drill sets TimeoutStartSec, and systemd
+        # answers a run that exceeds it with SIGTERM. An EXIT trap does not
+        # fire for that, so the restore's copy of the store was left on the
+        # volume every time the timer cut a drill off, forever.
+        self.snapshot("20260901T120000Z", self.healthy_db())
+        scratch_parent = self.root / "restore-verify"
+        scratch_parent.mkdir()
+        env = dict(
+            os.environ,
+            CLANKER_BACKUP_ROOT=str(self.backup_root),
+            CLANKER_VERIFY_SCRATCH_DIR=str(scratch_parent),
+        )
+        process = subprocess.Popen(
+            [str(SCRIPT)],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            self.assertTrue(self.wait_for_scratch(scratch_parent), "drill never staged a copy")
+            process.terminate()
+            process.communicate(timeout=30)
+        finally:
+            if process.poll() is None:  # pragma: no cover - only on a hung kill
+                process.kill()
+                process.communicate()
+        self.assertEqual(sorted(p.name for p in scratch_parent.iterdir()), [])
+
+    def test_stale_drill_copies_are_swept_and_a_fresh_one_is_kept(self) -> None:
+        # What a SIGKILLed drill (or one from before the signal trap) leaves:
+        # a full copy of the store under the scratch parent, which nothing else
+        # reclaims. A copy still younger than the bound may belong to a drill
+        # running right now, so it stays.
+        self.snapshot("20260901T120000Z", self.healthy_db())
+        scratch_parent = self.root / "restore-verify"
+        stale = scratch_parent / "clanker-restore-verify.stale00"
+        fresh = scratch_parent / "clanker-restore-verify.fresh00"
+        for leftover, age_days in ((stale, 3), (fresh, 0)):
+            (leftover / "state" / "sessions").mkdir(parents=True)
+            mtime = time.time() - age_days * DAY
+            os.utime(leftover, (mtime, mtime))
+        result = self.run_verify(env_extra={"CLANKER_VERIFY_SCRATCH_DIR": str(scratch_parent)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(stale.exists(), "a three-day-old drill copy was not swept")
+        self.assertTrue(fresh.exists(), "a live drill's copy was swept out from under it")
+        self.assertEqual(
+            sorted(p.name for p in scratch_parent.iterdir()),
+            ["clanker-restore-verify.fresh00"],
+        )
+
+    def wait_for_scratch(self, scratch_parent: Path) -> bool:
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if any(scratch_parent.glob("clanker-restore-verify.*")):
+                return True
+            time.sleep(0.05)
+        return False
+
     def run_verify(
         self, *args: str, env_extra: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:

@@ -99,7 +99,17 @@ chmod 700 "$backup_root"
 # exists and this is a no-op. The name is per-run, so this trap can only ever
 # remove the directory this run created.
 staging=$(mktemp -d "$backup_root/.${timestamp}.incomplete.XXXXXXXXXX")
+# EXIT alone never fires on the signal this run is most likely to be killed
+# with: `clanker-state-backup.service` sets TimeoutStartSec=1h precisely for a
+# wedged off-site destination, and systemd answers a run that exceeds it with
+# SIGTERM. The staging tree is a full copy of the store, and until the next
+# run's stale sweep reached it (an hour later) it sat beside every good
+# snapshot, doubling the volume the backup lives on. `exit` from the handler
+# rather than a re-raise, because re-raising the signal the shell is already
+# handling does not terminate it; 143 is 128+SIGTERM, the status systemd
+# records for a signalled run.
 trap 'rm -rf -- "$staging"' EXIT
+trap 'rm -rf -- "$staging"; exit 143' TERM INT HUP
 
 # Every SQLite database in the store is WAL-mode (`src/util/sqlite.zig` sets
 # journal_mode=WAL on open) and stays open for the life of a serve/repl: one

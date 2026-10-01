@@ -168,7 +168,46 @@ fi
 scratch_parent=${CLANKER_VERIFY_SCRATCH_DIR:-$(dirname -- "$state_root")/restore-verify}
 mkdir -p -- "$scratch_parent"
 scratch=$(mktemp -d "${scratch_parent}/clanker-restore-verify.XXXXXXXXXX")
-trap 'rm -rf -- "$scratch"' EXIT
+# The EXIT trap alone never runs on the signal this drill is most likely to be
+# killed with: `clanker-state-verify.service` sets TimeoutStartSec=2h, and
+# systemd's answer to exceeding it is SIGTERM, and a shell's EXIT trap does not
+# fire for a signal it has no handler for. The copy is store-sized, so every
+# drill the timer cut off left a full second copy of `state/` beside the store
+# and nothing else ever reclaimed it -- the backup script sweeps its own stale
+# staging directories, this script had no equivalent. Trap the same signals the
+# unit can send, so a drill cut off mid-restore still cleans up after itself.
+cleanup_scratch() { rm -rf -- "$scratch"; }
+trap cleanup_scratch EXIT
+# `exit` from the handler, not a re-raise: 143 is 128+SIGTERM, the status a
+# process killed by that signal reports, so the timer's journal records the
+# drill as signalled rather than as a pass. A re-raise of the signal the shell
+# is already handling does not terminate it (the default disposition is not
+# reapplied), which left the drill running after the unit's timeout.
+trap 'cleanup_scratch; exit 143' TERM INT HUP
+
+# Leftovers from a drill this trap could not clean up (one that predates it, or
+# one SIGKILLed outright) are a full copy of the store each, and nothing else
+# reclaims them. Sweep any old enough that no live drill can still be writing
+# into one: this run's own scratch was created seconds ago, and a drill that
+# takes hours does not take days. The same age-bound reason, and the same
+# `stat -c`/`stat -f` split, the backup script uses for its staging sweep.
+sweep_stale_scratch() {
+    local dir mtime cutoff
+    cutoff=$(( $(date +%s) - drill_stale_hours * 3600 ))
+    for dir in "$scratch_parent"/clanker-restore-verify.*; do
+        [ -d "$dir" ] || continue
+        [ "$dir" != "$scratch" ] || continue
+        mtime=$(stat -c %Y -- "$dir" 2>/dev/null || stat -f %m -- "$dir" 2>/dev/null || true)
+        case "$mtime" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        [ "$mtime" -lt "$cutoff" ] || continue
+        rm -rf -- "$dir"
+        printf 'pruned stale drill copy %s\n' "${dir##*/}" >&2
+    done
+}
+drill_stale_hours=${CLANKER_VERIFY_SCRATCH_STALE_HOURS:-48}
+sweep_stale_scratch
 
 start=$(date +%s)
 kib=0
