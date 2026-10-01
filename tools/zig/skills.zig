@@ -13,6 +13,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("skills_logic.zig");
+const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -166,7 +167,12 @@ fn writeOne(out: *lib.Out, sk: Listed) !void {
     try s.beginObject();
     try writeSkillFields(&s, sk);
     try s.objectField("body");
-    try s.write(sk.body);
+    // Not `s.write`: `skills/` is an `fs_prefixes` grant, so the agent can
+    // put a byte no UTF-8 string holds into a skill file (a latin-1 quote it
+    // pasted, a truncated append), and `write` serializes an invalid-UTF-8
+    // string as an array of byte numbers — which lost the body *and* every
+    // field beside it, since the reader failed on the whole reply.
+    try utf8.writeJsonString(lib.alloc, &s, sk.body);
     try s.endObject();
     try s.endObject();
     lib.commit(out, &w);

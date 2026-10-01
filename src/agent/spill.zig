@@ -12,6 +12,7 @@ const std = @import("std");
 const types = @import("../llm/types.zig");
 const tool_out = @import("../util/tool_out.zig");
 const spill_logic = @import("spill_logic");
+const utf8 = @import("../util/utf8.zig");
 
 pub const marker = tool_out.prune_marker;
 
@@ -57,6 +58,34 @@ pub fn collectSpills(
     return out_list.toOwnedSlice(arena);
 }
 
+/// The `{"write":{...}}` request the `spill` guest is called with for `sp`.
+///
+/// Kept here rather than spelled at the call site so it can be tested: the
+/// body is verbatim pre-prune tool output, which is not guaranteed to be valid
+/// UTF-8 (a latin-1 build log, a filename off a filesystem that permits
+/// arbitrary bytes, a truncated paste). `std.json.Stringify` serializes such a
+/// string as an *array of byte numbers* rather than as a string, so the guest's
+/// own `std.json.parseFromSlice` of its input then failed and the whole write
+/// was lost, leaving a locator on the pruned message pointing at nothing. The
+/// valid path stays a plain write; only invalid bytes are replaced, with
+/// U+FFFD.
+pub fn writeInput(arena: std.mem.Allocator, sp: Spill) ![]const u8 {
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("write");
+    try s.beginObject();
+    try s.objectField("session");
+    try s.write(sp.session);
+    try s.objectField("id");
+    try s.write(&sp.id);
+    try s.objectField("content");
+    try utf8.writeJsonString(arena, &s, sp.content);
+    try s.endObject();
+    try s.endObject();
+    return enc.written();
+}
+
 /// Appends the locator line to a pruned message's content. Call only after
 /// the write succeeded, so a dangling locator is never left behind.
 pub fn applyLocator(arena: std.mem.Allocator, dst: *types.Message, id: []const u8) !void {
@@ -99,4 +128,27 @@ test "collectSpills is a no-op when the lists do not line up" {
     const pruned = [_]types.Message{.{ .role = .tool, .content = "x", .tool_call_id = "1" }};
     const spills = try collectSpills(arena_state.allocator(), "sess01ab", &pruned, &[_]types.Message{});
     try std.testing.expectEqual(@as(usize, 0), spills.len);
+}
+
+test "writeInput sends a body that is not valid UTF-8 as a string the guest can parse" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The ordinary case: byte-identical to what a plain write produced.
+    const clean = try writeInput(arena, .{ .session = "sess01ab", .id = "deadbeef".*, .content = "hello", .index = 0 });
+    try std.testing.expectEqualStrings(
+        "{\"write\":{\"session\":\"sess01ab\",\"id\":\"deadbeef\",\"content\":\"hello\"}}",
+        clean,
+    );
+
+    // The defect: a latin-1 tool result pruned and spilled. Written raw,
+    // `content` became an array of byte numbers and the guest refused its own
+    // input, so the spill was never written at all.
+    const latin1 = try writeInput(arena, .{ .session = "sess01ab", .id = "deadbeef".*, .content = "caf\xe9 log", .index = 0 });
+    try std.testing.expect(std.mem.indexOf(u8, latin1, "\"content\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, latin1, "\"content\":[") == null);
+    // And the guest can actually parse what we hand it.
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, latin1, .{});
+    try std.testing.expectEqualStrings("caf\u{fffd} log", parsed.object.get("write").?.object.get("content").?.string);
 }

@@ -57,12 +57,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         error.NotFound => lib.fail(out, "no spilled result with that id"),
         else => lib.failErr(out, err, "reading the spill"),
     };
+    // Rendered by the shared helper, not spliced here: a spilled body is
+    // verbatim tool output and need not be valid UTF-8, and a raw
+    // `Stringify.value` on those bytes writes an array of numbers where the
+    // text belongs, which loses the id with it. See `spill_logic.renderRead`.
     var w = lib.writer(out);
-    try w.writeAll("{\"ok\":true,\"id\":");
-    try std.json.Stringify.value(raw_id, .{}, &w);
-    try w.writeAll(",\"text\":");
-    try std.json.Stringify.value(text, .{}, &w);
-    try w.writeAll("}");
+    try w.writeAll(try logic.renderRead(lib.alloc, raw_id, text));
     lib.commit(out, &w);
 }
 

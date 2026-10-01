@@ -4,6 +4,7 @@
 //! functions, so the format has one host-tested home. Host-tested.
 
 const std = @import("std");
+const utf8 = @import("utf8");
 
 pub const locator_prefix = "[spill id=";
 
@@ -106,6 +107,37 @@ pub fn spillAgedOut(now_ms: i64, mtime_ms: i64, keep_ms: i64) bool {
     return now_ms - mtime_ms >= keep_ms;
 }
 
+/// The read reply: `{"ok":true,"id":...,"text":...}`.
+///
+/// A spill file holds verbatim pre-prune tool output, so its bytes are not
+/// text this module can assume: a latin-1 build log, a filename off a
+/// filesystem that permits arbitrary bytes, or a truncated paste all land here
+/// unchanged. `std.json.Stringify` serializes a string that is not valid UTF-8
+/// as an *array of byte numbers* rather than a string, so one such byte turned
+/// the whole reply into a `text` array and every reader of that field failed on
+/// it, losing the id alongside the content. The valid path stays a plain write;
+/// only invalid bytes are replaced, with U+FFFD.
+///
+/// ponytail: the replacement is not reversible, so a spilled latin-1 body comes
+/// back with U+FFFD where its undecodable bytes were. That is the same trade
+/// `utf8.writeJsonString` makes everywhere else and the only one that keeps the
+/// reply parseable; carrying the raw bytes through a side channel would need a
+/// second encoding on the wire, not worth it on an error path.
+pub fn renderRead(gpa: std.mem.Allocator, id: []const u8, text: []const u8) ![]u8 {
+    var buf: std.Io.Writer.Allocating = .init(gpa);
+    errdefer buf.deinit();
+    var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("id");
+    try s.write(id);
+    try s.objectField("text");
+    try utf8.writeJsonString(gpa, &s, text);
+    try s.endObject();
+    return buf.toOwnedSlice();
+}
+
 test "an unreadable or impossible stamp is not old" {
     const now: i64 = 1_787_000_000_000;
     try std.testing.expect(!spillAgedOut(now, -1, keep_spill_ms));
@@ -164,4 +196,34 @@ test "locator is 8 hex and round-trips" {
     try std.testing.expectEqualStrings(&id, parsed);
     try std.testing.expect(parseId("no locator here") == null);
     try std.testing.expect(parseId("[spill id=nothex!!]") == null);
+}
+
+test "renderRead keeps a spilled body a string even when its bytes are not UTF-8" {
+    const gpa = std.testing.allocator;
+
+    // The ordinary case, byte-identical to what a plain write produced.
+    const clean = try renderRead(gpa, "deadbeef", "hello");
+    defer gpa.free(clean);
+    try std.testing.expectEqualStrings("{\"ok\":true,\"id\":\"deadbeef\",\"text\":\"hello\"}", clean);
+
+    // The defect: a latin-1 build log spilled verbatim. Written raw, `text`
+    // serialized as an array of byte numbers and the id was unreachable with
+    // it. It must stay a string, and the whole reply must still parse.
+    const latin1 = "caf\xe9 build ok";
+    const dirty = try renderRead(gpa, "deadbeef", latin1);
+    defer gpa.free(dirty);
+    try std.testing.expect(std.mem.indexOf(u8, dirty, "\"text\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dirty, "\"text\":[") == null);
+    try std.testing.expect(std.mem.indexOf(u8, dirty, "\"id\":\"deadbeef\"") != null);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), dirty, .{});
+    try std.testing.expect(std.meta.activeTag(parsed.object.get("text").?) == .string);
+
+    // An astral-plane character round-trips: four bytes, one codepoint, and
+    // still one JSON string rather than four numbers.
+    const emoji = try renderRead(gpa, "deadbeef", "done \u{1f600}");
+    defer gpa.free(emoji);
+    const pe = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), emoji, .{});
+    try std.testing.expectEqualStrings("done \u{1f600}", pe.object.get("text").?.string);
 }

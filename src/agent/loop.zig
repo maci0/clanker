@@ -3109,21 +3109,12 @@ pub const Agent = struct {
         const mod = try self.cachedInternalModule("spill");
 
         for (pending.items) |sp| {
-            var enc: std.Io.Writer.Allocating = .init(self.arena);
-            var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
-            try s.beginObject();
-            try s.objectField("write");
-            try s.beginObject();
-            try s.objectField("session");
-            try s.write(sp.session);
-            try s.objectField("id");
-            try s.write(&sp.id);
-            try s.objectField("content");
-            try s.write(sp.content);
-            try s.endObject();
-            try s.endObject();
+            // Encoded by the spill module, not here: a body that is not valid
+            // UTF-8 must reach the guest as a JSON string, or the guest's own
+            // parse of its input refuses it and the write is lost.
+            const input = try spill_mod.writeInput(self.arena, sp);
 
-            const raw = mod.executeTool(enc.written()) catch |err| {
+            const raw = mod.executeTool(input) catch |err| {
                 log.log(.warn, "spill write failed: {s}", .{@errorName(err)});
                 continue;
             };
