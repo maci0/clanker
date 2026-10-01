@@ -10,6 +10,25 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
+    // `strict` leaves several correctness checks to the defaults, and the
+    // default for each is the permissive one: an unused binding, an
+    // unannotated override, a switch that falls through, a function that
+    // returns nothing on one path, and an index access that yields `T`
+    // rather than `T | undefined`. Every one of those is a way to merge a
+    // defect the checker would otherwise name. This program already passes
+    // all seven together (verified by a run, not assumed), so they are on
+    // rather than pending; `noUncheckedIndexedAccess` in particular is what
+    // stops a missing element from reading as a value.
+    // `noPropertyAccessFromIndexSignature` is the eighth and is left off:
+    // the tree does not pass it, and switching one on to see what it reports
+    // is the owning review's work, not this config's.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "paths": {
       "/webui/vendor/preact.module.js": ["./node_modules/preact"],

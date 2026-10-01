@@ -60,6 +60,7 @@ class InstallStateBackupTest(unittest.TestCase):
             env=env,
             capture_output=True,
             text=True,
+            check=False,
         )
 
     def test_config_file_lands_where_the_units_read_it(self) -> None:

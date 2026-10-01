@@ -288,7 +288,7 @@ class VerifyBackupTest(unittest.TestCase):
         env = dict(os.environ, CLANKER_BACKUP_ROOT=str(self.backup_root), **(env_extra or {}))
         return subprocess.run(
             [str(SCRIPT), *args],
-            env=env, capture_output=True, text=True,
+            env=env, capture_output=True, text=True, check=False,
         )
 
 

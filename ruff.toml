@@ -17,6 +17,8 @@ target-version = "py310"
 [lint]
 select = [
     "A",   # flake8-builtins: a parameter or local named after a builtin
+    "AIR", # flake8-airflow: unparenthesized multi-line conditions
+    "ASYNC", # flake8-async: a blocking call on an async path
     "B",   # bugbear: mutable defaults, bare except shapes
     "BLE", # blind except; only the one deliberate tool top-level catch is exempt
     "C4",  # comprehensions
@@ -24,22 +26,37 @@ select = [
     "E",   # pycodestyle errors
     "ERA", # commented-out code left behind by a debug session
     "F",   # pyflakes
+    "FLY", # flynt: f-string that should be one
     "G",   # logging-format calls
     "I",   # import order
+    "ICN", # import conventions: aliased imports that hide the original
     "ISC", # implicit string concatenation, where a missing `+` is invisible
     "LOG", # misuse of the logging module
     "N",   # pep8-naming
     "PERF", # perflint: a comprehension or a list where a generator will do
     "PIE", # misc lints
+    "PL",  # pylint: PLC and PLE are defects (a redefined name, an unhandled
+           # exception type, an assertion that cannot hold); PLW1510 catches a
+           # subprocess whose status nothing reads. The PLR complexity rules
+           # and the rest of PLW are style, and are named as ignores below
     "RET", # return-path bugs (bare else after return, unnecessary else)
     "RSE", # raise spelled wrongly
     "RUF", # ruff-specific correctness
     "SIM", # simplifications that read as intent
     "SLF", # private-member access that binds this package to itself
+    "T10", # a debugger call left in a script CI runs
     "TID", # import tidying beyond ordering
     "UP",  # pyupgrade
     "W",   # pycodestyle warnings
 ]
+# PL is selected with its complexity/style rules named as ignores rather than
+# by selecting PLC+PLE and PLW1510 by hand. Both spellings give the same rule
+# set today; this one differs on a future ruff release, where a defect rule
+# added under PL inherits automatically instead of having to be restated here.
+# That is also why the version is pinned above: a new rule under a selected
+# prefix should not turn CI red on a tree nobody changed, and the ignore list
+# is where that decision is recorded rather than left to a default.
+ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004"]
 
 [lint.per-file-ignores]
 # The tool's whole contract is "any failure becomes {"ok": false, ...}" for

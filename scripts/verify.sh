@@ -48,6 +48,18 @@ else
     skip "shellcheck is not installed"
 fi
 
+step "YAML lint (CI: Check YAML)"
+# Same gate, same .yamllint.yml and same index glob as CI's "Check YAML" step:
+# a workflow that does not parse, or one carrying a duplicated key, is a
+# finding here rather than a red X on someone else's PR.
+if command -v yamllint >/dev/null 2>&1; then
+    if [ -n "$(git ls-files -z '*.yml' '*.yaml' | tr -d '\0')" ]; then
+        git ls-files -z '*.yml' '*.yaml' | xargs -0 yamllint -c .yamllint.yml || status=1
+    fi
+else
+    skip "yamllint is not installed"
+fi
+
 if command -v bun >/dev/null 2>&1; then
     step "JavaScript lint (CI: Lint JavaScript)"
     bun install --frozen-lockfile || status=1

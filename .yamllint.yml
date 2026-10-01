@@ -1,0 +1,45 @@
+# yamllint config, read by CI ("Check YAML"), scripts/verify.sh and the
+# pre-commit hook.
+#
+# Only the rules that name a defect are on. Everything this tree deliberately
+# does not do is disabled rather than left to warn on every run, so the output
+# of a passing run is empty instead of 26 warnings nobody reads:
+#
+#   line-length     GitHub Actions expressions and pinned action SHAs run long;
+#                   the cap this tree enforces is ruff's 100 for Python and
+#                   zig fmt's for Zig, and no column rule applies to YAML.
+#   document-start  no file in this tree opens with `---`.
+#   comments        the comment column is not a convention here.
+#   truthy          `on:` is YAML 1.1 truthy by definition; every action file
+#                   in this tree uses it, which is what Actions expects.
+#   indentation/brackets/colons/commas/empty-lines/hyphens/new-lines-at-end/
+#   trailing-spaces
+#                   whitespace style, owned by whoever edits the file.
+#
+# What stays on is the half that would otherwise merge silently: `syntax`
+# (a file that does not parse is a broken workflow), `key-duplicates` (the
+# last duplicate silently wins, so a typo'd duplicate step looks configured),
+# `octal-values` and `quoted-strings` are style and stay off.
+extends: default
+
+rules:
+  braces: disable
+  brackets: disable
+  colons: disable
+  commas: disable
+  comments: disable
+  comments-indentation: disable
+  document-end: disable
+  document-start: disable
+  empty-lines: disable
+  empty-values: disable
+  hyphens: disable
+  indentation: disable
+  key-duplicates: enable
+  line-length: disable
+  new-line-at-end-of-file: disable
+  new-lines: disable
+  octal-values: enable
+  quoted-strings: disable
+  trailing-spaces: disable
+  truthy: disable

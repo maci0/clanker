@@ -63,6 +63,17 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
+# YAML, when yamllint is installed (CI runs it regardless). Same
+# .yamllint.yml and same defect rules as CI's "Check YAML" step: a workflow
+# that does not parse, or one carrying a duplicated key (the last duplicate
+# silently wins), is caught here rather than by a red X on someone else's PR.
+# .yamllint.yml is itself a staged trigger, since it is what the check reads.
+if command -v yamllint >/dev/null 2>&1; then
+    if [ -n "$(staged '*.yml' '*.yaml' '.yamllint.yml' | tr -d '\0')" ]; then
+        staged '*.yml' '*.yaml' | xargs -0 -r yamllint -c .yamllint.yml || fail "yamllint failed"
+    fi
+fi
+
 # Brand outputs, when bun is installed: docs/brand/ and the favicon and
 # masthead in ui/app/index.html are generated from the tokens and the icon
 # grid, so a change to either must carry its regenerated files.

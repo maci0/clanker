@@ -17,8 +17,10 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("backup-state.sh")
+# check=False is spelled out because the return code IS the answer here, not
+# something to raise on; PLW1510 asks the question every call has to answer.
 HAVE_SQLITE3_CLI = subprocess.run(
-    ["sh", "-c", "command -v sqlite3"], capture_output=True
+    ["sh", "-c", "command -v sqlite3"], capture_output=True, check=False
 ).returncode == 0
 
 
@@ -43,12 +45,15 @@ class BackupStateTest(unittest.TestCase):
         self.script.chmod(0o755)
 
     def run_backup(self) -> subprocess.CompletedProcess:
+        # The drill's exit status is the assertion, so a non-zero code must
+        # come back as a value the test can read, not as a raise.
         return subprocess.run(
             [str(self.script)],
             cwd=self.repo,
             env=dict(os.environ, HOME=str(self.root)),
             capture_output=True,
             text=True,
+            check=False,
         )
 
     def open_db(self, rel: str) -> sqlite3.Connection:
@@ -379,6 +384,7 @@ class BackupStateTest(unittest.TestCase):
             env=dict(os.environ, HOME=str(self.root)),
             capture_output=True,
             text=True,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.backups.is_dir(), "no snapshot root beside the storage root")

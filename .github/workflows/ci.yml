@@ -119,6 +119,18 @@ jobs:
       - name: Check shell scripts
         run: git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 -r shellcheck
 
+      # YAML is the language the rest of this file is written in, and nothing
+      # parsed it: a workflow that does not parse, or one carrying a duplicated
+      # key (the last duplicate silently wins, so a typo'd step looks
+      # configured), reached this job as a red X on someone else's PR rather
+      # than as a finding here. yamllint ships on ubuntu runners, so no
+      # install step is needed. .yamllint.yml enables the defect rules and
+      # disables the whitespace style this tree does not follow; the config
+      # carries why for each. Globbed from the index for the same reason the
+      # shellcheck step above is.
+      - name: Check YAML
+        run: git ls-files -z '*.yml' '*.yaml' | xargs -0 -r yamllint -c .yamllint.yml
+
       # oxlint over ui/ and tools/ts sources with every rule at error (the
       # Rika Labs strict preset, type-aware, plus anti-slop and @shadcn/lint).
       # tools/oxlint/ratchet.ts fails the job when any file's count for a rule
