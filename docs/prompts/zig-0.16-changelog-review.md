@@ -221,13 +221,14 @@ blindly: it rots). Kept in lockstep with section 7 of
 
 - `indexOf*` -> `find*` family (`find`, `findPos`, `findScalar`, `findAny`,
   `findNone`, ...). The `indexOf*` names remain as aliases, so they compile;
-  new/touched code should prefer `find*`. clanker's current code uses
-  `std.mem.indexOfScalar`/`indexOf` in several places (`src/config.zig`,
-  `src/preset/preset.zig`, `src/serve/live.zig`, `src/peers/chatrooms.zig`,
-  `src/llm/registry.zig`, and test blocks in `src/records/common.zig`,
-  `src/agent/private_todos.zig`, `src/sandbox/host.zig`): these all still
-  work, so this is a **P2/P3 rename
-  opportunity, not urgent**, unless the user asks for a full sweep.
+  new/touched code should prefer `find*`. Derive the current call sites from
+  the search below rather than from a file list written into this prompt:
+  that list is already stale, and a stale list sends the agent to files that
+  were migrated years ago while missing the ones that were not. The tree has
+  roughly 40 non-test sites across `src/serve/webui_strip.zig`,
+  `src/util/utf8.zig`, `src/gate/checks.zig` and others; all still work, so
+  this is a **P2/P3 rename opportunity, not urgent**, unless the user asks
+  for a full sweep.
 - New `cut`/`cutPrefix`/`cutSuffix`/`cutScalar`/`cutLast`/`cutLastScalar` are
   the idiom for split-at-substring; prefer them in new code (e.g. the next
   time something manually does `indexOf` + slicing to split a string).
@@ -261,12 +262,17 @@ prompt was written, but have since migrated (verified 2026-08-19: no
 before fixing: the codebase self-modifies (`clanker improve-self`) and new
 hits may have appeared elsewhere.
 
-Already clean at that same scan (spot-check only, do not re-search for
-hours): no `@Type(`, no `@cImport`, no `std.time.Instant/Timer/timestamp`,
-no `Thread.Pool`/`spawnWg`, no `ArrayHashMap*` (unmanaged variants used
-throughout), no managed `ArrayList(...).init(`, no `GenericReader`/
-`AnyReader`/`FixedBufferStream`, no `{D}` format, no `Thread.Mutex`/
-`Condition`/`ResetEvent` in code.
+Already clean at that same scan: no `@Type(`, no `@cImport`, no
+`std.time.Instant/Timer/timestamp`, no `Thread.Pool`/`spawnWg`, no
+`std.ArrayHashMap`/`AutoArrayHashMap` (the unmanaged variants and
+`std.json.ArrayHashMap` are the surviving types; do not flag either), no
+managed `ArrayList(...).init(`, no `GenericReader`/`AnyReader`/
+`FixedBufferStream`, no `{D}` format, no `Thread.Mutex`/`Condition`/
+`ResetEvent` in code.
+
+That list records a scan, not a standing truth: the codebase self-modifies
+(`clanker improve-self`), so a spot-check is cheap and the one-line recipe
+above is the authority. Re-run it rather than trusting this paragraph.
 
 ## Search recipes (run early)
 
@@ -277,8 +283,20 @@ rg -n 'std\.meta\.Int|@Type\(' src --type zig
 rg -n 'std\.mem\.indexOf|\.indexOf\(' src --type zig
 rg -n '@cImport' src --type zig
 
-# Removed (hits should be zero; proves the audit ran)
-rg -n 'std\.time\.(Instant|Timer)|Thread\.Pool|spawnWg|ArrayHashMap\(|GenericReader|AnyReader|FixedBufferStream|std\.io\.|Thread\.(Mutex|Condition|ResetEvent)|\{D\}' src --type zig
+# Section H, the authoritative form: which files still spell the old name.
+# Test blocks are excluded on purpose (std.testing holds about as many hits
+# as real code), and the hand-maintained file list this section used to
+# carry went stale, so derive the answer instead of reading it off.
+rg -n 'mem\.indexOf' src --type zig | rg -v 'std\.testing' | cut -d: -f1 | sort | uniq -c | sort -rn
+
+# Removed (hits should be zero; proves the audit ran).
+# `std\.` is required: `std\.json\.ArrayHashMap` is a different, surviving
+# type (`std/json.zig` re-exports `json/hashmap.zig`), and an unanchored
+# `ArrayHashMap\(` matches those call sites as false positives.
+# `--glob '!src/util/spin_mutex.zig'` drops the one file whose `//!` header
+# names `std.Thread.Mutex` to explain why that module exists; every other hit
+# is real use and a finding.
+rg -n --glob '!src/util/spin_mutex.zig' 'std\.time\.(Instant|Timer)|Thread\.Pool|spawnWg|std\.ArrayHashMap\(|GenericReader|AnyReader|FixedBufferStream|std\.io\.|Thread\.(Mutex|Condition|ResetEvent)|\{D\}' src --type zig
 
 # Residual-posix drift (every hit must match the table in section D)
 rg -n 'std\.posix\.' src --type zig

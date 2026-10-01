@@ -101,8 +101,11 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
       `proxy_main.zig`). Any other
       top-level `src/*.zig` is either misplaced (move it under a subsystem) or
       the convention in `AGENTS.md` is stale and should be updated to match.
-      Name which. (As of writing, `src/agent/workflows.zig` has been moved
-      under its subsystem directory; verify no stale top-level files remain.)
+      Name which, and re-derive the top-level list with `ls src/*.zig` instead
+      of trusting the five names above, which is the list that goes stale.
+      A move whose `@import` paths are written relative to `src/` (as
+      `update.zig`'s `util/...` imports are) names the import rewrites the move
+      costs, so the finding is actionable rather than a shrug.
 - [ ] Every other `.zig` lives under a subsystem directory, and the directory
       name matches what the file is about. A file whose name or contents belong
       to a different subsystem than the one it sits in is a finding.
@@ -128,7 +131,7 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
 - [ ] Tools whose three parts do not line up: a `tools/manifests/*.tool.json`
       with no matching source — `tools/zig/*.zig` *or* AssemblyScript
       `tools/ts/*.ts` — (and not deliberately parked in
-      `examples/manifests/`), or a `tools/zig/*.zig`/`tools/ts/*.ts` with no
+      `tools/examples/manifests/`), or a `tools/zig/*.zig`/`tools/ts/*.ts` with no
       descriptor, or a descriptor pointing at a `wasm` path the build does
       not produce.
 - [ ] A tracked file that matches a `.gitignore` intent (generated, local, or
@@ -215,7 +218,7 @@ Return these sections in the captured response:
       the doc)
 - [ ] Every proposed deletion backed by a grep showing it is unreferenced, and
       every proposed move names the imports and the `main.zig` line to update
-- [ ] Deliberately-parked things (`examples/manifests/`, add-only `evals/`,
+- [ ] Deliberately-parked things (`tools/examples/manifests/`, add-only `evals/`,
       gitignored runtime state) explicitly excluded, not flagged
 - [ ] The `main.zig` test-import registry cross-checked against files with test
       blocks

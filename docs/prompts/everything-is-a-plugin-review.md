@@ -172,8 +172,15 @@ Two parallel read-only passes (one per pass above), then one ranked list:
 # Bridged vs reimplemented /api/* handlers
 rg -n 'toolJson\(|toolText\(' src/cli.zig
 
-# Kind-switches outside providers/ (the same needles the provider-kind gate uses)
-rg -n 'provider\.kind|p\.kind' src --type zig | rg -v 'src/llm/providers/'
+# Kind-switches outside providers/, at the width the `provider-kind` gate
+# actually enforces (see providerKindLeakGate in src/gate/checks.zig): a
+# word-start `provider.kind`/`p.kind` followed by `==`, or a `switch (` line
+# naming one. The unanchored form returns every kind reference, and both
+# `forKind(p.kind)` and `@tagName(p.kind)` are legitimate, so keep it only to
+# spot what the gate may not parse yet. Do not widen `.kind` alone: it is
+# mostly filesystem entries (stat.kind, Entry.kind) and drowns the signal.
+rg -n '(^|[^A-Za-z0-9_])(provider|p)\.kind\s*==' src --type zig | rg -v 'src/llm/providers/'
+rg -n 'switch[(][^)]*(^|[^A-Za-z0-9_])(provider|p)\.kind' src --type zig | rg -v 'src/llm/providers/'
 
 # Duplicated stores: a state path written from both sides
 rg -n 'state/[a-z_]+\.(json|jsonl)' tools/zig -t zig
@@ -188,7 +195,7 @@ guest)** / **bug-class leak** / **needs an RFC, not a finding here**.
 ## Success criteria
 
 - [ ] Every `/api/*` handler classified bridged vs reimplemented; each native row carries a named pin or a migration entry
-- [ ] Kind-switch search ran over all of `src/`, with every hit outside `src/llm/providers/` reported
+- [ ] Kind-switch search ran over all of `src/`, with every comparison or `switch` on `provider.kind`/`p.kind` outside `src/llm/providers/` reported. Zero hits is the expected answer and agrees with the `provider-kind` gate; say so rather than padding the list with the legitimate `forKind(p.kind)` registry lookups the same needles turn up
 - [ ] No proposed move lands sandbox policy, credentials, grading/gating, or the agent loop in a guest
 - [ ] The "verified clean / stays core on purpose" list is present, so the review cannot be misread as "pluginize everything"
 - [ ] No em dashes / AI attribution

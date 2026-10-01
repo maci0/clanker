@@ -195,8 +195,10 @@ rg -n 'threadlocal var' src -t zig
 # Locks, and whether one is held across a blocking call
 rg -n 'std\.Io\.Mutex|std\.Thread\.Mutex' src -t zig
 
-# Fire-and-forget failures that are counted rather than swallowed
-rg -n 'catch return|catch {}' src/peers src/sandbox/jobs.zig -t zig
+# Fire-and-forget failures that are counted rather than swallowed.
+# The braces are escaped: an unescaped `{}` is a repetition quantifier in
+# ripgrep's regex, and the recipe dies with a parse error instead of running.
+rg -n 'catch return|catch \{\}' src/peers src/sandbox/jobs.zig -t zig
 
 # Per-request status every responder must set
 rg -n 'request_status' src/cli.zig
