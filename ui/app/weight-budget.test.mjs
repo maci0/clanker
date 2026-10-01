@@ -225,7 +225,19 @@ test("eager JS stays inside its weight budget", function () {
   /* 160, raised from 158 for the rail's icons: every destination, built-in
      or plugin, wears one drawn on the icons.js grid, and the collapsed rail
      shows nothing else, so the paths are needed on the first paint of any view. */
-  assert.ok(eagerJsGz <= 160, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 160K`);
+  /* 161, raised from 160 for two fixes a reader hits and a chat visit cannot
+     route around. core/chat.js carries the Chat search box's answer ordering:
+     the input handler debounces over HTTP, so a slow earlier answer used to
+     land on top of a newer one and name hits for a phrase already replaced
+     (~1.0K gz). core/vendor.js's copy fallback parked an offscreen field when
+     the value being copied has no visible node to select, so a plain-http
+     origin — where the clipboard API is withheld, so every copy button took
+     that path — ended at "Copy unavailable" with no way onward instead of the
+     select-to-copy hand-off every other copy button here offers (~0.3K gz).
+     Neither is reachable by a chat-only visit that never opens the search box
+     or shares a link, and both would cost a new asset kind and a served
+     module to defer, which is a larger cost than the bytes. */
+  assert.ok(eagerJsGz <= 161, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 161K`);
 });
 
 test("first paint stays inside its weight budget", function () {

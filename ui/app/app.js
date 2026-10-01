@@ -4,7 +4,7 @@ import { setRailTabIcon, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
-import { dmRoom as dmRoomMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
+import { dmRoom as dmRoomMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, messageKey as chatMessageKey, hasServerId as chatHasServerId, chatMessageSearch } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steeredText as steeredMessageText, renderSteerList } from "./core/steer.js";
@@ -3143,7 +3143,13 @@ function openChatRoom(room) {
   });
   // A room switch invalidates whatever the pins/search panels were showing.
   if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
-  if (el.chatSearchBar && !el.chatSearchBar.hidden) el.chatSearchResults.textContent = "";
+  // The search bar keeps its query on a room switch, so an emptied panel
+  // under a phrase the reader can still see is a lie about what was
+  // searched. Re-run the same phrase in the room just opened, which is what
+  // the next keystroke would have done.
+  if (el.chatSearchBar && !el.chatSearchBar.hidden && chatSearch && el.chatSearchInput.value.trim()) {
+    el.chatSearchInput.dispatchEvent(new Event("input"));
+  }
   // Phone: the channel drawer sits over the transcript and covers the
   // header toggle. Picking a room has to put the messages in front.
   setRoomsSidebarOpen(false, true);
@@ -3864,7 +3870,18 @@ if (el.chatPinToggle) el.chatPinToggle.addEventListener("click", function () {
 });
 if (el.chatPinsClose) el.chatPinsClose.addEventListener("click", closeChatPins);
 
-function closeChatSearch() { if (el.chatSearchBar) { el.chatSearchBar.hidden = true; el.chatSearchResults.textContent = ""; el.chatSearchInput.value = ""; } }
+function closeChatSearch() {
+  if (!el.chatSearchBar) { return; }
+
+  el.chatSearchBar.hidden = true;
+  el.chatSearchResults.textContent = "";
+  el.chatSearchInput.value = "";
+  /* An answer still on the wire has nothing to paint into: the panel is
+     closed, and reopening searches the query the reader now types. Bumping
+     the counter marks it stale, so it is dropped rather than repopulating a
+     panel the reader dismissed. */
+  chatSearch.run("");
+}
 if (el.chatSearchToggle) el.chatSearchToggle.addEventListener("click", function () {
   var open = el.chatSearchBar.hidden;
   el.chatSearchBar.hidden = !open;
@@ -3873,38 +3890,67 @@ if (el.chatSearchToggle) el.chatSearchToggle.addEventListener("click", function 
 });
 if (el.chatSearchClose) el.chatSearchClose.addEventListener("click", closeChatSearch);
 var chatSearchTimer = null;
+var chatSearch = chatMessageSearch();
+
+chatSearch.fetch = function (q) {
+  var room = el.chatRoom.value;
+
+  return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0")
+    .then(readJson)
+    .then(function (data) {
+      var ql = utilSearchFold(q);
+
+      return { hits: (data.messages || []).filter(function (m) { return !m.deleted && m.text && utilSearchFold(m.text).indexOf(ql) !== -1; }).slice(0, 30) };
+    });
+};
+
+function drawChatSearchState(state) {
+  el.chatSearchResults.textContent = "";
+
+  /* An answer a later query superseded is never drawn: the panel would name
+     hits for a phrase the reader has already replaced. */
+  if (state.status === "stale") { return; }
+
+  if (state.status === "searching") {
+    var busy = document.createElement("p");
+
+    busy.textContent = "Searching “" + state.query + "”…";
+    el.chatSearchResults.appendChild(busy);
+    return;
+  }
+
+  if (state.status === "error") {
+    showLoadError(el.chatSearchResults, "Search failed: " + state.error,
+      function () { el.chatSearchInput.dispatchEvent(new Event("input")); });
+    return;
+  }
+
+  if (!state.hits.length) {
+    var empty = document.createElement("p");
+    empty.textContent = "No messages mention “" + state.query + "”.";
+    el.chatSearchResults.appendChild(empty);
+    return;
+  }
+
+  state.hits.forEach(function (m) {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = SEARCH_RESULT_CLASS;
+    row.textContent = m.from + ": " + m.text;
+    row.title = m.text; // the row is one ellipsized line
+    row.addEventListener("click", function () { closeChatSearch(); revealChatMessage(m); });
+    el.chatSearchResults.appendChild(row);
+  });
+}
+
 if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function () {
   if (chatSearchTimer) window.clearTimeout(chatSearchTimer);
   var q = el.chatSearchInput.value.trim();
   var room = el.chatRoom.value;
-  if (!q || !room) { el.chatSearchResults.textContent = ""; return; }
+  if (!q || !room) { el.chatSearchResults.textContent = ""; chatSearch.run(""); return; }
   chatSearchTimer = window.setTimeout(function () {
-    fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0")
-      .then(readJson)
-      .then(function (data) {
-        var ql = utilSearchFold(q);
-        var hits = (data.messages || []).filter(function (m) { return !m.deleted && m.text && utilSearchFold(m.text).indexOf(ql) !== -1; }).slice(0, 30);
-        el.chatSearchResults.textContent = "";
-        if (!hits.length) {
-          var empty = document.createElement("p");
-          empty.textContent = "No messages mention “" + q + "”.";
-          el.chatSearchResults.appendChild(empty);
-          return;
-        }
-        hits.forEach(function (m) {
-          var row = document.createElement("button");
-          row.type = "button";
-          row.className = SEARCH_RESULT_CLASS;
-          row.textContent = m.from + ": " + m.text;
-          row.title = m.text; // the row is one ellipsized line
-          row.addEventListener("click", function () { closeChatSearch(); revealChatMessage(m); });
-          el.chatSearchResults.appendChild(row);
-        });
-      })
-      .catch(function (err) {
-        showLoadError(el.chatSearchResults, "Search failed: " + err.message,
-          function () { el.chatSearchInput.dispatchEvent(new Event("input")); });
-      });
+    drawChatSearchState(chatSearch.pending(q));
+    chatSearch.run(q).then(drawChatSearchState);
   }, 200);
 });
 
@@ -5217,14 +5263,11 @@ function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, cur
     var id = sessionId || "";
     var url = window.location.origin + window.location.pathname + "#chat";
     // Prefer session deep-link when available
-    try {
-      if (id) url = window.location.origin + window.location.pathname + "#chat?session=" + encodeURIComponent(id);
-      // Also include session title hint for standalone share
-      navigator.clipboard.writeText(url).then(function(){
-        btn.textContent = "Copied";
-        setTimeout(function(){ btn.textContent = "Share"; }, 1200);
-      }, function(){ uiPrompt("Share link", url); });
-    } catch(_){ try { uiPrompt("Share link", url); } catch(__){} }
+    if (id) { url = window.location.origin + window.location.pathname + "#chat?session=" + encodeURIComponent(id); }
+    // The shared copy path, so a plain-http origin gets the same select-to-copy
+    // hand-off every other copy button here offers. A `uiPrompt` fallback said
+    // "Save" on a link the reader only wanted to read.
+    copyText(url, btn, "Share");
   });
 })();
 var downloadText = compDownloadText;

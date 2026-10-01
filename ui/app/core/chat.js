@@ -76,3 +76,57 @@ export function clankerMark(name) {
   return CLANKER_MARKS[h % CLANKER_MARKS.length];
 }
 
+// The Chat search box is the one search on the page that answers over HTTP, so
+// it is the one that can answer out of order: the input handler debounces, a
+// second query is sent before the first returns, and the first answer then
+// lands on top of the second. The panel said nothing about which query it was
+// showing, so the reader saw "3 matches" for a phrase they had already
+// replaced, and clicking a hit revealed a message they were no longer looking
+// for.
+//
+// A counter decides which answer is allowed to paint, and every state names
+// the query it belongs to, so an empty panel is answerable: no query yet is a
+// search that has not started, and a query that found nothing is a search
+// that finished.
+//
+// `fetch` is the seam: the host passes the real request, a test the deferred
+// one it needs to answer out of order. Pure otherwise — no DOM, no page
+// state — so the same guards serve the transcript filter too.
+export function chatMessageSearch() {
+  var seq = 0;
+
+  return {
+    // Overridden by the caller. Replaced per test to control answer order.
+    fetch: function () { return Promise.resolve([]); },
+
+    // The state drawn from the moment of the press, so the panel can say it
+    // is working before the answer lands.
+    pending: function (raw) {
+      return { status: "searching", query: String(raw == null ? "" : raw).trim(), hits: [] };
+    },
+
+    // Resolves to the state the panel should draw: `done` / `error` for the
+    // answer that is still current, `stale` for one a later query superseded.
+    // Never rejects — a failed search is a state the panel says out loud.
+    run: function (raw, messages) {
+      var query = String(raw == null ? "" : raw).trim();
+      var mine = ++seq;
+
+      if (!query) { return Promise.resolve({ status: "cleared", query: "", hits: [] }); }
+
+      var self = this;
+
+      return Promise.resolve()
+        .then(function () { return self.fetch(query, messages || []); })
+        .then(function (data) {
+          if (mine !== seq) { return { status: "stale", query: query, hits: [] }; }
+
+          return { status: "done", query: query, hits: (data && data.hits) || [] };
+        }, function (err) {
+          if (mine !== seq) { return { status: "stale", query: query, hits: [] }; }
+
+          return { status: "error", query: query, hits: [], error: (err && err.message) || String(err) };
+        });
+    },
+  };
+}

@@ -104,13 +104,28 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
   }
 
   function selectInstead() {
-    var sel = window.getSelection && window.getSelection();
+    var sel = window.getSelection && document.createRange;
+    var target = selectTarget;
 
-    if (selectTarget && sel && document.createRange) {
+    /* No target meant "Copy unavailable" and no way onward, on a path plain
+       http reaches every time: the clipboard API is withheld there. A value
+       with no visible node gets one parked offscreen, so the hand-off to the
+       reader's own Ctrl+C is the same whatever they clicked. */
+    if (!target && sel) {
+      target = document.createElement("input");
+      target.className = "sr-only";
+      target.setAttribute("aria-hidden", "true");
+      target.tabIndex = -1;
+      target.value = text;
+      document.body.appendChild(target);
+      window.setTimeout(function () { target.remove(); }, 1600);
+    }
+
+    if (sel && target) {
       var range = document.createRange();
-      range.selectNodeContents(selectTarget);
-      sel.removeAllRanges();
-      sel.addRange(range);
+      range.selectNodeContents(target);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
       btn.textContent = "Selected: press Ctrl+C";
     } else {
       btn.textContent = "Copy unavailable";

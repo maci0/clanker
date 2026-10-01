@@ -545,6 +545,16 @@ pub fn build(b: *std.Build) void {
     const modelpicker_js_test = b.addSystemCommand(&.{ "bun", "test" });
     modelpicker_js_test.addFileArg(b.path("ui/app/core/modelpicker.test.mjs"));
     test_step.dependOn(&modelpicker_js_test.step);
+    // The Chat search box's answer ordering: a debounced query whose older
+    // request lands last must not repaint the panel.
+    const chat_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    chat_js_test.addFileArg(b.path("ui/app/core/chat.test.mjs"));
+    test_step.dependOn(&chat_js_test.step);
+    // The shared copy path's fallback, which every copy button takes on a
+    // plain-http origin, the clipboard API being withheld there.
+    const vendor_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    vendor_js_test.addFileArg(b.path("ui/app/core/vendor.test.mjs"));
+    test_step.dependOn(&vendor_js_test.step);
     // Reduced motion as a setting: which rules in the only first-party sheet
     // move something, and whether the one unlayered guard names every one.
     const motion_js_test = b.addSystemCommand(&.{ "bun", "test" });

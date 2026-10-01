@@ -1,7 +1,7 @@
 // Knowledge view — single-user. Collections of documents.
-import { uiConfirm, uiPrompt, toast, showLoadError, requireText, runDetail as chrome } from "../core/ui.js";
+import { uiConfirm, toast, showLoadError, requireText, runDetail as chrome } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { reducedMotion } from "../core/vendor.js";
+import { reducedMotion, copyText } from "../core/vendor.js";
 import { readJson, fmtBytes, wireRefresh, plural, showLoading } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
@@ -217,10 +217,11 @@ function openCollection(id, docId){
     var share=kit.button({variant:"secondary", class:"ml-3"}, "Copy link");
     share.addEventListener("click", function(){
       var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
-      if (!navigator.clipboard || !window.isSecureContext) { uiPrompt("Share link", url); return; }
-      navigator.clipboard.writeText(url).then(function(){
-        share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200);
-      }, function(){ uiPrompt("Share link", url); });
+      // The shared copy path, for the same reason the session Share button
+      // uses it: a `uiPrompt` fallback offered a "Save" button on a link the
+      // reader only wanted, and a clipboard refusal is common enough on plain
+      // http to be a path, not an edge.
+      copyText(url, share, "Copy link");
     }); head.appendChild(share);
     var close=kit.button({variant:"secondary"}, "Close");
     close.addEventListener("click",closeCollection); head.appendChild(close); detail.appendChild(head);
