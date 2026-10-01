@@ -1,127 +1,89 @@
-// The Chat search box is fed by an HTTP call, so it is the one search in the
-// page that can answer out of order: the input handler debounces, a second
-// query is sent before the first comes back, and the first answer then lands
-// on top of the second. Nothing said which query the panel was showing, so the
-// reader saw "3 matches" for a phrase they had already replaced.
-//
-// These are the shipped Chat search helpers, against the endpoint's answer
-// shape (`{ hits: [...] }`).
-import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+/* The Chat search box is fed by an HTTP call, so it is the one search in the
+   page that can answer out of order: the input handler debounces, a second
+   query is sent before the first comes back, and the first answer then lands
+   on top of the second. Nothing said which query the panel was showing, so
+   the reader saw "3 matches" for a phrase they had already replaced.
+
+   These are the shipped Chat search helpers, against the endpoint's answer
+   shape (`{ hits: [...] }`). */
+import { expect, mock, test } from "bun:test";
 import { chatMessageSearch } from "./chat.js";
 
-function msgs() {
-  return [
-    { id: "a", from: "ada", text: "the cron spec is a fix" },
-    { id: "b", from: "bo", text: "provider refused the request" },
-    { id: "c", from: "ada", text: "nothing to see" },
-    { id: "d", from: "cy", text: "a second fix, and another" },
-  ];
-}
+const msgs = () => [
+  { from: "ada", id: "a", text: "the cron spec is a fix" },
+  { from: "bo", id: "b", text: "provider refused the request" },
+  { from: "ada", id: "c", text: "nothing to see" },
+  { from: "cy", id: "d", text: "a second fix, and another" },
+];
 
-test("a search answers the newest query when an older one lands last", function () {
-  var search = chatMessageSearch();
-  var pending = [];
-
-  search.fetch = function (q) {
-    return new Promise(function (resolve) { pending.push({ q: q, resolve: resolve }); });
-  };
-
-  // "fix" then "second", the second answered first, the first after.
-  var first = search.run("fix", msgs());
-  var second = search.run("second", msgs());
+test("a search answers the newest query when an older one lands last", async () => {
+  /* "fix" then "second", the second answered first, the first after. */
+  /** @type {PromiseWithResolvers<{ hits: { id: string }[] }>} */
+  const answerFix = Promise.withResolvers(),
+    /** @type {PromiseWithResolvers<{ hits: { id: string }[] }>} */
+    answerSecond = Promise.withResolvers(),
+    fetchMock = mock().mockReturnValueOnce(answerFix.promise).mockReturnValueOnce(answerSecond.promise),
+    search = Object.assign(chatMessageSearch(), { fetch: fetchMock }),
+    searchFix = search.run("fix", msgs()),
+    searchSecond = search.run("second", msgs());
 
   // `fetch` is reached on a microtask, so both requests exist after a tick.
-  return Promise.resolve().then(function () {
-    assert.equal(pending.length, 2, "both queries are in flight at once");
-    pending[1].resolve({ hits: [{ id: "d", from: "cy", text: "a second fix, and another" }] });
+  await Promise.resolve();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    return second;
-  }).then(function (secondState) {
-    assert.equal(secondState.status, "done");
-    assert.equal(secondState.query, "second");
-    assert.deepEqual(secondState.hits.map(function (h) { return h.id; }), ["d"]);
+  answerSecond.resolve({ hits: [{ id: "d" }] });
+  expect(await searchSecond).toEqual({ hits: [{ id: "d" }], query: "second", status: "done" });
 
-    pending[0].resolve({ hits: [{ id: "a", from: "ada", text: "the cron spec is a fix" }] });
-
-    return first;
-  }).then(function (firstState) {
-    assert.equal(firstState.status, "stale", "the superseded answer must be dropped, not shown");
-    assert.deepEqual(firstState.hits, []);
-  });
+  // The superseded answer must be dropped, not shown.
+  answerFix.resolve({ hits: [{ id: "a" }] });
+  expect(await searchFix).toEqual({ hits: [], query: "fix", status: "stale" });
 });
 
-test("a failed first search does not make the next one stale", function () {
-  var search = chatMessageSearch();
-  var answers = [Promise.reject(new Error("host is down")), Promise.resolve({ hits: [{ id: "a" }] })];
+test("a failed first search does not make the next one stale", async () => {
+  const search = chatMessageSearch();
 
-  search.fetch = function () { return answers.shift(); };
+  search.fetch = mock()
+    .mockRejectedValueOnce(new Error("host is down"))
+    .mockResolvedValueOnce({ hits: [{ id: "a" }] });
 
-  return search.run("fix", msgs()).then(function (failed) {
-    assert.equal(failed.status, "error");
-    assert.match(failed.error, /host is down/);
-    assert.deepEqual(failed.hits, []);
-
-    return search.run("fix", msgs()).then(function (recovered) {
-      assert.equal(recovered.status, "done");
-      assert.deepEqual(recovered.hits.map(function (h) { return h.id; }), ["a"]);
-    });
-  });
+  expect(await search.run("fix", msgs())).toEqual({ error: "host is down", hits: [], query: "fix", status: "error" });
+  expect(await search.run("fix", msgs())).toEqual({ hits: [{ id: "a" }], query: "fix", status: "done" });
 });
 
-test("an emptied query clears the panel instead of searching for nothing", function () {
-  var search = chatMessageSearch();
+test("an emptied query clears the panel instead of searching for nothing", async () => {
+  const search = chatMessageSearch();
 
-  search.fetch = function () { throw new Error("an empty query must not reach the host"); };
+  search.fetch = mock(() => Promise.resolve({ hits: [] }));
 
-  return search.run("   ", msgs()).then(function (state) {
-    assert.equal(state.status, "cleared");
-    assert.deepEqual(state.hits, []);
-  });
+  expect(await search.run("   ", msgs())).toEqual({ hits: [], query: "", status: "cleared" });
+  // An empty query must not reach the host.
+  expect(search.fetch).not.toHaveBeenCalled();
 });
 
-test("a short query still answers, and an empty answer is named as such", function () {
-  var search = chatMessageSearch();
+test("a short query still answers, and an empty answer is named as such", async () => {
+  const search = chatMessageSearch();
 
-  search.fetch = function () { return Promise.resolve({ hits: [] }); };
+  search.fetch = () => Promise.resolve({ hits: [] });
 
-  return search.run("q", msgs()).then(function (state) {
-    assert.equal(state.status, "done");
-    assert.equal(state.query, "q");
-    assert.deepEqual(state.hits, []);
-  });
+  expect(await search.run("q", msgs())).toEqual({ hits: [], query: "q", status: "done" });
 });
 
-test("the in-flight state names the query so an empty panel is answerable", function () {
-  var search = chatMessageSearch();
-
-  search.fetch = function () { return Promise.resolve({ hits: [] }); };
-
-  var inflight = search.pending("  fix  ");
-
-  assert.equal(inflight.status, "searching");
-  assert.equal(inflight.query, "fix");
-  assert.deepEqual(inflight.hits, []);
-
-  return search.run("fix", msgs());
+test("the in-flight state names the query so an empty panel is answerable", () => {
+  expect(chatMessageSearch().pending("  fix  ")).toEqual({ hits: [], query: "fix", status: "searching" });
 });
 
-test("the page's search box draws the guarded state, not its own answer", async function () {
-  // The helper is only worth anything if the box goes through it. Pinned
-  // because the wiring is a hand edit in a 5,700-line module, and a guard a
-  // later edit routes around is invisible in a diff of the panel's markup.
-  var text = await readFile(new URL("../app.js", import.meta.url), "utf8");
+test("the page's search box draws the guarded state, not its own answer", async () => {
+  /* The helper is only worth anything if the box goes through it. Pinned
+     because the wiring is a hand edit in a 5,700-line module, and a guard a
+     later edit routes around is invisible in a diff of the panel's markup. */
+  const text = await Bun.file(new URL("../app.js", import.meta.url)).text();
 
-  assert.match(text, /chatMessageSearch/u, "app.js must import the guarded search");
-  assert.match(
-    text,
-    /chatSearch\.run\(q\)\.then\(drawChatSearchState\)/u,
-    "the box must draw the state the guarded run resolves",
-  );
-  assert.match(
-    text,
-    /if \(state\.status === "stale"\) \{ return; \}/u,
-    "a superseded answer must never reach the panel",
-  );
-  assert.match(text, /"Searching “" \+ state\.query/u, "the panel must say it is working, and for what");
+  // App.js must import the guarded search.
+  expect(text).toMatch(/chatMessageSearch/u);
+  // The box must draw the state the guarded run resolves.
+  expect(text).toMatch(/chatSearch\.run\(q\)\.then\(drawChatSearchState\)/u);
+  // A superseded answer must never reach the panel.
+  expect(text).toMatch(/if \(state\.status === "stale"\) \{ return; \}/u);
+  // The panel must say it is working, and for what.
+  expect(text).toMatch(/`Searching “\$\{state\.query\}”…`/u);
 });

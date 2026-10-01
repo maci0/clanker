@@ -1,141 +1,172 @@
-// `copyText` is the page's one copy path, and the label it settles on is the
-// only thing a reader gets when the clipboard is not theirs to reach. A
-// plain-http origin withholds the clipboard API, so that path is not an edge:
-// it is every copy button on the page, every time.
-//
-// These cases run against the shipped function under the DOM stub the rest of
-// the suite uses, so the fallback's own words are pinned rather than assumed.
-import assert from "node:assert/strict";
-import { test } from "bun:test";
+/* `copyText` is the page's one copy path, and the label it settles on is the
+   only thing a reader gets when the clipboard is not theirs to reach. A
+   plain-http origin withholds the clipboard API, so that path is not an
+   edge: it is every copy button on the page, every time.
+
+   These cases run against the shipped function under a DOM stub installed
+   on the global object, so the fallback's own words are pinned rather than
+   assumed. */
+import { afterEach, expect, test } from "bun:test";
 import { copyText } from "./vendor.js";
 
-function withDom(body, globals = {}) {
-  var created = [];
+/**
+ * @typedef {{ attrs: Record<string, string>, className?: string, remove: () => void, removed?: boolean, setAttribute: (key: string, value: string) => void, tabIndex?: number, value?: string }} FakeNode
+ * @typedef {{ writeText: (text: string) => Promise<void> }} FakeClipboard
+ */
 
-  function makeNode(tag) {
-    var node = {
-      tagName: tag,
-      textContent: "",
-      value: "",
-      className: "",
-      children: [],
-      attrs: {},
-      setAttribute: function (k, v) { this.attrs[k] = v; },
-      appendChild: function (c) { this.children.push(c); return c; },
-      remove: function () { this.removed = true; },
-      selectNodeContents: function () {},
-    };
+const globals = {
+  /** @type {(() => void)[]} */
+  restores: [],
 
-    created.push(node);
-    return node;
-  }
+  /**
+   * Puts each value on the global object for one test; `afterEach` puts the
+   * previous descriptors back.
+   * @param {Record<string, unknown>} values Global names and their stand-ins.
+   */
+  install(values) {
+    for (const [key, value] of Object.entries(values)) {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, key);
 
-  var doc = {
-    body: { appendChild: function (c) { created.push(c); return c; } },
-    createElement: makeNode,
-    // The shipped code reads `document.createRange`, not `window.document`'s.
-    createRange: function () { return range; },
-  };
+      Object.defineProperty(globalThis, key, { configurable: true, value, writable: true });
+      globals.restores.push(() => {
+        if (previous === undefined) {
+          Reflect.deleteProperty(globalThis, key);
+        } else {
+          Object.defineProperty(globalThis, key, previous);
+        }
+      });
+    }
+  },
 
-  var range = { selectNodeContents: function () { this.target = arguments[0]; } };
+  /**
+   * A DOM just wide enough for `copyText`: element creation, one range, one
+   * selection, and timers that run only when the test says so.
+   * @param {{ clipboard?: FakeClipboard, secure: boolean }} options The origin's clipboard and whether it is secure.
+   */
+  fakeDom({ clipboard, secure }) {
+    /** @type {FakeNode[]} */
+    const created = [],
+      range = {
+        /** @type {unknown} */
+        target: undefined,
+        /** @param {unknown} node The node to select. */
+        selectNodeContents(node) { range.target = node; },
+      },
+      selection = {
+        /** @type {unknown} */
+        added: undefined,
+        /** @param {unknown} r The range made current. */
+        addRange(r) { selection.added = r; },
+        removeAllRanges() { selection.removed = true; },
+        removed: false,
+      },
+      /** @type {(() => void)[]} */
+      timers = [];
 
-  var selection = {
-    removed: null,
-    added: null,
-    removeAllRanges: function () { this.removed = true; },
-    addRange: function (r) { this.added = r; },
-  };
+    globals.install({
+      document: {
+        body: { append: () => undefined },
+        createElement: () => {
+          created.push({
+            attrs: {},
+            remove() { this.removed = true; },
+            /**
+             * @param {string} key Attribute name.
+             * @param {string} value Attribute value.
+             */
+            setAttribute(key, value) { this.attrs[key] = value; },
+          });
 
-  var timers = [];
+          return created.at(-1);
+        },
+        createRange: () => range,
+      },
+      getSelection: () => selection,
+      isSecureContext: secure,
+      navigator: { clipboard },
+      /** @param {() => void} fn The callback a real timer would run later. */
+      setTimeout: (fn) => { timers.push(fn); },
+      window: globalThis,
+    });
 
-  var win = Object.assign({
-    setTimeout: function (fn) { timers.push(fn); return timers.length; },
-    getSelection: function () { return selection; },
-    document: doc,
-    createRange: function () { return range; },
-  }, globals);
+    return { created, range, selection, timers };
+  },
+};
 
-  Object.defineProperty(win, "isSecureContext", { value: globals.secure !== false, writable: true });
-
-  var previous = {
-    document: globalThis.document,
-    window: globalThis.window,
-    navigator: globalThis.navigator,
-  };
-
-  globalThis.document = doc;
-  globalThis.window = win;
-  globalThis.navigator = win.navigator || {};
-
-  var finish = body({ win: win, doc: doc, created: created, selection: selection, range: range, timers: timers });
-
-  return Promise.resolve(finish).finally(function () {
-    globalThis.document = previous.document;
-    globalThis.window = previous.window;
-    globalThis.navigator = previous.navigator;
-  });
-}
-
-test("a copy with nothing to select still hands the reader the value", function () {
-  withDom(function (env) {
-    var btn = { textContent: "Share" };
-
-    copyText("https://example.test/#chat?session=s1", btn, "Share", null);
-
-    assert.equal(btn.textContent, "Selected: press Ctrl+C", "the label must offer a way onward, not a dead end");
-    assert.ok(env.selection.added, "the value must be put on the clipboard path the reader can take");
-    assert.ok(env.selection.removed, "a stale selection would replace the new one");
-  });
+afterEach(() => {
+  for (const restore of globals.restores.splice(0).toReversed()) { restore(); }
 });
 
-test("the parked field is hidden from assistive tech and taken back off the page", function () {
-  withDom(function (env) {
-    var btn = { textContent: "Copy link" };
+test("a copy with nothing to select still hands the reader the value", () => {
+  const btn = { textContent: "Share" },
+    env = globals.fakeDom({ secure: false });
 
-    copyText("https://example.test/#knowledge/k1", btn, "Copy link", null);
+  copyText("https://example.test/#chat?session=s1", btn, "Share", null);
 
-    var parked = env.created.find(function (n) { return n.className === "sr-only"; });
-
-    assert.ok(parked, "a value with no visible node needs one to select");
-    assert.equal(parked.value, "https://example.test/#knowledge/k1", "the field must hold the value, not a placeholder");
-    assert.equal(parked.attrs["aria-hidden"], "true", "it is not content");
-    assert.equal(parked.tabIndex, -1, "it must not take a tab stop from the reader");
-    assert.ok(env.timers.length, "the field has to be reclaimed, or every copy leaks a node");
-
-    env.timers.forEach(function (fn) { fn(); });
-
-    assert.equal(parked.removed, true);
-  });
+  // The label must offer a way onward, not a dead end.
+  expect(btn.textContent).toBe("Selected: press Ctrl+C");
+  // The value must be put on the clipboard path the reader can take.
+  expect(env.selection.added).toBe(env.range);
+  // A stale selection would replace the new one.
+  expect(env.selection.removed).toBe(true);
 });
 
-test("a caller that already names a target keeps using it", function () {
-  withDom(function (env) {
-    var btn = { textContent: "Copy" };
-    var target = { tagName: "PRE" };
+test("the parked field is hidden from assistive tech and taken back off the page", () => {
+  const btn = { textContent: "Copy link" },
+    env = globals.fakeDom({ secure: false });
 
-    copyText("body text", btn, "Copy", target);
+  copyText("https://example.test/#knowledge/k1", btn, "Copy link", null);
 
-    assert.equal(env.range.target, target, "the caller's own node is the one selected");
-    assert.equal(env.created.filter(function (n) { return n.className === "sr-only"; }).length, 0, "no second field is parked");
+  // A value with no visible node needs one to select, holding the value itself.
+  expect(env.created).toHaveLength(1);
+  expect(env.created[0]).toMatchObject({
+    attrs: { "aria-hidden": "true" },
+    className: "sr-only",
+    tabIndex: -1,
+    value: "https://example.test/#knowledge/k1",
   });
+  expect(env.range.target).toBe(env.created[0]);
+
+  // The field has to be reclaimed, or every copy leaks a node.
+  for (const fn of env.timers) { fn(); }
+
+  expect(env.created[0]).toHaveProperty("removed", true);
 });
 
-test("a secure origin with a working clipboard still says Copied", async function () {
-  var written = [];
+test("a caller that already names a target keeps using it", () => {
+  const btn = { textContent: "Copy" },
+    env = globals.fakeDom({ secure: false }),
+    target = { tagName: "PRE" };
 
-  await withDom(async function (env) {
-    var btn = { textContent: "Share" };
+  copyText("body text", btn, "Copy", target);
 
-    Object.defineProperty(env.win, "isSecureContext", { value: true, writable: true });
-    env.win.navigator = { clipboard: { writeText: function (t) { written.push(t); return Promise.resolve(); } } };
-    globalThis.navigator = env.win.navigator;
+  // The caller's own node is the one selected, and no second field is parked.
+  expect(env.range.target).toBe(target);
+  expect(env.created).toEqual([]);
+});
 
-    copyText("https://example.test/#chat", btn, "Share", null);
+test("a secure origin with a working clipboard still says Copied", async () => {
+  /** @type {string[]} */
+  const btn = { textContent: "Share" },
+    written = [];
 
-    await Promise.resolve();
-    await Promise.resolve();
+  globals.fakeDom({
+    clipboard: {
+      /** @param {string} t The text written. */
+      writeText: (t) => {
+        written.push(t);
 
-    assert.deepEqual(written, ["https://example.test/#chat"]);
-    assert.equal(btn.textContent, "Copied", "the success label is the one the reader needs here");
+        return Promise.resolve();
+      },
+    },
+    secure: true,
   });
+
+  copyText("https://example.test/#chat", btn, "Share", null);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(written).toEqual(["https://example.test/#chat"]);
+  // The success label is the one the reader needs here.
+  expect(btn.textContent).toBe("Copied");
 });

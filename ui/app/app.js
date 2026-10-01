@@ -3143,11 +3143,11 @@ function openChatRoom(room) {
   });
   // A room switch invalidates whatever the pins/search panels were showing.
   if (el.chatPinsPanel && !el.chatPinsPanel.hidden) loadChatPins(room);
-  // The search bar keeps its query on a room switch, so an emptied panel
-  // under a phrase the reader can still see is a lie about what was
-  // searched. Re-run the same phrase in the room just opened, which is what
-  // the next keystroke would have done.
-  if (el.chatSearchBar && !el.chatSearchBar.hidden && chatSearch && el.chatSearchInput.value.trim()) {
+  /* The search bar keeps its query on a room switch, so an emptied panel
+     under a phrase the reader can still see is a lie about what was
+     searched. Re-run the same phrase in the room just opened, which is what
+     the next keystroke would have done. */
+  if (el.chatSearchBar && !el.chatSearchBar.hidden && el.chatSearchInput.value.trim() !== "") {
     el.chatSearchInput.dispatchEvent(new Event("input"));
   }
   // Phone: the channel drawer sits over the transcript and covers the
@@ -3870,18 +3870,20 @@ if (el.chatPinToggle) el.chatPinToggle.addEventListener("click", function () {
 });
 if (el.chatPinsClose) el.chatPinsClose.addEventListener("click", closeChatPins);
 
-function closeChatSearch() {
-  if (!el.chatSearchBar) { return; }
+const chatSearch = chatMessageSearch(),
+  closeChatSearch = () => {
+    if (!el.chatSearchBar) { return; }
 
-  el.chatSearchBar.hidden = true;
-  el.chatSearchResults.textContent = "";
-  el.chatSearchInput.value = "";
-  /* An answer still on the wire has nothing to paint into: the panel is
-     closed, and reopening searches the query the reader now types. Bumping
-     the counter marks it stale, so it is dropped rather than repopulating a
-     panel the reader dismissed. */
-  chatSearch.run("");
-}
+    el.chatSearchBar.hidden = true;
+    el.chatSearchResults.textContent = "";
+    el.chatSearchInput.value = "";
+
+    /* An answer still on the wire has nothing to paint into: the panel is
+       closed, and reopening searches the query the reader now types. Bumping
+       the counter marks it stale, so it is dropped rather than repopulating a
+       panel the reader dismissed. */
+    void chatSearch.run("");
+  };
 if (el.chatSearchToggle) el.chatSearchToggle.addEventListener("click", function () {
   var open = el.chatSearchBar.hidden;
   el.chatSearchBar.hidden = !open;
@@ -3890,21 +3892,17 @@ if (el.chatSearchToggle) el.chatSearchToggle.addEventListener("click", function 
 });
 if (el.chatSearchClose) el.chatSearchClose.addEventListener("click", closeChatSearch);
 var chatSearchTimer = null;
-var chatSearch = chatMessageSearch();
 
-chatSearch.fetch = function (q) {
-  var room = el.chatRoom.value;
+chatSearch.fetch = async (q) => {
+  /** @type {{ messages?: { deleted?: boolean, from?: string, id?: string, text?: string }[] }} */
+  const data = await readJson(await fetch(`/api/chat/messages?room=${encodeURIComponent(el.chatRoom.value)}&after=0`)),
+    ql = utilSearchFold(q);
 
-  return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0")
-    .then(readJson)
-    .then(function (data) {
-      var ql = utilSearchFold(q);
-
-      return { hits: (data.messages || []).filter(function (m) { return !m.deleted && m.text && utilSearchFold(m.text).indexOf(ql) !== -1; }).slice(0, 30) };
-    });
+  return { hits: (data.messages ?? []).filter((m) => m.deleted !== true && (m.text ?? "") !== "" && utilSearchFold(m.text).includes(ql)).slice(0, 30) };
 };
 
-function drawChatSearchState(state) {
+/** @param {import("./core/chat.js").ChatSearchState} state What `chatSearch` resolved, or its pending state. */
+const drawChatSearchState = (state) => {
   el.chatSearchResults.textContent = "";
 
   /* An answer a later query superseded is never drawn: the panel would name
@@ -3912,45 +3910,51 @@ function drawChatSearchState(state) {
   if (state.status === "stale") { return; }
 
   if (state.status === "searching") {
-    var busy = document.createElement("p");
+    const searching = document.createElement("p");
 
-    busy.textContent = "Searching “" + state.query + "”…";
-    el.chatSearchResults.appendChild(busy);
+    searching.textContent = `Searching “${state.query}”…`;
+    el.chatSearchResults.append(searching);
+
     return;
   }
 
   if (state.status === "error") {
-    showLoadError(el.chatSearchResults, "Search failed: " + state.error,
-      function () { el.chatSearchInput.dispatchEvent(new Event("input")); });
+    showLoadError(el.chatSearchResults, `Search failed: ${state.error}`,
+      () => { el.chatSearchInput.dispatchEvent(new Event("input")); });
+
     return;
   }
 
-  if (!state.hits.length) {
-    var empty = document.createElement("p");
-    empty.textContent = "No messages mention “" + state.query + "”.";
-    el.chatSearchResults.appendChild(empty);
+  if (state.hits.length === 0) {
+    const empty = document.createElement("p");
+
+    empty.textContent = `No messages mention “${state.query}”.`;
+    el.chatSearchResults.append(empty);
+
     return;
   }
 
-  state.hits.forEach(function (m) {
-    var row = document.createElement("button");
+  for (const m of state.hits) {
+    const row = document.createElement("button");
+
     row.type = "button";
     row.className = SEARCH_RESULT_CLASS;
-    row.textContent = m.from + ": " + m.text;
-    row.title = m.text; // the row is one ellipsized line
-    row.addEventListener("click", function () { closeChatSearch(); revealChatMessage(m); });
-    el.chatSearchResults.appendChild(row);
-  });
-}
+    row.textContent = `${m.from}: ${m.text}`;
+    /* The row is one ellipsized line. */
+    row.title = m.text;
+    row.addEventListener("click", () => { closeChatSearch(); revealChatMessage(m); });
+    el.chatSearchResults.append(row);
+  }
+};
 
 if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function () {
   if (chatSearchTimer) window.clearTimeout(chatSearchTimer);
-  var q = el.chatSearchInput.value.trim();
+  var q = String(el.chatSearchInput.value).trim();
   var room = el.chatRoom.value;
-  if (!q || !room) { el.chatSearchResults.textContent = ""; chatSearch.run(""); return; }
-  chatSearchTimer = window.setTimeout(function () {
+  if (!q || !room) { el.chatSearchResults.textContent = ""; void chatSearch.run(""); return; }
+  chatSearchTimer = window.setTimeout(() => {
     drawChatSearchState(chatSearch.pending(q));
-    chatSearch.run(q).then(drawChatSearchState);
+    void chatSearch.run(q).then(drawChatSearchState);
   }, 200);
 });
 
@@ -5260,13 +5264,14 @@ function transcriptMarkdown() { return compTranscriptMarkdown(el.transcript, cur
   var btn = document.getElementById("session-share");
   if (!btn) return;
   btn.addEventListener("click", function(){
-    var id = sessionId || "";
-    var url = window.location.origin + window.location.pathname + "#chat";
-    // Prefer session deep-link when available
-    if (id) { url = window.location.origin + window.location.pathname + "#chat?session=" + encodeURIComponent(id); }
-    // The shared copy path, so a plain-http origin gets the same select-to-copy
-    // hand-off every other copy button here offers. A `uiPrompt` fallback said
-    // "Save" on a link the reader only wanted to read.
+    /* Prefer the session deep link when there is a session. */
+    const page = `${globalThis.location.origin}${globalThis.location.pathname}#chat`,
+      url = sessionId ? `${page}?session=${encodeURIComponent(sessionId)}` : page;
+
+    /* The shared copy path, so a plain-http origin gets the same
+       select-to-copy hand-off every other copy button here offers. A
+       `uiPrompt` fallback said "Save" on a link the reader only wanted to
+       read. */
     copyText(url, btn, "Share");
   });
 })();

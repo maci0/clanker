@@ -216,12 +216,11 @@ function openCollection(id, docId){
     var t=document.createElement("span"); t.className=chrome.title; t.textContent=data.title||id; head.appendChild(t);
     var share=kit.button({variant:"secondary", class:"ml-3"}, "Copy link");
     share.addEventListener("click", function(){
-      var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
-      // The shared copy path, for the same reason the session Share button
-      // uses it: a `uiPrompt` fallback offered a "Save" button on a link the
-      // reader only wanted, and a clipboard refusal is common enough on plain
-      // http to be a path, not an edge.
-      copyText(url, share, "Copy link");
+      /* The shared copy path, for the same reason the session Share button
+         uses it: a `uiPrompt` fallback offered a "Save" button on a link the
+         reader only wanted, and a clipboard refusal is common enough on plain
+         http to be a path, not an edge. */
+      copyText(`${globalThis.location.origin}${globalThis.location.pathname}#knowledge/${encodeURIComponent(id)}`, share, "Copy link");
     }); head.appendChild(share);
     var close=kit.button({variant:"secondary"}, "Close");
     close.addEventListener("click",closeCollection); head.appendChild(close); detail.appendChild(head);

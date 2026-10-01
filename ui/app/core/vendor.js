@@ -103,32 +103,35 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
     window.setTimeout(function () { btn.textContent = restoreLabel; }, 1400);
   }
 
+  /* No target meant "Copy unavailable" and no way onward, on a path plain
+     http reaches every time: the clipboard API is withheld there. A value
+     with no visible node gets one parked offscreen, so the hand-off to the
+     reader's own Ctrl+C is the same whatever they clicked. */
+  const parkedField = () => {
+    const field = document.createElement("input");
+
+    field.className = "sr-only";
+    field.setAttribute("aria-hidden", "true");
+    field.tabIndex = -1;
+    field.value = String(text);
+    document.body.append(field);
+    globalThis.setTimeout(() => { field.remove(); }, 1600);
+
+    return field;
+  };
+
   function selectInstead() {
-    var sel = window.getSelection && document.createRange;
-    var target = selectTarget;
+    const selection = globalThis.getSelection();
 
-    /* No target meant "Copy unavailable" and no way onward, on a path plain
-       http reaches every time: the clipboard API is withheld there. A value
-       with no visible node gets one parked offscreen, so the hand-off to the
-       reader's own Ctrl+C is the same whatever they clicked. */
-    if (!target && sel) {
-      target = document.createElement("input");
-      target.className = "sr-only";
-      target.setAttribute("aria-hidden", "true");
-      target.tabIndex = -1;
-      target.value = text;
-      document.body.appendChild(target);
-      window.setTimeout(function () { target.remove(); }, 1600);
-    }
-
-    if (sel && target) {
-      var range = document.createRange();
-      range.selectNodeContents(target);
-      window.getSelection().removeAllRanges();
-      window.getSelection().addRange(range);
-      btn.textContent = "Selected: press Ctrl+C";
-    } else {
+    if (selection === null) {
       btn.textContent = "Copy unavailable";
+    } else {
+      const range = document.createRange();
+
+      range.selectNodeContents(selectTarget ?? parkedField());
+      selection.removeAllRanges();
+      selection.addRange(range);
+      btn.textContent = "Selected: press Ctrl+C";
     }
 
     restore();
