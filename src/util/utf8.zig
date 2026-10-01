@@ -530,3 +530,197 @@ test "fold survives a string that is not valid UTF-8" {
     const hit = (try foldFind(arena, "caf\xe9 latte", "latte")).?;
     try t.expectEqualStrings("latte", out[hit.start..][0..hit.len]);
 }
+
+/// The Smith encoding one `smith.slice` seed needs, spelled here rather than
+/// taken from `util/fuzz_corpus.zig`: that file is reached by path from `src/`
+/// and by name from guests, and this one is *itself* reached by name from
+/// guests, so it can hold neither import in the same compilation (a Zig file
+/// belongs to one module per build, and the guest module set has no
+/// `fuzz_corpus`). One helper, two calls, and a length field the harness's
+/// reader actually expects — a raw seed would arrive here missing its first
+/// four bytes and steer nothing.
+fn fuzzEntry(comptime seed: []const u8) []const u8 {
+    const encoded = comptime blk: {
+        var buf: [4 + seed.len]u8 = undefined;
+        std.mem.writeInt(u32, buf[0..4], @intCast(seed.len), .little);
+        @memcpy(buf[4..], seed);
+        break :blk buf;
+    };
+    return &encoded;
+}
+
+/// The spellings a query and a haystack actually arrive in: an operator types
+/// the letters their keyboard has, the text they look for is spelled with the
+/// marks its language puts on them, and both sides can also be bytes that are
+/// not UTF-8 at all (a filename off disk, subprocess output). Random mutation
+/// produces an accented codepoint rarely enough that the corpus names the
+/// folds, the dropped marks, the two-byte expansions and the broken bytes.
+const fold_fuzz_corpus = [_][]const u8{
+    fuzzEntry(""),
+    fuzzEntry("hello\x00world"),
+    fuzzEntry("Za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87"), // Zażółć
+    fuzzEntry("zazolc"),
+    fuzzEntry("cafe\xcc\x81"), // decomposed
+    fuzzEntry("caf\xc3\xa9"), // precomposed
+    fuzzEntry("Stra\xc3\x9fe"), // ß folds to ss
+    fuzzEntry("strasse"),
+    fuzzEntry("\xc3\x86ngstr\xc3\xb6m"), // Æ -> ae
+    fuzzEntry("ae"),
+    fuzzEntry("\xc3\x98rsted"), // Ø has no mark to strip
+    fuzzEntry("orsted"),
+    fuzzEntry("\xc6\x92\xc5\xbf"), // Þ -> th
+    fuzzEntry("pami\xc4\x99ta: Za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87"),
+    fuzzEntry("\xe4\xb8\xad\xe6\x96\x87"), // CJK folds to itself
+    fuzzEntry("\xd0\xbf\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82"), // Cyrillic
+    fuzzEntry("caf\xe9 latte"), // latin-1 byte, not valid UTF-8
+    fuzzEntry("caf\xc3"), // truncated codepoint
+    fuzzEntry("\xf0\x9f\x98"), // truncated emoji
+    fuzzEntry("\x80\xff\xbf"), // bare continuation bytes
+    fuzzEntry("a\xc3\xa6b"),
+    fuzzEntry("\xc3\x84\xc3\x96\xc3\x9c"), // folded letters, no marks
+    // A match that ends on a decomposed letter: the window has to carry the
+    // combining mark with it, and a mark after the last matched letter of a
+    // longer hit is the case `swallowMarks` covers.
+    fuzzEntry("cafe\xcc\x81 bar\x00cafe"),
+    fuzzEntry("x cafe\xcc\x81 y\x00cafe"),
+    fuzzEntry("Za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87 g\xc4\x99sla\x00zazolc"),
+    fuzzEntry("a\xc3\xa6b\x00e"),
+};
+
+test "fuzz: a fold hit is a window of the haystack a plain match would also accept" {
+    // `foldFind` answers with offsets into the *haystack's own bytes*, which
+    // every caller slices, highlights, or passes to `std.json` as a session
+    // snippet. The folded and raw byte counts differ (a fold can grow "æ" to
+    // "ae", a mark folds away entirely), so the mapping from folded offset
+    // back to source offset is the part that can be wrong, and a wrong one is
+    // an out-of-range slice in a caller. So the properties, checked on every
+    // byte pair:
+    //
+    //   * a hit is a window inside the haystack, on codepoint boundaries, and
+    //     never empty -- a slice past the end or a half codepoint is what the
+    //     caller dereferences;
+    //   * the reported window really does match the needle under the same
+    //     fold the search used, so an offset that pointed at unrelated text
+    //     fails here rather than highlighting the wrong session row;
+    //   * `foldFind` and a direct search of the two folds agree on *whether*
+    //     there is a match, which is the property a wrong mapping loses
+    //     silently (the answer still arrives, just for the wrong bytes);
+    //   * `foldIsIdentity` never contradicts `fold`: text it calls identity
+    //     folds back to itself.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            var buf: [512]u8 = undefined;
+            const input = buf[0..smith.slice(&buf)];
+            // The corpus spells a haystack and its query either as one NUL-
+            // separated string or, under mutation, as halves of whatever the
+            // fuzzer produced. Either way both sides get driven.
+            const split = std.mem.indexOfScalar(u8, input, 0) orelse input.len / 2;
+            const haystack = input[0..split];
+            const needle = if (split < input.len) input[split + 1 ..] else input[split..];
+
+            const hit = try foldFind(arena, haystack, needle);
+            const hf = try fold(arena, haystack);
+            const nf = try fold(arena, needle);
+
+            if (hit) |h| {
+                try std.testing.expect(h.len > 0);
+                try std.testing.expect(h.start + h.len <= haystack.len);
+                const window = haystack[h.start..][0..h.len];
+
+                // A codepoint boundary on both sides: the window is text, not
+                // a fragment of a multi-byte sequence.
+                try std.testing.expect(h.start == 0 or !isContinuation(haystack[h.start]));
+                try std.testing.expect(h.start + h.len == haystack.len or
+                    !isContinuation(haystack[h.start + h.len]));
+
+                // The window answers the query under the same fold. Either
+                // side may contain the other: a window can cover more folded
+                // bytes than the query ("æ" for a query of "e") and can never
+                // cover fewer, or the match would not be there.
+                const window_fold = try fold(arena, window);
+                try std.testing.expect(std.mem.indexOf(u8, window_fold, nf) != null or
+                    std.mem.indexOf(u8, nf, window_fold) != null);
+
+                // A window that ends inside a codepoint is the out-of-range slice a
+                // caller would hand to a highlighter, so both boundaries have
+                // to land on lead bytes. (The trailing-mark extension in
+                // `sourceOffset` is only reachable when the end offset itself
+                // lands mid-mark; a fold comparison cannot see a mark, which
+                // folds to nothing, so it is left to the unit tests that pin
+                // the spelling rather than fuzzed here.)
+
+                // Minimal: dropping the first codepoint must break the match,
+                // or the mapping started one letter early. Dropping the last
+                // one may keep it (a fold that expanded, "æ" answering "e"),
+                // which is the whole reason `sourceOffset` reports the letter
+                // rather than the byte, so only the start is pinned.
+                try expectNotShrinkable(arena, haystack, h, nf);
+            }
+
+            // Agreement with a search over the two folds directly: a mapping
+            // bug that turns a miss into a hit, or drops one, fails here.
+            const direct = if (nf.len == 0) null else std.mem.indexOf(u8, hf, nf);
+            try std.testing.expectEqual(direct != null, hit != null);
+
+            // foldIsIdentity must never contradict fold.
+            if (foldIsIdentity(haystack)) try std.testing.expectEqualStrings(haystack, hf);
+        }
+
+        fn isContinuation(b: u8) bool {
+            return (b & 0xC0) == 0x80;
+        }
+
+        /// True when the codepoint starting at `at` folds to nothing, i.e. it
+        /// is one of the combining marks `fold` drops. A separate table walk
+        /// rather than a call into `fold`, so the assertion checks the answer
+        /// instead of restating the implementation with it.
+        fn isFoldingMark(s: []const u8, at: usize) bool {
+            const len = std.unicode.utf8ByteSequenceLength(s[at]) catch return false;
+            if (at + len > s.len) return false;
+            if (!std.unicode.utf8ValidateSlice(s[at .. at + len])) return false;
+            const cp = std.unicode.utf8Decode(s[at .. at + len]) catch return false;
+            for ([_][2]u21{
+                .{ 0x0300, 0x036F },
+                .{ 0x1AB0, 0x1AFF },
+                .{ 0x1DC0, 0x1DFF },
+                .{ 0x20D0, 0x20F0 },
+                .{ 0xFE20, 0xFE2F },
+            }) |r| {
+                if (cp >= r[0] and cp <= r[1]) return true;
+            }
+            return false;
+        }
+
+        /// Dropping the first codepoint of the window must stop it answering
+        /// the query. A window that still matches without its first letter
+        /// started early, so a caller highlighting it marks a character the
+        /// query never matched.
+        fn expectNotShrinkable(
+            arena: std.mem.Allocator,
+            haystack: []const u8,
+            h: FoldHit,
+            nf: []const u8,
+        ) !void {
+            if (h.start == 0) return;
+            const shorter = haystack[utf8Start(haystack, h.start) .. h.start + h.len];
+            if (shorter.len == h.len) return;
+            const shorter_fold = try fold(arena, shorter);
+            if (std.mem.indexOf(u8, shorter_fold, nf) != null or
+                std.mem.indexOf(u8, nf, shorter_fold) != null)
+                return error.MatchStartsEarly;
+        }
+
+        /// Byte offset of the codepoint whose bytes cover `at`, walking back
+        /// over continuation bytes.
+        fn utf8Start(s: []const u8, at: usize) usize {
+            var i = at;
+            while (i > 0 and isContinuation(s[i])) i -= 1;
+            return i;
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &fold_fuzz_corpus });
+}

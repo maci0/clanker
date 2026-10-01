@@ -9,6 +9,7 @@
 //! definition instead of several that must stay in sync by comment.
 
 const std = @import("std");
+const fuzz_corpus = @import("fuzz_corpus.zig");
 
 /// True for C0 controls and DEL that must not reach the terminal.
 /// \n stays (line structure) and \t stays (layout; cannot start an escape).
@@ -243,4 +244,88 @@ test "sanitizeAlloc consumes an unterminated OSC sequence whole" {
     const result = try sanitizeAlloc(std.testing.allocator, dirty);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("pre", result);
+}
+/// The escape machinery a terminal acts on: an introducer followed by
+/// something that moves the cursor, sets a colour, or repaints. Random bytes
+/// produce one of these rarely enough that the corpus names every shape the
+/// stripper handles, including the truncated ones that end mid-sequence.
+const sanitize_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry("plain text"),
+    fuzz_corpus.entry("\x1b[31mred\x1b[0m"),
+    fuzz_corpus.entry("\x1b]0;window title\x07body"),
+    fuzz_corpus.entry("\x1b]0;title\x1b\\body"),
+    fuzz_corpus.entry("\x1b]8;;https://example.com\x1b\\link"),
+    fuzz_corpus.entry("\x1b[38;2;255;0;0m"),
+    fuzz_corpus.entry("\x1b[?25l\x1b[?25h"),
+    fuzz_corpus.entry("\x1bM\x1b7\x1b8\x1bD"),
+    fuzz_corpus.entry("\x1b"), // bare ESC at end of input
+    fuzz_corpus.entry("\x1b["), // introducer with nothing after it
+    fuzz_corpus.entry("\x1b]"), // OSC introducer, unterminated
+    fuzz_corpus.entry("\x1b[31"), // CSI with no final byte
+    fuzz_corpus.entry("\x1bPts\x1b\\"), // DCS: ESC + argument dropped, rest kept
+    fuzz_corpus.entry("\xc2\x85\xc2\x9b nested \x07"),
+    fuzz_corpus.entry("tab\there\nand\r\nnewline"),
+    fuzz_corpus.entry("\x00\x01\x02\x7f\xff\xc3\x28"),
+    fuzz_corpus.entry("\x1b\x1b\x1b[[[[["),
+    fuzz_corpus.entry("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9"),
+};
+
+test "fuzz: both output paths strip the same bytes and leave no escape machinery" {
+    // Two scanners answer one question (a writer for the TUI, an allocating
+    // copy for the record stores), so a byte one drops and the other keeps is
+    // one path printing a raw ESC into a terminal. Both walks are hand-rolled
+    // over untrusted bytes, so the properties are asserted rather than
+    // trusted:
+    //
+    //   * the writer and `sanitizeAlloc` agree byte for byte;
+    //   * the result carries no C0 control, no DEL and no ESC at all, so no
+    //     sequence survives its introducer, and no UTF-8-encoded C1;
+    //   * nothing is invented: the result is a subsequence of the input, so
+    //     stripping never inserts a byte a caller later caps or compares;
+    //   * stripping does not amplify: the output is never longer than the
+    //     input, which is what re-emitting consumed payload looks like.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [512]u8 = undefined;
+            const input = buf[0..smith.slice(&buf)];
+
+            var out_buf: [1024]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&out_buf);
+            writeSanitized(&w, input);
+            const written = out_buf[0..w.end];
+
+            const allocated = try sanitizeAlloc(std.testing.allocator, input);
+            // The ptr-equal alias case: clean input comes back as itself, so
+            // freeing that would free the fuzz buffer's own memory.
+            defer if (allocated.ptr != input.ptr) std.testing.allocator.free(allocated);
+
+            try std.testing.expectEqualStrings(written, allocated);
+
+            var i: usize = 0;
+            while (i < allocated.len) : (i += 1) {
+                try std.testing.expect(!isControl(allocated[i]));
+                try std.testing.expect(allocated[i] != 0x1B);
+                // A UTF-8 C1 control is the pair 0xC2 0x80..0x9F; the check is
+                // on the pair, not the lead, because a valid "\xc2\xa0" (NBSP)
+                // is text the terminal prints.
+                if (allocated[i] == 0xC2 and i + 1 < allocated.len and
+                    allocated[i + 1] >= 0x80 and allocated[i + 1] <= 0x9F)
+                    return error.C1ControlSurvived;
+            }
+            try std.testing.expect(isSubsequence(written, input));
+            try std.testing.expect(written.len <= input.len);
+        }
+
+        /// Every kept byte is one of the input's bytes, in order. The property
+        /// that keeps a stripper honest: it removes, never edits.
+        fn isSubsequence(needle: []const u8, haystack: []const u8) bool {
+            var n: usize = 0;
+            for (haystack) |c| {
+                if (n < needle.len and needle[n] == c) n += 1;
+            }
+            return n == needle.len;
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &sanitize_fuzz_corpus });
 }
