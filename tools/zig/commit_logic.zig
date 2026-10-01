@@ -1,6 +1,7 @@
 //! Pure grouping / validation / topo-sort for `smart_commit`.
 
 const std = @import("std");
+const utf8 = @import("utf8");
 
 pub const types = [_][]const u8{
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
@@ -199,7 +200,14 @@ pub fn sanitizeMessage(alloc: std.mem.Allocator, raw: []const u8) !?[]const u8 {
         try line.append(alloc, c);
     }
     if (line.items.len == 0) return null;
-    if (line.items.len > max_message_bytes) line.shrinkRetainingCapacity(max_message_bytes);
+    // Cap on a codepoint boundary, not a byte. A raw byte cut through a
+    // multi-byte character yields a shorter string that is not a string: it is
+    // invalid UTF-8, and this value becomes a commit subject, so those bytes
+    // land in `git commit -m` argv and in history, where a later amend can
+    // rewrite the wording but not the invalid bytes underneath it. `utf8.cap`
+    // is the helper the repo already uses for this, and it leaves the ASCII
+    // case exact: there is no codepoint boundary to snap back to.
+    if (line.items.len > max_message_bytes) line.shrinkRetainingCapacity(utf8.cap(line.items, max_message_bytes).len);
     const trimmed = std.mem.trimEnd(u8, line.items, " ");
     if (trimmed.len == 0) return null;
     return try alloc.dupe(u8, trimmed);
@@ -442,6 +450,41 @@ test "sanitizeMessage reduces a model message to one bounded printable line" {
     const capped = (try sanitizeMessage(arena, huge)).?;
     try std.testing.expectEqual(max_message_bytes, capped.len);
     try std.testing.expect(std.ascii.isPrint(capped[capped.len - 1]));
+}
+
+test "the cap never cuts a multi-byte character in half" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A subject one byte past the cap whose last character is wider than one
+    // byte puts the cut inside that character. This is not a rendering
+    // artifact: the result is a commit subject, so the broken bytes reach
+    // `git commit -m` and history, where nothing downstream can fix them.
+    for ([_][]const u8{ "\u{e9}", "\u{65e5}", "\u{1f680}" }) |wide| {
+        var raw: std.ArrayList(u8) = .empty;
+        defer raw.deinit(gpa);
+        try raw.appendSlice(gpa, "fix: ");
+        // Fill up to the point where this character straddles the cap, so the
+        // cut lands inside it: half of its bytes are before the boundary.
+        try raw.appendNTimes(gpa, 'x', max_message_bytes - "fix: ".len - wide.len / 2);
+        try raw.appendSlice(gpa, wide);
+        try raw.appendSlice(gpa, "tail");
+        const out = (try sanitizeMessage(arena, raw.items)).?;
+        try std.testing.expect(std.unicode.utf8ValidateSlice(out));
+        try std.testing.expect(out.len <= max_message_bytes);
+    }
+
+    // A subject made entirely of wide characters needs the cap too, and the
+    // cut must land between them rather than inside one.
+    var wide_only: std.ArrayList(u8) = .empty;
+    defer wide_only.deinit(gpa);
+    for (0..max_message_bytes) |_| try wide_only.appendSlice(gpa, "\u{1f680}");
+    const wide_out = (try sanitizeMessage(arena, wide_only.items)).?;
+    try std.testing.expect(std.unicode.utf8ValidateSlice(wide_out));
+    // Four bytes each, so the result holds a whole number of them.
+    try std.testing.expectEqual(@as(usize, 0), wide_out.len % 4);
 }
 
 test "messageOrDefault names the group when the model message is unusable" {
