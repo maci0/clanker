@@ -342,7 +342,7 @@ pub fn main(init: std.process.Init) !void {
             error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
             error.ExtraTask => cli.printUsageError(init.io, "`clanker run` takes one task but got a second argument: '{s}'. If that is part of the same task, the shell split it: a `\"` inside the task ends the quoted string, so quote the whole task and escape any inner ones as \\\"", .{shown}),
             error.UnknownCommand => cli.printUnknownCommand(init.io, shown),
-            error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
+            error.UnknownArg => if (cli.suggestFlagFor(diag, cmd_out)) |suggestion|
                 cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ shown, suggestion })
             else
                 cli.printUsageError(init.io, "unrecognized argument '{s}'", .{shown}),
@@ -367,7 +367,7 @@ pub fn main(init: std.process.Init) !void {
             error.PromptLooksLikeCommand => cli.printUsageError(init.io, "'{s}' looks like a quoted command; drop the quotes to run it, or use `clanker run \"{s}\"` to submit it as a task", .{ shown, shown }),
             error.OutOfMemory => unreachable,
         }
-        const skip_hint = skipUsageHint(err, diag, err == error.UnknownArg and cli.suggestFlag(diag) != null);
+        const skip_hint = skipUsageHint(err, diag, err == error.UnknownArg and cli.suggestFlagFor(diag, cmd_out) != null);
         if (!skip_hint) {
             if (err == error.UnknownCommand or arg_list.items.len < 2) {
                 cli.printUsageHint(init.io);

@@ -925,6 +925,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 used = .arena_position;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
             if (used) |f| {
@@ -1167,6 +1168,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.plugin_target = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .preset) {
@@ -1176,6 +1178,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.preset_target = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .autolearn) {
@@ -1183,6 +1186,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.autolearn_reset = true;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .schedule) {
@@ -1196,6 +1200,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.schedule_arg2 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .worktree_cmd) {
@@ -1207,6 +1212,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.worktree_arg2 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .mesh) {
@@ -1222,6 +1228,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.mesh_arg1 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .reports) {
@@ -1239,6 +1246,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.reports_arg4 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .config) {
@@ -1252,6 +1260,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.config_value = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .research) {
@@ -1270,6 +1279,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.research_arg4 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .rfc) {
@@ -1288,6 +1298,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.rfc_arg4 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .adr) {
@@ -1308,6 +1319,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.adr_arg5 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .prd) {
@@ -1326,6 +1338,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.prd_arg4 = a;
             } else {
                 setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else if (opts.command == .workflow) {
@@ -1353,6 +1366,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             return error.ExtraTask;
         } else {
             setDiag(diag, a);
+            if (cmd_out) |c| c.* = opts.command;
             return error.UnknownArg;
         }
     }
@@ -1522,6 +1536,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             }
             if (opts.task != null) {
                 setDiag(diag, "--show");
+                if (cmd_out) |c| c.* = opts.command;
                 return error.UnknownArg;
             }
         } else {
@@ -1749,6 +1764,19 @@ fn suggestCommand(input: []const u8) ?[]const u8 {
             best_distance = distance;
         }
     }
+    // The aliases too, answered with the canonical command each stands for.
+    // `histry` is the one people type, and it is an alias rather than a
+    // spec, so walking only `specs` left the likeliest typo of all with a
+    // bare "unknown command" while `sesions` next to it was answered.
+    for (command_aliases.keys()) |alias| {
+        const canonical = commandName(command_aliases.get(alias).?);
+        if (canonical.len == 0) continue;
+        const distance = edit_distance.typoDistance(input, alias);
+        if (distance < best_distance) {
+            best = canonical;
+            best_distance = distance;
+        }
+    }
     return best;
 }
 
@@ -1811,24 +1839,49 @@ pub fn formatMissingArg(buf: []u8, diag: []const u8, shown: []const u8) []const 
     return std.fmt.bufPrint(buf, "'{s}' needs a value", .{shown}) catch shown;
 }
 
+/// Closest public flag spelling for a mistyped `--flag`, with no command in
+/// hand: every flag is a candidate. Callers that know which command was
+/// parsed want `suggestFlagFor`, which is the same answer narrowed to flags
+/// that command takes.
+pub fn suggestFlag(input: []const u8) ?[]const u8 {
+    return suggestFlagFor(input, null);
+}
+
 /// Closest public flag spelling for a mistyped `--flag`.
 /// One-edit typos only, and only on tokens long enough that a nearby
 /// short flag (`--for`, `--yes`) is not a guess.
-pub fn suggestFlag(input: []const u8) ?[]const u8 {
+///
+/// `cmd` narrows the answer to flags that command actually takes. A
+/// suggestion is a second try, so it has to be usable: `clanker stats
+/// --wroktree` used to answer "did you mean `--worktree`?", which
+/// `clanker stats` refuses in turn, so the follow-up advice was a
+/// second error. Only the global flags are candidates where the parse
+/// failed before a command was resolved, since anything else would be
+/// a guess about which command the caller meant.
+pub fn suggestFlagFor(input: []const u8, cmd: ?Command) ?[]const u8 {
     if (input.len < 6 or input.len > 32) return null;
     var best: ?[]const u8 = null;
     var best_distance: usize = 2;
     for (std.enums.values(Flag)) |f| {
         const spelling = primaryFlagName(f);
         if (spelling.len < 6) continue;
+        if (cmd) |c| {
+            if (!commandAccepts(c, f)) continue;
+        }
         const distance = edit_distance.typoDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
             best_distance = distance;
         }
     }
+    // `--help` and `--version` are not Flag fields; the negated
+    // spellings are aliases of flags already walked above, so each
+    // one is kept only for a command that takes its positive twin.
     for (extra_flag_spellings) |spelling| {
         if (spelling.len < 6) continue;
+        if (cmd) |c| {
+            if (!extraFlagAccepted(c, spelling)) continue;
+        }
         const distance = edit_distance.typoDistance(input, spelling);
         if (distance < best_distance) {
             best = spelling;
@@ -1836,6 +1889,13 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
         }
     }
     return best;
+}
+
+fn extraFlagAccepted(cmd: Command, spelling: []const u8) bool {
+    if (std.mem.eql(u8, spelling, "--help") or std.mem.eql(u8, spelling, "--version")) return true;
+    if (std.mem.eql(u8, spelling, "--no-worktree")) return commandAccepts(cmd, .worktree);
+    if (std.mem.eql(u8, spelling, "--no-proxy")) return commandAccepts(cmd, .proxy);
+    return false;
 }
 
 const extra_flag_spellings = [_][]const u8{ "--help", "--version", "--no-worktree", "--no-proxy" };
@@ -18753,6 +18813,20 @@ test "update: --check and --repo parse, and a positional is a usage error" {
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "update", "--repo" }, null));
 }
 
+test "a mistyped alias is answered with the command it stands for" {
+    // `history` is an alias for `sessions` and the spelling people reach
+    // for first, so `histry` is the likeliest typo in the command table. The
+    // suggestion walks the alias table for it, and answers with the canonical
+    // command rather than the alias, since that is the one that takes flags.
+    var buf: [256]u8 = undefined;
+    const hit = formatUnknownCommand(&buf, "histry");
+    try std.testing.expectEqualStrings("unknown command 'histry'; did you mean `clanker sessions`?", hit.line);
+
+    // A spec typo still answers with its own spelling, unchanged.
+    const spec = formatUnknownCommand(&buf, "sesions");
+    try std.testing.expectEqualStrings("unknown command 'sesions'; did you mean `clanker sessions`?", spec.line);
+}
+
 test "unknown-command diagnostic wording is shared by both refusal paths" {
     var buf: [256]u8 = undefined;
     const hit = formatUnknownCommand(&buf, "relp");
@@ -18791,6 +18865,47 @@ test "mistyped flags get a one-edit suggestion" {
     try std.testing.expectEqualStrings("--provider", suggestFlag("--provder").?);
     try std.testing.expect(suggestFlag("--foo") == null);
     try std.testing.expect(suggestFlag("--bogus") == null);
+}
+
+test "a flag suggestion names a flag the command actually takes" {
+    // The suggestion is the operator's next keystroke, so it has to be
+    // usable. `stats` has no --worktree: answering "did you mean
+    // --worktree?" made every mistyped flag on a command that lacks it
+    // trade one error for another.
+    try std.testing.expect(suggestFlagFor("--wroktree", .stats) == null);
+    try std.testing.expect(suggestFlagFor("--wroktree", .graph) == null);
+    try std.testing.expect(suggestFlagFor("--wroktree", .doctor) == null);
+    try std.testing.expect(suggestFlagFor("--wroktree", .sessions) == null);
+
+    // A command that does take it still gets the suggestion.
+    try std.testing.expectEqualStrings("--worktree", suggestFlagFor("--wroktree", .run).?);
+    try std.testing.expectEqualStrings("--no-worktree", suggestFlagFor("--no-wroktree", .run).?);
+
+    // The negated spellings follow their positive twin, same rule.
+    try std.testing.expect(suggestFlagFor("--no-wroktree", .stats) == null);
+    try std.testing.expectEqualStrings("--no-proxy", suggestFlagFor("--no-proxxy", .serve).?);
+    try std.testing.expect(suggestFlagFor("--no-proxxy", .repl) == null);
+
+    // Globals stay available wherever they parse failed.
+    try std.testing.expectEqualStrings("--help", suggestFlagFor("--hepl", .stats).?);
+}
+
+test "an unknown flag still reports the command it was typed on" {
+    // The suggestion is only half the diagnostic; the other half is the help
+    // hint, and that is chosen from the command the parse had reached. So the
+    // in-loop `UnknownArg` returns have to hand that command back, or the hint
+    // reads with the command's name missing.
+    var d: []const u8 = "";
+    var c: Command = .help;
+
+    try std.testing.expectError(error.UnknownArg, parseWithCommand(&.{ "clanker", "run", "--wroktree", "t" }, &d, &c));
+    try std.testing.expectEqual(Command.run, c);
+    try std.testing.expectEqualStrings("--worktree", suggestFlagFor(d, c).?);
+
+    c = .help;
+    try std.testing.expectError(error.UnknownArg, parseWithCommand(&.{ "clanker", "stats", "--wroktree" }, &d, &c));
+    try std.testing.expectEqual(Command.stats, c);
+    try std.testing.expect(suggestFlagFor(d, c) == null);
 }
 
 test "history is the sessions alias people type first" {
