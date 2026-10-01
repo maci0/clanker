@@ -8,7 +8,7 @@ const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic",
 
 /// The `tools/zig` helpers the host links directly, so the CLI and the guest
 /// that shares a file run the same source rather than two copies of it.
-const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "schedule_logic", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic" };
+const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "schedule_logic", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic", "goal_store" };
 
 /// `base` plus one module per linked helper. Unlike the wasm guests and the
 /// `host_tested_helpers` test modules below, these get no named-module import

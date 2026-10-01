@@ -66,6 +66,14 @@ const a2a_reply_cache = @import("serve/a2a_reply_cache.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
 const knowledge_logic = @import("knowledge_logic");
+/// The goal store's own vocabulary: the status alphabet, which statuses still
+/// count as live work, and the per-goal iteration-budget clamp. The guests
+/// `goal_add`/`goal_update` mutate `state/goals.json` through this file, and
+/// this is the host reading the same record back. A private copy of any of
+/// them here is a second answer to a question the store already answers, and
+/// the two drift the moment a status or a bound is added (a status the host
+/// accepts and the guest refuses is a 400 an operator cannot explain).
+const goal_store = @import("goal_store");
 const oauth_command = @import("llm/oauth_command.zig");
 const oauth_registry = @import("llm/oauth_plugins/registry.zig");
 const doctor_mod = @import("doctor.zig");
@@ -4216,12 +4224,13 @@ fn resolveRunTask(
     return .{ .task = task, .goal_id = null };
 }
 
-/// Clamps a raw iteration budget to the accepted 1..=1000 range (0 is treated
-/// as "unset" rather than a no-iteration run, and absurdly large values are
-/// refused rather than trusted).
+/// Clamps a raw iteration budget to the range `goal_store` accepts (0 is
+/// treated as "unset" rather than a no-iteration run, and absurdly large
+/// values are refused rather than trusted). Delegated rather than restated:
+/// the guest that stores the budget is the one that refuses an out-of-range
+/// write, so a bound spelled twice is a bound that can disagree.
 fn clampIterationBudget(n: u32) u32 {
-    if (n == 0) return 1;
-    return @min(n, 1000);
+    return goal_store.clampBudget(n);
 }
 
 /// The effective agent-loop iteration budget for a run started by /api/run.
@@ -15678,28 +15687,6 @@ const GoalPost = struct {
     /// "not mentioned" and leaves the stored value alone; `false` clears it.
     worktree: ?bool = null,
 };
-
-/// A goal's status is one of the workflow words. Anything else is refused rather
-/// than written, so the file cannot grow states nothing knows how to read.
-/// `review` is a run's parting gift: the work is believed done and waits for
-/// a human verdict, mark it done or send it back to active.
-fn validGoalStatus(s: []const u8) bool {
-    return std.mem.eql(u8, s, "active") or std.mem.eql(u8, s, "done") or
-        std.mem.eql(u8, s, "archived") or std.mem.eql(u8, s, "abandoned") or
-        std.mem.eql(u8, s, "review") or std.mem.eql(u8, s, "blocked");
-}
-
-test validGoalStatus {
-    try std.testing.expect(validGoalStatus("active"));
-    try std.testing.expect(validGoalStatus("done"));
-    try std.testing.expect(validGoalStatus("abandoned"));
-    try std.testing.expect(validGoalStatus("archived"));
-    try std.testing.expect(validGoalStatus("review"));
-    try std.testing.expect(validGoalStatus("blocked"));
-    try std.testing.expect(!validGoalStatus("Active"));
-    try std.testing.expect(!validGoalStatus(""));
-    try std.testing.expect(!validGoalStatus("deleted; drop table"));
-}
 
 fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, method: []const u8, target: []const u8, body: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
