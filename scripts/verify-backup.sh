@@ -26,10 +26,10 @@
 #
 # Restore time is measured so RTO stops being an unknown: a snapshot that
 # takes N seconds to copy out is the lower bound on a real restore of the
-# same size. The drill copies the same entry set the backup captures
-# (state/, plus local/, agents/, config/, home-agents/ and checkout-data/
-# when the snapshot holds them);
-# `staging/` and `*.lock` are absent by design (see backup-state.sh).
+# same size. The drill copies every entry the snapshot holds -- the entry set
+# is derived from the snapshot itself, not restated here, so an entry the
+# backup starts writing is drilled the day it starts. `staging/` and `*.lock`
+# are absent by design (see backup-state.sh).
 set -euo pipefail
 
 # Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
@@ -101,10 +101,25 @@ fi
 }
 snapshot=$(resolve_path "$snapshot")
 
-entries="state"
-for extra in local agents config home-agents checkout-data; do
-    [ -d "$snapshot/$extra" ] && entries="$entries $extra"
+# Every top-level directory the snapshot holds is the entry set, derived from
+# the snapshot rather than spelled out here. A literal list in the drill is a
+# second copy of the backup's entry list, and the two drift: an entry
+# `backup-state.sh` started writing was then copied by nobody and compared by
+# nobody, so a `home-config/` that existed in every snapshot still restored
+# unchecked and a corrupt copy of it passed the weekly drill green. `state` is
+# the only entry a snapshot cannot be a backup without, so it is required and
+# the rest are whatever the backup actually wrote.
+if [ ! -d "$snapshot/state" ]; then
+    printf 'error: %s holds no state/ entry: this is not a clanker snapshot\n' "$snapshot" >&2
+    exit 1
+fi
+entries=""
+for dir in "$snapshot"/*/; do
+    [ -d "$dir" ] || continue
+    name=${dir%/}
+    entries="$entries ${name##*/}"
 done
+entries=${entries# }
 
 # A drill proves the snapshots it can reach restore; it cannot tell that the
 # backup stopped running. A perfect restore of a month-old snapshot is still

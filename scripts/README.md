@@ -83,11 +83,13 @@ the checkout; when either is absent the backup skips it instead of aborting.
 **Checkout data.** A `checkout-data/` entry carries the operator-created data
 that lives in the checkout rather than in the storage root and is written at
 runtime: `ui/plugins/`, `cli-plugins/`, `tui-plugins/`, `tools/manifests/`,
-`presets/`, `commands/`, `chains/`, `themes/`, `skills/`, the gitignored
-`.claude/` and `.grok/` rule directories, and `docs/ROADMAP.md`, each at its
-checkout-relative path. Git only holds what a human committed, so without this
-entry a lost checkout brings the store back and leaves every addon and preset
-behind. Restore it without `--delete` (a snapshot of tracked files is older
+`presets/`, `commands/`, `chains/`, `themes/`, `skills/`, `agency/`, the
+gitignored `.claude/` and `.grok/` rule directories, and `docs/ROADMAP.md`,
+each at its checkout-relative path. Git only holds what a human committed, so
+without this entry a lost checkout brings the store back and leaves every addon
+and preset behind. `agency/` is the one entry git cannot hold at all: it is
+gitignored as fetched data, so the whole persona corpus `agency_sync` mirrors
+exists only on the disk it was fetched to. Restore it without `--delete` (a snapshot of tracked files is older
 than the checkout by construction); see
 [state-restore.md](../docs/runbooks/state-restore.md).
 
@@ -112,6 +114,19 @@ storage root, this one is per-device and lives in `$HOME`, in no repository. A
 run with no `$HOME/.agents` skips the entry; it never fails the backup. A
 snapshot that holds it carries a `home-agents/` entry, which a restore puts
 back at `$HOME/.agents`.
+
+**The backup's own configuration.** `~/.config/clanker/backup.env` is the
+whole `EnvironmentFile=` both units read: the off-site mirror, the retention
+window, the drill's staleness bound and the scratch override. The installer
+writes it once and never rewrites it, so a re-install on a replacement machine
+reproduces the commented template rather than the destination the operator
+set. A snapshot therefore carries it as a `home-config/clanker/` entry,
+owner-only like the file (it can name a hostname and a username), and a host
+with no such file skips the entry rather than carrying a hollow one. Without
+it a restored store comes back with the second failure domain silently unset,
+which is the one backup setting nothing reports as missing: it only becomes
+visible when the volume dies, and the snapshot is on that volume. Restore puts
+it back at `$HOME/.config/clanker/backup.env`, owner-only.
 
 `state` must resolve into the shared storage root. A run whose resolved backup
 root would land inside the checkout itself (state never pointed at an external
@@ -191,6 +206,14 @@ restore so RTO stops being an unknown:
 ./scripts/verify-backup.sh               # newest snapshot
 ./scripts/verify-backup.sh <snapshot>    # a specific one, before restoring it
 ```
+
+The entry set is derived from the snapshot rather than restated in the drill:
+it copies every top-level directory the snapshot holds and byte-compares each.
+A literal list in the drill is a second copy of the backup's entry list, and
+the two drift — an entry `backup-state.sh` starts writing is then copied by
+nobody and compared by nobody, so a broken copy of it passes the weekly drill
+green. `state/` is the only required entry; a snapshot without it is not a
+clanker snapshot and the drill says so.
 
 Verifying the newest snapshot also asserts it is fresh: a perfect restore of a
 three-month-old snapshot still means the RPO is three months. The bound is

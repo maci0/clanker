@@ -182,6 +182,44 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("checkout-data", result.stdout)
 
+    def test_home_config_entry_is_restored_and_compared(self) -> None:
+        # The drill named the extra entries in its own literal list, so an
+        # entry the backup started writing was copied by nobody and compared
+        # by nobody: `home-config` (the backup unit's own `backup.env`) was
+        # exactly that until the list was derived from the snapshot instead.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        env_dir = snap / "home-config" / "clanker"
+        env_dir.mkdir(parents=True)
+        (env_dir / "backup.env").write_text("CLANKER_BACKUP_RETENTION_DAYS=30\n")
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("home-config", result.stdout)
+
+    def test_an_entry_the_backup_has_not_written_yet_is_simply_absent(self) -> None:
+        # The entry set is derived from the snapshot, so a snapshot carrying
+        # only `state/` drills exactly that, and no hollow `home-config/` or
+        # `home-agents/` is invented for a host that has neither. Deriving it
+        # is what keeps the drill from drifting behind the backup's list.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("restored state", result.stdout)
+        self.assertNotIn("home-config", result.stdout)
+        self.assertNotIn("home-agents", result.stdout)
+
+    def test_unreadable_home_config_entry_fails_the_drill(self) -> None:
+        # The half of "the drill covers every entry the snapshot holds" that
+        # matters: an entry outside the old literal list was never copied, so
+        # a broken copy of it passed green. Here the entry cannot be copied out
+        # at all, so the drill has to fail.
+        snap = self.snapshot("20260901T120000Z", self.healthy_db())
+        env_dir = snap / "home-config" / "clanker"
+        env_dir.mkdir(parents=True)
+        (env_dir / "backup.env").symlink_to("nowhere.env")
+        result = self.run_verify(str(snap))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("differs from the snapshot", result.stderr)
+
     def test_sigterm_during_the_restore_removes_the_store_sized_copy(self) -> None:
         # The unit that runs this drill sets TimeoutStartSec, and systemd
         # answers a run that exceeds it with SIGTERM. An EXIT trap does not

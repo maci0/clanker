@@ -290,6 +290,65 @@ class BackupStateTest(unittest.TestCase):
         )
         self.assertEqual((latest / "agents" / "AGENTS.md").read_text(), "project rules\n")
 
+    def test_backup_env_is_snapshotted_so_the_second_failure_domain_survives(self) -> None:
+        # `~/.config/clanker/backup.env` names the off-site mirror, the
+        # retention window and the drill's staleness bound, and both units read
+        # it as their whole configuration. The installer writes it once and
+        # never rewrites it, so a re-install on a fresh host reproduces the
+        # commented template rather than the destination: a store restored
+        # without a copy of this file comes back with the second failure
+        # domain silently unset, which is the one backup setting nothing else
+        # notices missing.
+        backup_env = self.root / ".config" / "clanker"
+        backup_env.mkdir(parents=True)
+        (backup_env / "backup.env").write_text(
+            "CLANKER_BACKUP_OFFSITE_DEST=/mnt/second-disk/clanker-backups\n"
+        )
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertEqual(
+            (self.latest() / "home-config" / "clanker" / "backup.env").read_text(),
+            "CLANKER_BACKUP_OFFSITE_DEST=/mnt/second-disk/clanker-backups\n",
+        )
+
+    def test_absent_backup_env_adds_no_entry(self) -> None:
+        # A host whose installer never ran has no
+        # `~/.config/clanker/backup.env`, and must not carry a hollow entry
+        # that every later check reads as coverage. Same soft skip as the
+        # device-global rules beside it.
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.latest() / "home-config").exists())
+
+    def test_mirrored_agency_corpus_rides_in_the_checkout_data_entry(self) -> None:
+        # `agency_sync` mirrors the agency-agents persona corpus into
+        # `agency/`, which .gitignore excludes as "fetched data, not project
+        # source". Every persona file a sync fetched is therefore in no git
+        # history and in no snapshot, so the corpus can only be rebuilt by
+        # re-downloading it a division at a time.
+        personas = self.repo / "agency" / "engineering"
+        personas.mkdir(parents=True)
+        (personas / "code-reviewer.md").write_text("# reviewer\n")
+        (self.repo / "agency" / "index.json").write_text("[]\n")
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        data = self.latest() / "checkout-data"
+        self.assertEqual(
+            (data / "agency" / "engineering" / "code-reviewer.md").read_text(),
+            "# reviewer\n",
+        )
+        self.assertEqual((data / "agency" / "index.json").read_text(), "[]\n")
+
     def test_absent_home_agents_directory_is_a_soft_skip(self) -> None:
         # A device with no `~/.agents` (the harness reads it fail-open) must
         # still snapshot the store; the entry is skipped, not fatal.

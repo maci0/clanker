@@ -256,16 +256,46 @@ copy_home_agents() {
 }
 copy_home_agents
 
+# The backup's own configuration. `~/.config/clanker/backup.env` is the whole
+# EnvironmentFile both units read: it names the off-site mirror, the retention
+# window, the drill's staleness bound and the scratch override. It is written
+# once by `scripts/install-state-backup.sh` and never rewritten, so a re-install
+# on a replacement machine reproduces the commented template rather than the
+# destination the operator set. Restoring a store without it brings back the
+# transcripts and the credentials and leaves the second failure domain silently
+# unset -- the one backup setting that stays invisible until the volume dies,
+# and whose absence nothing reports. Its own entry rather than a corner of
+# `home-agents/`, because it belongs to `$HOME/.config` and not to the rules
+# directory, and because that path is fixed at `.config` and deliberately not
+# `$XDG_CONFIG_HOME` for the reason the units name it literally. Owner-only
+# like the file itself: it can carry a hostname and a username. An absent file
+# is a soft skip, like the entries above.
+copy_home_config() {
+    [ -n "${HOME:-}" ] || return 0
+    [ -f "$HOME/.config/clanker/backup.env" ] || return 0
+    mkdir -p -- "$staging/home-config/clanker"
+    cp -p -- "$HOME/.config/clanker/backup.env" "$staging/home-config/clanker/backup.env"
+    chmod 700 -- "$staging/home-config" "$staging/home-config/clanker"
+    copied="$copied home-config"
+}
+copy_home_config
+
 # Operator data that lives in the checkout and is written at runtime, by the
 # agent's own tools and by config loaders: the web UI addons `webui_addon`
 # creates under `ui/plugins/`, CLI/TUI plugin manifests, presets, slash
 # commands, chains, themes, skills, tool manifests, the per-project `.claude`
-# and `.grok` rule directories, and the ROADMAP `autolearn` rewrites. None of
-# them is under `state/`, and git only holds the half a human committed, so a
-# lost checkout (the disaster the restore runbook opens with) brings the store
-# back and leaves every addon, preset and rule file the operator built behind
-# it. A lost volume does not reach them either, since they are in the checkout
-# rather than the storage root.
+# and `.grok` rule directories, the `agency/` persona corpus `agency_sync`
+# mirrors, and the ROADMAP `autolearn` rewrites. None of them is under
+# `state/`, and git only holds the half a human committed, so a lost checkout
+# (the disaster the restore runbook opens with) brings the store back and
+# leaves every addon, preset and rule file the operator built behind it. A lost
+# volume does not reach them either, since they are in the checkout rather than
+# the storage root.
+#
+# `agency/` is the one entry git cannot hold at all: `.gitignore` excludes it
+# as "fetched data, not project source", so all ~150 mirrored persona files
+# exist only on the disk they were fetched to and are otherwise rebuildable
+# only by re-running `agency_sync` a division at a time.
 #
 # Copied as one `checkout-data` entry that preserves the checkout-relative
 # layout, so a restore is one rsync back into the checkout and a drill can
@@ -284,6 +314,7 @@ checkout_data_dirs=(
     chains
     themes
     skills
+    agency
     .claude
     .grok
 )

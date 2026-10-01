@@ -33,11 +33,20 @@ edit of `backups/`.
   which exists nowhere else and without which a restored store has no provider
   to call), plus a `home-agents/` entry holding `~/.agents/AGENTS.md` (the
   device-global operator rules that open every system prompt; the checkout's
-  `.agents` is a different, per-project directory), plus a `checkout-data/`
+  `.agents` is a different, per-project directory), plus a `home-config/`
+  entry holding the backup unit's own `EnvironmentFile=` (the off-site
+  destination, the retention window, the drill's staleness bound, at
+  `$HOME/.config/clanker/backup.env`). The installer writes that file once and
+  never rewrites it, so a re-install on a replacement machine reproduces the
+  commented template; without the entry a restored store comes back with its
+  second failure domain silently unset, which nothing reports as missing), plus
+  a `checkout-data/`
   entry holding the operator-created data that lives in the checkout and is
   written at runtime, at its checkout-relative path: `ui/plugins/` (the
   `webui_addon` views), `cli-plugins/`, `tui-plugins/`, `tools/manifests/`,
-  `presets/`, `commands/`, `chains/`, `themes/`, `skills/`, the gitignored
+  `presets/`, `commands/`, `chains/`, `themes/`, `skills/`, `agency/` (the
+  persona corpus `agency_sync` mirrors, gitignored as fetched data, so it is on
+  no other disk), the gitignored
   `.claude/` and `.grok/` rule directories, and `docs/ROADMAP.md`. Git holds
   only the half of those trees a human committed, so this entry is what
   carries the addon or preset a run created. `*.lock` files are
@@ -152,8 +161,16 @@ this runbook can manufacture a snapshot that does not exist.
    rsync -a "$SNAP/config/" "$repo_root/" 2>/dev/null || true
    # the device-global operator rules, back into $HOME (never the storage root)
    rsync -a "$SNAP/home-agents/" "$HOME/.agents/" 2>/dev/null || true
+   # the backup units' own configuration, back into $HOME: the off-site
+   # destination, the retention window and the drill's staleness bound. Restore
+   # this before reinstalling the timer, or the reinstall reproduces the
+   # commented template and the machine comes back with one failure domain
+   # and no notice. Owner-only, like the file it replaces.
+   install -d -m 700 "$HOME/.config/clanker"
+   install -m 600 "$SNAP/home-config/clanker/backup.env" \
+     "$HOME/.config/clanker/backup.env" 2>/dev/null || true
    # the operator-created checkout data (addons, plugin manifests, presets,
-   # slash commands, themes, skills, .claude/.grok, docs/ROADMAP.md), back
+   # slash commands, themes, skills, agency/, .claude/.grok, docs/ROADMAP.md), back
    # into the checkout. No --delete: a snapshot of tracked files is older
    # than the checkout by construction, and deleting what it no longer
    # carries would revert committed work. Copy the subtrees you need
@@ -196,7 +213,9 @@ this runbook can manufacture a snapshot that does not exist.
   succeeded).
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
-  entry byte-for-byte, opens each restored database
+  entry byte-for-byte — every entry the snapshot holds, so an entry the backup
+  started writing is drilled the day it starts, with no list here to keep in
+  step — opens each restored database
   (`PRAGMA quick_check`), and reports the copy time. The scratch is
   `restore-verify/` beside the storage root (`CLANKER_VERIFY_SCRATCH_DIR`
   overrides it), never `$TMPDIR`, so a store-sized copy does not land in
