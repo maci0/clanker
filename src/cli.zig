@@ -2907,16 +2907,35 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
 
 /// The provider names `clanker auth` accepts, in registry order. Rendered
 /// rather than hardcoded in the diagnostic so a fourth plugin names itself.
-fn oauthPluginNames(buf: []u8) []const u8 {
-    var rest = buf;
-    var len: usize = 0;
+///
+/// The list is bounded at comptime: the caller sizes the buffer from
+/// `oauth_names_buf_len`, and a plugin added past it is a compile error rather
+/// than a diagnostic that silently answers with a stale copy of the registry
+/// (which is what a `catch return "codex, grok, claude"` fallback did: the
+/// moment a plugin was renamed, the refusal named a provider that no longer
+/// exists and omitted the one that does).
+const oauth_names_buf_len = blk: {
+    var n: usize = 0;
     for (oauth_registry.plugins, 0..) |plugin, i| {
-        const sep = if (i == 0) "" else ", ";
-        const n = std.fmt.bufPrint(rest[0..], "{s}{s}", .{ sep, plugin.name }) catch return "codex, grok, claude";
-        rest = rest[n.len..];
-        len += n.len;
+        // ", " between names.
+        n += if (i == 0) 0 else 2;
+        n += plugin.name.len;
     }
-    return buf[0..len];
+    // One spare byte, so the bound is the list's own length and a writer that
+    // wants room to close a run is not the thing that overflows.
+    break :blk n + 1;
+};
+comptime {
+    if (oauth_names_buf_len == 1) @compileError("oauth_registry.plugins is empty; cmdAuth has nothing to offer");
+}
+
+fn oauthPluginNames(buf: *[oauth_names_buf_len]u8) []const u8 {
+    var w = std.Io.Writer.fixed(buf);
+    for (oauth_registry.plugins, 0..) |plugin, i| {
+        if (i > 0) w.writeAll(", ") catch unreachable;
+        w.writeAll(plugin.name) catch unreachable;
+    }
+    return w.buffered();
 }
 
 /// The provider token a login/logout needs, or the exit-2 usage error saying
@@ -2938,7 +2957,7 @@ fn cmdAuth(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
-    var names_buf: [128]u8 = undefined;
+    var names_buf: [oauth_names_buf_len]u8 = undefined;
     const names = oauthPluginNames(&names_buf);
     if (std.mem.eql(u8, opts.auth_sub, "login")) {
         const name = oauthProviderArg(io, opts.auth_sub, opts.provider, names);
@@ -10048,6 +10067,23 @@ const stream_event_cap = 4096;
 const stream_tool_call_cap = 8192;
 const stream_tool_names_cap = 512;
 
+/// One control line for the `/api/run` stream: `stream_event_prefix`, a JSON
+/// object carrying `"type": event_type` plus every field of `extra` by name,
+/// and a newline.
+///
+/// `extra` is an anonymous struct literal, walked at comptime over
+/// `@typeInfo(T).@"struct".fields` so each field lands under its own name
+/// with no mapping table to keep in step: `.message = "..."` becomes
+/// `"message":"..."`. Every value must be a `std.json.Stringify`-able one
+/// (`[]const u8`, an int, a bool, or a slice of either), and a type that is
+/// not fails at compile time inside the stringify call rather than at runtime
+/// in front of a client.
+///
+/// A payload that will not fit `stream_event_cap` is dropped whole rather than
+/// truncated into invalid JSON: the fixed writer's `NoSpaceLeft` propagates to
+/// the `catch return` below. Anything unbounded in a caller (a tool argument
+/// preview, a full todo list) has its own explicit cap and writes the line by
+/// hand instead, as `runStreamToolCall` and `runStreamTodos` do.
 fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) void {
     var buf: [stream_event_cap]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -20077,7 +20113,7 @@ test "auth parses native provider lifecycle commands" {
 }
 
 test "the auth refusal names every registered OAuth plugin" {
-    var buf: [128]u8 = undefined;
+    var buf: [oauth_names_buf_len]u8 = undefined;
     const names = oauthPluginNames(&buf);
     // Rendered from the registry, so a fourth plugin is accepted by
     // cmdAuth and named in the refusal without a second edit here.
@@ -20087,6 +20123,16 @@ test "the auth refusal names every registered OAuth plugin" {
     }
     try std.testing.expect(std.mem.startsWith(u8, names, oauth_registry.plugins[0].name));
     try std.testing.expect(std.mem.indexOf(u8, names, ", ") != null);
+    // The whole list, in registry order, and nothing past it: the buffer is
+    // sized from the registry at comptime, so a plugin added without room is a
+    // compile error rather than a diagnostic that drops names off the end.
+    var expected: [oauth_names_buf_len]u8 = undefined;
+    var expected_w = std.Io.Writer.fixed(&expected);
+    for (oauth_registry.plugins, 0..) |plugin, i| {
+        if (i > 0) expected_w.writeAll(", ") catch unreachable;
+        expected_w.writeAll(plugin.name) catch unreachable;
+    }
+    try std.testing.expectEqualStrings(expected_w.buffered(), names);
 }
 
 test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {
