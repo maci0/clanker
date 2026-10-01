@@ -84,13 +84,46 @@ fn dedupePeers(arena: std.mem.Allocator, peers: []const PhonebookPeer) ![]const 
     return unique.toOwnedSlice(arena);
 }
 
+/// The first bytes of a reply that will not parse, for the log line that has to
+/// stand in for the reply itself. Bounded, and escaped to one line: the bytes
+/// come from a guest whose output is the last thing to be trusted, so control
+/// characters (a stray newline would forge a second log record) and a runaway
+/// arena (the reply itself may be megabytes) both have to be neutralised
+/// before the message reaches a collector.
+fn excerpt(arena: std.mem.Allocator, raw: []const u8) []const u8 {
+    const cap = 120;
+    var out: std.ArrayList(u8) = .empty;
+    for (raw[0..@min(raw.len, cap)]) |c| {
+        if (std.ascii.isPrint(c)) {
+            out.append(arena, c) catch break;
+        } else {
+            out.print(arena, "\\x{x:0>2}", .{c}) catch break;
+        }
+    }
+    if (raw.len > cap) out.appendSlice(arena, "...") catch {};
+    return out.toOwnedSlice(arena) catch "(unprintable)";
+}
+
 /// The table `clanker phonebook` prints, trailing newline included. A reply
 /// the guest itself marked failed is an error, not an empty table: "no peers
 /// answered" and "the scan never ran" must not read the same.
+///
+/// The two failures are told apart because they need different operators. A
+/// refusal is the guest answering, so its own wording is the report; bytes
+/// that will not parse mean the guest never produced a reply at all (a
+/// truncated arena, a trap payload, an empty buffer), and the only evidence is
+/// the bytes themselves. Falling back to a default-constructed result gave that
+/// case `ok:false` and logged "unknown error", the same line a refusal with no
+/// `error` field produced, so a broken scan and a configured refusal were
+/// indistinguishable in the one log that names them. `util/tool_reply.zig`
+/// draws the same line for the five record stores.
 pub fn render(arena: std.mem.Allocator, raw: []const u8) ![]const u8 {
-    const result = std.json.parseFromSliceLeaky(PhonebookResult, arena, raw, .{ .ignore_unknown_fields = true }) catch PhonebookResult{};
+    const result = std.json.parseFromSliceLeaky(PhonebookResult, arena, raw, .{ .ignore_unknown_fields = true }) catch |err| {
+        log.log(.error_, "phonebook: the peers tool answered {d} bytes that are not a readable result ({s}); first bytes: {s}", .{ raw.len, @errorName(err), excerpt(arena, raw) });
+        return error.ToolFailed;
+    };
     if (!result.ok) {
-        log.log(.error_, "phonebook failed: {s}", .{result.@"error" orelse "unknown error"});
+        log.log(.error_, "phonebook failed: {s}", .{result.@"error" orelse "the peers tool refused without saying why"});
         return error.ToolFailed;
     }
 
@@ -141,10 +174,30 @@ test "render lays out a peer row per card, error text standing in for a down sta
 test "render refuses a reply the guest marked failed" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    // Malformed JSON lands on the same branch: a reply we cannot read is not
-    // a peerless fleet.
     try std.testing.expectError(error.ToolFailed, render(arena_state.allocator(), "{\"ok\":false,\"error\":\"peers module is off\"}"));
+    // A refusal that named no reason says so, rather than borrowing the
+    // unreadable-reply line: the two need different operators.
+    try std.testing.expectError(error.ToolFailed, render(arena_state.allocator(), "{\"ok\":false}"));
+    // Bytes that are not a result at all fail here too, and the log line that
+    // names them carries the parse error and the opening bytes rather than
+    // reporting the scan as a peerless fleet.
     try std.testing.expectError(error.ToolFailed, render(arena_state.allocator(), "{\"ok\":true,\"peers\":["));
+    try std.testing.expectError(error.ToolFailed, render(arena_state.allocator(), ""));
+}
+
+test "excerpt bounds the bytes it reports and keeps them on one line" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expectEqualStrings("ok", excerpt(arena, "ok"));
+    // A control byte would otherwise start a second log record claiming
+    // anything the guest chose to write.
+    try std.testing.expectEqualStrings("a\\x0ab", excerpt(arena, "a\nb"));
+    // The reply itself can be as large as the arena; the excerpt is not.
+    const long = "x" ** 500;
+    try std.testing.expectEqual(@as(usize, 123), excerpt(arena, long).len);
+    try std.testing.expect(std.mem.endsWith(u8, excerpt(arena, long), "..."));
 }
 
 test "dedupePeers sorts by URL and keeps the up record for duplicate normalized URLs" {
