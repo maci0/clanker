@@ -1001,6 +1001,65 @@ test("the export stylesheets wear the theme store's readings", () => {
   }
 });
 
+// The two export stylesheets are outside `sheets()`, so the sheet-level pins
+// above never see them, and both had the same drift: `letter-spacing` and
+// `text-transform:uppercase` on their meta and role labels. That is the
+// all-caps letter-spaced micro-label the brand guide and DESIGN.md both
+// forbid, applied to markup that is already sentence case, so it was
+// decoration over correct text. This reads the CSS out of each artefact and
+// holds both to the rules the cabinet holds itself to: sentence case,
+// untracked labels, and both font stacks declared once as tokens rather than
+// retyped at every call site.
+test("the export stylesheets keep the cabinet's sentence case and font tokens", () => {
+  const zig = readFileSync(join(here, "..", "..", "tools", "zig", "session_export_logic.zig"), "utf8");
+  const runs = readFileSync(join(here, "features", "runs.js"), "utf8");
+
+  // Each artefact spells its sheet differently: the Zig one as a run of
+  // `\\`-prefixed line literals, the JS one as concatenated string pieces.
+  const zigSheet = [...zig.matchAll(/^ {4}\\\\([^\n]*)$/gm)].map((m) => m[1]).join("\n");
+  const jsSheet = readExportCssFromRuns(runs);
+  assert.ok(zigSheet.length > 200 && jsSheet.length > 100,
+    "both export stylesheets must be readable for the type pins below");
+
+  for (const [name, sheet] of [["session export", zigSheet], ["run export", jsSheet]]) {
+    const strays = [];
+    for (const m of sheet.matchAll(/letter-spacing:\s*([^;}]+)/g)) {
+      const value = m[1].trim();
+      if (value === "0" || value === "normal") continue;
+      strays.push(`${name}  letter-spacing: ${value}`);
+    }
+    for (const m of sheet.matchAll(/text-transform:\s*([^;}]+)/g)) {
+      const value = m[1].trim();
+      if (value === "none") continue;
+      strays.push(`${name}  text-transform: ${value}`);
+    }
+    assert.deepEqual(strays, [],
+      `exports are sentence case and untracked, like every other clanker surface:\n${strays.join("\n")}`);
+
+    // A stack typed inline at each use is how the two faces drifted apart in
+    // the first place; one --sans and one --mono, referenced everywhere. The
+    // :root declaration is where the two stacks legitimately live, so it is
+    // removed before counting bare references to them.
+    const body = sheet.replace(/:root\{[^}]*\}/, "");
+    const bare = (body.match(/ui-monospace|ui-sans-serif|system-ui/g) || []).length;
+    const declared = (sheet.match(/--(sans|mono):/g) || []).length;
+    assert.equal(declared, 2, `${name} must declare exactly --sans and --mono once each`);
+    assert.equal(bare, 0, `${name} must reference its font stacks only through --sans/--mono`);
+  }
+});
+
+/* The run export builds its sheet by concatenating string literals inside
+   `buildExportCss`, so the pieces are pulled out rather than hand-copied: what
+   this returns is what the button writes into the downloaded file. */
+function readExportCssFromRuns(src) {
+  const start = src.indexOf("export function buildExportCss");
+  assert.notEqual(start, -1, "runs.js must keep buildExportCss");
+  const body = src.slice(start, src.indexOf("\n}", start));
+  return [...body.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => m[1].replace(/\\"/g, '"'))
+    .join("");
+}
+
 test("the office canvas paints the cabinet's signal colours, not a borrowed ramp", () => {
   const office = readFileSync(join(pluginsDir, "office", "app.js"), "utf8");
 

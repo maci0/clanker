@@ -123,8 +123,8 @@ fn roleLabel(role: Role) []const u8 {
 ///
 /// The vocabulary is the web UI's Control Cabinet, transcribed: RAL panel
 /// greys rather than a zinc web palette, 3px machined plate edges rather than
-/// SaaS card corners, engraved mono legend plates for every label, and IEC
-/// 60073 lamp colours for the role stripes -- blue for operator action (you),
+/// SaaS card corners, mono for every reading, and IEC 60073 lamp colours for
+/// the role stripes -- blue for operator action (you),
 /// green for the healthy worker (assistant), amber for a reading coming back
 /// (tool result), panel grey for the frame itself (system). An export is the
 /// one artefact that leaves the machine, so it must still be recognisably
@@ -139,28 +139,40 @@ fn roleLabel(role: Role) []const u8 {
 /// leaves the machine wore a different blue from the panel that wrote it.
 /// ui/app/design-tokens.test.mjs pins each of these against the theme store,
 /// so a second palette cannot come back quietly.
+///
+/// Its type was the same story one layer in: the meta and role labels wore
+/// `letter-spacing:.08em; text-transform:uppercase`, which is the all-caps
+/// letter-spaced micro-label the cabinet forbids everywhere else
+/// (docs/brand/README.md: "sentence case: no uppercase labels, no
+/// letter-spacing"; DESIGN.md: `--track-label: 0`) and
+/// ui/app/design-tokens.test.mjs already refuses in every sheet. The markup
+/// here is sentence case, so the transform was decoration over text already
+/// written correctly. Those labels are the same --step--1 label rung the app
+/// uses, in the sans face at weight 600; the mono stack moves to the readings
+/// it was there for, and both stacks are declared once as --sans/--mono rather
+/// than retyped at four call sites.
 const style =
-    \\:root{color-scheme:light dark;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--line:#cdc9bf;--edge:#7b7971;--card:#eeebe4;--code:#d4d0c6;--act:#1d5c9e;--ok:#117a3a;--warn:#8a6d00}
+    \\:root{color-scheme:light dark;--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--line:#cdc9bf;--edge:#7b7971;--card:#eeebe4;--code:#d4d0c6;--act:#1d5c9e;--ok:#117a3a;--warn:#8a6d00}
     \\@media (prefers-color-scheme:dark){:root{--bg:#171916;--fg:#e8eae5;--muted:#a3aaa1;--line:#353934;--edge:#6e726c;--card:#232622;--code:#121411;--act:#7aa7ff;--ok:#a0d8a7;--warn:#c19a00}}
     \\*{box-sizing:border-box}
-    \\body{margin:0;padding:2rem 1rem 4rem;background:var(--bg);color:var(--fg);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+    \\body{margin:0;padding:2rem 1rem 4rem;background:var(--bg);color:var(--fg);font:16px/1.6 var(--sans)}
     \\main{max-width:52rem;margin:0 auto}
     \\h1{font-size:1.4rem;margin:0 0 .35rem;word-break:break-word}
     \\dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;margin:0 0 2rem;color:var(--muted);font-size:.85rem}
-    \\dl.meta dt{font:700 .7rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase}
-    \\dl.meta dd{margin:0;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem}
+    \\dl.meta dt{font:600 .8rem/1.5 var(--sans)}
+    \\dl.meta dd{margin:0;word-break:break-word;font-family:var(--mono);font-size:.8rem}
     \\section.msg{background:var(--card);border:1px solid var(--edge);border-radius:3px;padding:.85rem 1rem;margin:0 0 .85rem;box-shadow:0 1px 2px rgba(24,29,26,.10)}
-    \\section.msg > h2{font:700 .7rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 .5rem}
+    \\section.msg > h2{font:600 .875rem/1.5 var(--sans);color:var(--muted);margin:0 0 .5rem}
     \\section.msg.user{border-left:3px solid var(--act)}
     \\section.msg.assistant{border-left:3px solid var(--ok)}
     \\section.msg.system{border-left:3px solid var(--edge)}
     \\section.msg.tool{border-left:3px solid var(--warn)}
-    \\pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    \\pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 var(--mono)}
     \\.call{margin-top:.7rem;border-top:1px dashed var(--line);padding-top:.6rem}
-    \\.call h3{font:.75rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;margin:0 0 .35rem;color:var(--muted)}
+    \\.call h3{font:600 .8rem/1.5 var(--sans);margin:0 0 .35rem;color:var(--muted)}
     \\.call pre{background:var(--code);border-radius:2px;padding:.5rem .6rem}
     \\.empty{color:var(--muted);font-style:italic}
-    \\footer{margin-top:2.5rem;padding-top:.8rem;border-top:1px solid var(--line);color:var(--muted);font:.75rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em}
+    \\footer{margin-top:2.5rem;padding-top:.8rem;border-top:1px solid var(--line);color:var(--muted);font:.8rem/1.5 var(--mono)}
 ;
 
 /// Renders `s` as one complete HTML document. Caller owns the result.

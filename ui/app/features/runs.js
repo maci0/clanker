@@ -46,15 +46,21 @@ var EXPORT_FALLBACK = {
 };
 
 /* The exported graph's stylesheet, in the cabinet vocabulary: RAL panel greys,
-   3px machined edges, engraved mono for the readings. Exported as a named
-   function so a test drives the same code the button does. */
+   3px machined edges, mono for the readings. Both font stacks are declared
+   once here rather than retyped per rule, the way the cabinet declares --sans
+   and --mono, and the heading is untracked: letter-spaced headings are the
+   one typographic tell the brand guide rules out, and this file leaves the
+   machine like the session export does. Exported as a named function so a
+   test drives the same code the button does. */
 export function buildExportCss(read) {
   var v = function (name) { return (read(name) || "").trim() || EXPORT_FALLBACK[name]; };
-  return ":root{--bg:" + v("--bg") + ";--fg:" + v("--fg") + ";--muted:" + v("--fg-muted")
+  return ":root{--sans:ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif"
+      + ";--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+      + ";--bg:" + v("--bg") + ";--fg:" + v("--fg") + ";--muted:" + v("--fg-muted")
       + ";--edge:" + v("--border") + ";--card:" + v("--surface") + ";--code:" + v("--code-bg") + "}"
-    + "body{font-family:ui-sans-serif,system-ui;background:var(--bg);color:var(--fg);padding:1.2rem;max-width:70rem;margin:auto}"
-    + "h1{font:700 1.1rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all}"
-    + "body > p{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted)}"
+    + "body{font-family:var(--sans);background:var(--bg);color:var(--fg);padding:1.2rem;max-width:70rem;margin:auto}"
+    + "h1{font:700 1.1rem/1.4 var(--mono);word-break:break-all}"
+    + "body > p{font-family:var(--mono);font-size:.8rem;color:var(--muted)}"
     + "hr{border:0;border-top:1px solid var(--edge)}"
     + "pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--edge);padding:0.8rem;border-radius:3px;overflow:auto;font-size:.8rem}"
     + "svg{max-width:100%;height:auto}";
