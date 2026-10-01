@@ -53,12 +53,26 @@ The `ui/vendor/` rows share one provenance and digest table, which names the
 upstream release each file came from and the sha256 of the committed bytes.
 `sha256sum ui/vendor/*` must reproduce it.
 
-The minified web assets carry their upstream license headers where the
-bundler emitted them; the per-file `LICENSE` texts of the npm packages are
-not vendored. Apache-2.0 (htm) and BSD-3-Clause (highlight.js) both carry
-attribution and patent/prose conditions that survive redistribution, which
-is why they are named individually rather than folded into a "MIT and
-friends" line.
+The minified web assets do **not** all carry their upstream license headers:
+a minifier strips comments, so what actually reaches the binary is measured,
+not assumed. Of the eight committed files, five carry a grant in their own
+bytes (`mermaid.min.js` a `Bundled license information` block covering its
+transitive lodash/DOMPurify/js-yaml, `hljs.min.js` a `License: BSD-3-Clause`
+banner, `d3-dag.min.js` an ISC comment, and both `three` files an
+`SPDX-License-Identifier` that names a license without reproducing it) and
+three carry none at all. For those three the grant ships beside the file, in
+`ui/vendor/licenses/`, as the verbatim `LICENSE` of the pinned release
+(`ui/vendor/licenses/UPSTREAM.md` records which, and why). `scripts/sbom.py`
+fails when a vendored file has neither a notice in its bytes nor a copy
+shipped, and checks each copy against the LICENSE of the pinned
+`devDependency`, so a version bump cannot leave a stale grant behind;
+`scripts/test_sbom.py` covers the same ground. The SBOM names each copy as a
+`clanker:license-path` property on the component it covers, with its digest
+as `clanker:license-sha256`.
+
+Apache-2.0 (htm) and BSD-3-Clause (highlight.js) both carry attribution and
+patent/prose conditions that survive redistribution, which is why they are
+named individually rather than folded into a "MIT and friends" line.
 
 ## Resolved at build time by the package manager (not vendored)
 

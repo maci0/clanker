@@ -29,6 +29,7 @@ Usage: scripts/sbom.py [-o out.cdx.json]   (default: stdout)
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -272,7 +273,94 @@ def vendored_web() -> list:
     ]
 
 
-# --- recorded digests of the vendored trees ---------------------------------
+def carries_license_notice(path: str) -> bool:
+    """Whether the committed bytes of a vendored file carry their own grant.
+
+    A minifier strips comments and a bundler rewrites them, so the upstream
+    header is often gone: the vendored preact, htm and signals-core bundles
+    hold no license text at all, and three.js is down to an SPDX identifier,
+    which names a license without reproducing the notice it requires. The scan
+    is over the whole file rather than its first bytes because a bundled notice
+    can sit anywhere (mermaid's lands in a trailing block), and it is
+    deliberately generous: a term that appears anywhere counts, so this answers
+    "is there text a reader could follow" and not "is this file compliant".
+    """
+    try:
+        text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return bool(
+        re.search(
+            r"SPDX-License-Identifier|[Ll]icense\b|Copyright \(c\)|Copyright 20",
+            text,
+        )
+    )
+
+
+def vendored_license_copy(package: str) -> str | None:
+    """In-tree path of the LICENSE shipped for a vendored package, if any.
+
+    A file with no notice in its own bytes needs the grant beside it. The
+    naming is `<package>-LICENSE` under ui/vendor/licenses/ (see that
+    directory's UPSTREAM.md), with the scope separator flattened so a scoped
+    package is one file rather than a directory. Only the packages whose
+    bundles carry no notice of their own have one: it is the only way to ship a
+    re-minified copy of such a file without also shipping a notice inside it
+    that the next re-vendor would have to remember to reproduce.
+    """
+    flat = package.strip().replace("/", "-")
+    candidate = f"ui/vendor/licenses/{flat}-LICENSE"
+    return candidate if (REPO_ROOT / candidate).is_file() else None
+
+
+def recorded_license_copies() -> list:
+    """(in-tree path, sha256) for every license shipped beside a vendored file.
+
+    The copies are the grant, so they are inventoried the way the bundles are:
+    ui/vendor/README.md pins a digest per file, this pins one per license. A
+    copy is recorded only when the bundle it covers carries no notice of its
+    own, so the set tracks what actually needs it instead of drifting into a
+    second inventory nobody reconciles.
+    """
+    out = []
+    for w in vendored_web():
+        if carries_license_notice("ui/vendor/" + w["file"]):
+            continue
+        copy = vendored_license_copy(w["upstream"].strip())
+        if not copy:
+            continue
+        digest = hashlib.sha256((REPO_ROOT / copy).read_bytes()).hexdigest()
+        out.append((copy, digest))
+    return out
+
+
+def normalize_web_version(row: dict) -> tuple:
+    """(version, kind) for one ui/vendor/README.md row.
+
+    The version cell carries a build note beside the number ("r180 module",
+    "10.x ESM"), so it is split into a registry-resolvable version and the
+    remainder; the committed file's digest is still the real pin, this only
+    decides what a purl can say. One rule in one place, because a second
+    spelling of it is how a component and its license copy end up looking for
+    each other under keys that never match.
+    """
+    name = row["upstream"].strip()
+    cell = row["version"].strip()
+    m = re.fullmatch(r"r(\d+)\s*(.*)", cell)
+    if m:
+        version, kind = m.group(1), m.group(2).strip()
+        # three.js releases are named r180 but npm versions are 0.180.0;
+        # a purl like pkg:npm/three@180 resolves to nothing on the registry.
+        if name == "three":
+            version = f"0.{version}.0"
+        return version, kind
+    m = re.fullmatch(r"([0-9]+\.x|[0-9][0-9A-Za-z._]*)\s*(.*)", cell)
+    if m:
+        return m.group(1), m.group(2).strip()
+    return cell, ""
+
+
+# --- digests recorded in-tree -----------------------------------------------
 
 def recorded_digests() -> list:
     """(in-tree path, recorded sha256) for every vendored file that records one.
@@ -500,24 +588,8 @@ def build() -> dict:
     web = {}
     for w in vendored_web():
         name = w["upstream"].strip()
-        version_cell = w["version"].strip()
         sha_prop = "clanker:sha256-" + re.sub(r"[^A-Za-z0-9]+", "-", w["file"]).strip("-")
-        # Sanitize version cells like "r180 module" / "10.x ESM" into a
-        # version plus a kind note; keep the committed file as the real pin.
-        kind = ""
-        m = re.fullmatch(r"r(\d+)\s*(.*)", version_cell)
-        if m:
-            version, kind = m.group(1), m.group(2).strip()
-            # three.js releases are named r180 but npm versions are 0.180.0;
-            # a purl like pkg:npm/three@180 resolves to nothing on the registry.
-            if name == "three":
-                version = f"0.{version}.0"
-        else:
-            m = re.fullmatch(r"([0-9]+\.x|[0-9][0-9A-Za-z._]*)\s*(.*)", version_cell)
-            if m:
-                version, kind = m.group(1), m.group(2).strip()
-            else:
-                version = version_cell
+        version, kind = normalize_web_version(w)
         key = (name, version)
         entry = web.setdefault(key, {
             "name": name,
@@ -555,14 +627,47 @@ def build() -> dict:
         same = next((c for c in comps if c["bom-ref"] == web_purl), None)
         if same is not None:
             same.setdefault("properties", []).extend(props)
+        else:
+            comps.append(component({
+                "name": name,
+                "version": e["version"],
+                "license": e["license"],
+                "purl": web_purl,
+                "properties": props,
+            }))
+
+    # A vendored bundle with no license notice in its own bytes carries the
+    # grant as a sibling file, so the copy is a property of that component
+    # rather than one of its own: the license has not changed, only where the
+    # notice travels, and a component per LICENSE would repeat a bom-ref. The
+    # digest rides along as its own property rather than in "hashes", which
+    # every consumer reads as the package's own integrity: this one covers a
+    # sibling file, and mixing the two would make a lockfile check pass on a
+    # tampered grant or fail on a re-minified bundle.
+    for path, digest in sorted(recorded_license_copies()):
+        owner = next(
+            (
+                (w["upstream"].strip(), normalize_web_version(w)[0])
+                for w in vendored_web()
+                if vendored_license_copy(w["upstream"].strip()) == path
+            ),
+            None,
+        )
+        if owner is None:
             continue
-        comps.append(component({
-            "name": name,
-            "version": e["version"],
-            "license": e["license"],
-            "purl": web_purl,
-            "properties": props,
-        }))
+        target = next(
+            (
+                c for c in comps
+                if c["name"] == owner[0] and c["version"] == owner[1]
+            ),
+            None,
+        )
+        if target is None:
+            continue
+        target.setdefault("properties", []).extend([
+            {"name": "clanker:license-path", "value": path},
+            {"name": "clanker:license-sha256", "value": digest},
+        ])
 
     # Optional ast-grep grammar (not shipped; fetched + commit-pinned)
     grammar = tree_sitter_grammar()

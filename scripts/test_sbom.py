@@ -251,6 +251,105 @@ class SbomTest(unittest.TestCase):
         self.assertTrue(present)
         self.assertEqual(present - recorded, set())
 
+    def test_vendored_bundles_ship_their_license_grant(self) -> None:
+        # MIT requires the copyright notice and permission text to travel with
+        # the software, and Apache-2.0 requires its own copy plus attribution
+        # (§4) on distribution. A minifier strips both: of the eight bundles
+        # embedded in the binary, three carried no license text at all, and
+        # three.js was down to an SPDX identifier that names a license without
+        # reproducing it. THIRD_PARTY_LICENSES.md claimed they all kept their
+        # upstream headers, so the claim read as the compliance story and
+        # nothing checked the bytes. Each one now has a notice in-file or a
+        # LICENSE shipped beside it.
+        for w in sbom.vendored_web():
+            path = "ui/vendor/" + w["file"]
+            with self.subTest(file=w["file"]):
+                if sbom.carries_license_notice(path):
+                    continue
+                package = w["upstream"].strip()
+                license_copy = sbom.vendored_license_copy(package)
+                self.assertIsNotNone(
+                    license_copy,
+                    f"{path} carries no license notice and no LICENSE is "
+                    f"shipped for {package}",
+                )
+                self.assertIn("ui/vendor/licenses/", license_copy)
+                self.assertTrue((sbom.REPO_ROOT / license_copy).is_file())
+
+    def test_shipped_license_copies_match_the_pinned_release(self) -> None:
+        # A copy is only worth shipping if it is the grant covering the bytes
+        # beside it. Each source is a devDependency pinned to the exact release
+        # the vendored file came from (the test above in this class ties those
+        # two together), so a LICENSE copied from another version is the one
+        # thing this catches.
+        declared = json.loads(sbom.read("package.json"))["devDependencies"]
+        shipped = {}
+        for path, _ in sbom.recorded_license_copies():
+            package = next(
+                (
+                    w["upstream"].strip()
+                    for w in sbom.vendored_web()
+                    if sbom.vendored_license_copy(w["upstream"].strip()) == path
+                ),
+                None,
+            )
+            self.assertIsNotNone(package, f"{path} covers no vendored file")
+            shipped[package] = path
+        self.assertTrue(shipped, "no vendored license copy is recorded")
+        for package, path in shipped.items():
+            with self.subTest(package=package):
+                # The package is a devDependency, which is where the bytes and
+                # their types come from; a copy for a package nothing pins has
+                # no release to be verbatim from.
+                self.assertIn(package, declared)
+                installed = sbom.REPO_ROOT / "node_modules" / package / "LICENSE"
+                self.assertTrue(
+                    installed.is_file(),
+                    f"{installed} is absent; run 'bun install --frozen-lockfile'",
+                )
+                self.assertEqual(
+                    hashlib.sha256((sbom.REPO_ROOT / path).read_bytes()).hexdigest(),
+                    hashlib.sha256(installed.read_bytes()).hexdigest(),
+                    f"{path} is not the LICENSE of the pinned {package}",
+                )
+        # Each copy has to be reachable from the bundle it covers, or it is
+        # inventory nobody is pointed at.
+        for w in sbom.vendored_web():
+            if sbom.carries_license_notice("ui/vendor/" + w["file"]):
+                continue
+            with self.subTest(file=w["file"]):
+                self.assertIn(w["upstream"].strip(), shipped)
+
+    def test_license_copies_reach_the_document(self) -> None:
+        # A grant that lives in a file but not in the SBOM is invisible to
+        # every consumer of the document, and the document is what a scanner
+        # reads. The copy is a property of the component it covers, not a
+        # component of its own, and its digest rides as a property too:
+        # "hashes" is what every consumer reads as the package's own lockfile
+        # integrity, which a sibling grant is not.
+        recorded = dict(sbom.recorded_license_copies())
+        carried = {}
+        for c in self.components.values():
+            paths, digests = {}, {}
+            for prop in c.get("properties", []):
+                if prop["name"] == "clanker:license-path":
+                    paths["path"] = prop["value"]
+                if prop["name"] == "clanker:license-sha256":
+                    digests["sha"] = prop["value"]
+            if paths:
+                carried[c["name"]] = (paths["path"], digests.get("sha"), c)
+        # Both sides empty would satisfy the comparison below without the
+        # document carrying anything, so each is checked on its own.
+        self.assertTrue(recorded, "no vendored license copy is recorded")
+        self.assertTrue(carried, "no vendored license copy reached the document")
+        self.assertEqual(
+            {p for p, _, _ in carried.values()}, set(recorded),
+            "every shipped grant must be named in the document",
+        )
+        for name, (path, sha, _) in carried.items():
+            with self.subTest(package=name):
+                self.assertEqual(sha, recorded[path])
+
     def test_web_vendor_digests_reach_the_document(self) -> None:
         # A digest that stays in the README is a promise in prose; a consumer
         # or scanner reads the document, so the hash has to be in it.

@@ -42,6 +42,19 @@ ever actually needed.
 `three.module.min.js` imports `./three.core.min.js`; both must be updated
 together from the same Three.js release.
 
+`d3-dag.min.js` is the one row whose Version cell is a range rather than a
+release. d3-dag ships only an ESM `dist/d3dag.min.js` built by rollup with no
+version constant in the output, so the committed bytes carry no release to
+read back; `1.x` is what we know of it and the SHA-256 column is the real pin.
+A re-vendor must set the cell to the concrete release it took, the way every
+other row does, so the two stop disagreeing about how tight this dependency
+is. Nothing reads the cell for a decision today — the SBOM reports `1.x`
+verbatim, which is honest about it — so this is bookkeeping, not a live risk.
+
+Bundles whose own bytes carry no license text (a minifier strips the header)
+ship the grant beside them in `ui/vendor/licenses/`, which
+`ui/vendor/licenses/UPSTREAM.md` explains.
+
 Zig host dependencies live in `build.zig.zon` (zwasm, vaxis) and
 `vendor/toml/` (zig-toml, MIT). AssemblyScript build tooling is
 `tools/ts/package.json` only (`assemblyscript`, dev-only).
