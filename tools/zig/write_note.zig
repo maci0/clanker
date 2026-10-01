@@ -5,10 +5,15 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const notes = @import("notes_logic.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
+
+/// Retries for the same reason `forget_note` uses them: the file has two
+/// writers and this one rewrites all of it.
+const max_attempts = 3;
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
@@ -18,46 +23,40 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const path = "state/learnings.md";
 
-    // A retried note_write of the same sentence (tool error after the append
-    // landed, the model calling it twice) used to grow a second bullet. The
+    // A retried note_write of the same sentence (tool error after the write
+    // landed, the model calling it twice) must not grow a second bullet. The
     // file is the set of notes, so an exact existing line is a no-op.
-    const existing = lib.fsRead(path) catch |err| switch (err) {
-        error.NotFound => "",
-        else => return lib.failErr(out, err, "reading the notes"),
-    };
-    if (noteLinePresent(existing, note)) {
-        try out.writeAll("{\"ok\":true,\"duplicate\":true}");
+    //
+    // The scan alone was not enough, and this is why the write is a
+    // compare-and-swap rather than an append. Append is the one write of the
+    // three strengths that cannot express "only if this note is absent": it
+    // carries no read to hash, so two identical calls racing -- tools in one
+    // turn run in parallel, and a retry of a call whose reply was lost -- both
+    // read a file without the note, both decided to append, and both landed.
+    // Atomicity was never the missing property; atomic append does not stop
+    // two writers who both already decided. `forget_note`, the other writer of
+    // this one file, already hashed what it read and wrote compare-and-swap,
+    // so this is that same shape.
+    var attempt: u32 = 0;
+    while (attempt < max_attempts) : (attempt += 1) {
+        const existing = lib.fsRead(path) catch |err| switch (err) {
+            error.NotFound => "",
+            else => return lib.failErr(out, err, "reading the notes"),
+        };
+        const merged = (try notes.appendNote(lib.alloc, existing, note)) orelse {
+            try out.writeAll("{\"ok\":true,\"duplicate\":true}");
+            return;
+        };
+        const expected = lib.hash(existing) catch |err| return lib.failErr(out, err, "hashing the notes");
+        lib.fsWriteIf(path, expected, merged) catch |err| switch (err) {
+            // Someone else appended first. Re-read and re-decide against the
+            // new contents: their note may be this one, in which case this
+            // call is the duplicate and its reply says so.
+            error.Mismatch => continue,
+            else => return lib.failErr(out, err, "writing the note"),
+        };
+        try out.writeAll("{\"ok\":true}");
         return;
     }
-
-    // Appending, not rewriting. This used to read the whole file, add a line
-    // and write the whole file back, so two notes written in the same turn -
-    // tools here run in parallel - both started from the same contents and one
-    // was lost. The host's append is atomic between writers.
-    var line: std.ArrayList(u8) = .empty;
-    defer line.deinit(lib.alloc);
-
-    // A file that does not already end in a newline would otherwise get this
-    // note glued onto its last line.
-    if (existing.len > 0 and existing[existing.len - 1] != '\n') try line.append(lib.alloc, '\n');
-    try line.appendSlice(lib.alloc, "- ");
-    try line.appendSlice(lib.alloc, note);
-    try line.append(lib.alloc, '\n');
-
-    lib.fsAppend(path, line.items) catch |err| {
-        return lib.failErr(out, err, "writing the note");
-    };
-
-    try out.writeAll("{\"ok\":true}");
-}
-
-/// True when `existing` already has a `- {note}` line. Compared as a whole
-/// line so a shorter note cannot match inside a longer one.
-fn noteLinePresent(existing: []const u8, note: []const u8) bool {
-    var it = std.mem.splitScalar(u8, existing, '\n');
-    while (it.next()) |line| {
-        const t = std.mem.trimEnd(u8, line, "\r");
-        if (t.len >= 2 and t[0] == '-' and t[1] == ' ' and std.mem.eql(u8, t[2..], note)) return true;
-    }
-    return false;
+    return lib.fail(out, "the notes file kept changing underneath; try again");
 }
