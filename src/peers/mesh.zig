@@ -1,6 +1,7 @@
-//! Clanker mesh (PRD 0011) Phase 1 core: length-prefixed frames, admission,
+//! Clanker mesh (PRD 0011) wire codec: length-prefixed frames, admission,
 //! leave-vs-unreachable, simultaneous-open tie-break. Pure functions so
-//! `zig build test` needs no NIC. Serve-owned sockets come next.
+//! `zig build test` needs no NIC; `serve/mesh_net.zig` drives these over the
+//! sockets `clanker serve` owns.
 
 const std = @import("std");
 const fuzz_corpus = @import("../util/fuzz_corpus.zig");

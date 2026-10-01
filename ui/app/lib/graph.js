@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
-// Imported by app.js. Imports only loadD3.
+// Imported lazily by features/runs.js, the only caller. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
 import { fmtInt, fmtUnit, fmtMs, fmtPct, searchFold } from "../core/utils.js";
 

@@ -404,10 +404,11 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   runs test blocks only in the root file, so a module missing from that list
   compiles and its tests never run; `zig build test` stays green either way,
   which is why this is a gate and not a convention.
-- `js-suite-coverage`: every `ui/**/*.test.mjs` on disk is registered in
-  `build.zig` as a `bun test` step. The web UI suites are named one by one
-  there rather than handed a directory, so an unregistered suite is simply
-  never run and the green suite output cannot show it.
+- `js-suite-coverage`: every `ui/**/*.test.mjs` or `ui/**/*.test.ts` on disk is
+  registered in `build.zig` as a `bun test` step. The web UI suites are named
+  one by one there rather than handed a directory (node's positional is a
+  module path, not a directory), so an unregistered suite is simply never run
+  and the green suite output cannot show it.
 - `tool-helper-coverage`: every `tools/zig/*.zig` holding a top-level `test`
   block is listed in `host_tested_helpers` in `build.zig`. A wasm guest
   cannot run its own tests, so that list is the only path a helper's tests
@@ -602,7 +603,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `vendor/` | n/a | Vendored third-party source, committed rather than fetched |
 | `patches/` | n/a | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | n/a | This reference, the roadmap, review prompts, assets |
-| `tests/` | n/a | Fixtures; the tests themselves live in `test` blocks beside the code |
+| `tests/` | n/a | `e2e/`: black-box journeys run by `zig build e2e` (pty, HTTP, records, streaming); `fixtures/`: their fixtures. Unit tests live in `test` blocks beside the code, not here |
 | `scripts/` | n/a | Development scripts (`verify.sh`, `apply-patches.sh`) |
 | `state/` | n/a | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
@@ -635,6 +636,7 @@ Tools are discovered by the registry (`src/toolhost/registry.zig`) from the conf
 | `zig build tools` | Compile `tools/zig/*.zig` to `zig-out/tools/*.wasm` |
 | `zig build proxy` | Build `clanker-proxy`, the standalone compatibility proxy (not in the default install) |
 | `zig build test` | Run the unit and integration tests |
+| `zig build e2e` | Black-box journeys from `tests/e2e/` against a mock LLM server (pty, HTTP, records, streaming). Separate from `zig build test`, so neither run covers the other; `-Dtest-filter` isolates one journey |
 | `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `bun test ui/app/core/scroll.test.mjs`, or every suite at once: `bun test ui` (bun walks the directory itself, `ui/app` plus the `ui/plugins` suites) |
 | `zig build fmt` | Format-check committed Zig (`src`, `tests`, `tools`, `ui`, `vendor`, `build.zig`) |
 | `clanker gate` | Build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches. Does not build the standalone proxy. |

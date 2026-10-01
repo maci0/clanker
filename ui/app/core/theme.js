@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Theme list comes from themes/*.json (served at
 // /webui/themes/); apply writes those tokens onto :root. "system" is not a
 // file: it clears the inline tokens so :root + the prefers-color-scheme
-// block in app.css paint. A palette whose catalog entry names a `css`
+// block in tailwind.src.css paint. A palette whose catalog entry names a `css`
 // companion (the win2k skin) gets that sheet fetched the first time it is
 // applied — its rules are scoped to html[data-theme="win2k"], so it stays
 // inert if another theme is chosen later and costs nothing until then.

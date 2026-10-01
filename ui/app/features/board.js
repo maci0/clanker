@@ -2190,7 +2190,7 @@ function showCardDetail(id) {
     var nameHash = 0;
     for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
     // One stable tone per name, from the theme-aware chat-hue palette (in
-    // app.css), which re-saturates per theme so the initials stay legible in
+    // tailwind.src.css), which re-saturates per theme so the initials stay legible in
     // light and dark alike. No literal hex or white-is-assumed text here.
     avatar.classList.add("bg-chat-hue-" + (Math.abs(nameHash) % 8), "text-on-accent");
     item.appendChild(avatar);

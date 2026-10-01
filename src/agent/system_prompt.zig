@@ -24,7 +24,7 @@ const max_instruction_file_bytes: usize = 64 * 1024;
 const max_learnings_prompt_bytes: usize = 4096;
 /// Claude-compatible hop limit for nested `@` imports.
 const max_import_depth: usize = 4;
-/// Read cap for `state/skills_overrides.json`, the per-skill enable flags.
+/// Read cap for `state/skills.json`, the per-skill enable flags.
 /// Small by construction: it holds a name per skill, not skill bodies.
 const max_skills_overrides_bytes: usize = 16 * 1024;
 

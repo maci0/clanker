@@ -1248,7 +1248,7 @@
    the chip's lamp and the turn's live/found marks. A plugin's markup is its own
    document and cannot import a JavaScript constant, so these names are the
    public surface, and one rule per name is what keeps one meaning per name.
-   They arrive from app.css in file order. */
+   They arrive from the components layer in file order. */
 @layer components {
   .skip-link {
     position: absolute; top: -100%; inset-inline-start: 0.75rem; z-index: 100;
@@ -1492,10 +1492,9 @@
 
   .composer .model-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* The composer's selects are 12px above; a media query adds no specificity,
-     so the phone guard has to be restated after that rule. It sits here rather
-     than in app.css's phone block, which is linked before this sheet and would
-     lose to the desktop size. */
+  /* The composer's selects are 12px above, and the phone guard up in the base
+     layer loses to that rule: a media query adds no specificity, so the guard
+     has to be restated after it. */
   @media (max-width: 40rem) {
     .composer .model-select { font-size: 16px; }
   }
@@ -1755,7 +1754,8 @@
   --color-code-fg: var(--code-fg);
 
   /* One hue per clanker name, and the card cover enamels with the ink each one
-     pairs with. Both are tokens in app.css and are read here, never retyped. */
+     pairs with. Both are tokens in the cabinet's theme block and are read here,
+     never retyped. */
   --color-chat-hue-0: var(--chat-hue-0);
   --color-chat-hue-1: var(--chat-hue-1);
   --color-chat-hue-2: var(--chat-hue-2);
