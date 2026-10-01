@@ -35,7 +35,6 @@ var CELL_CLASS = "text-right font-mono text-xs text-fg-muted tabular-nums whites
 var VIEWER_CLASS = "max-h-[70vh] overflow-x-auto overflow-y-auto rounded-b-plate-sm border border-t-0 border-rule bg-surface p-3";
 var NOTE_CLASS = "m-0 border-x border-rule bg-surface-2 px-3 py-1 text-xs text-fg-muted";
 var PLAIN_PRE_CLASS = "m-0 whitespace-pre-wrap wrap-anywhere font-mono text-xs text-fg";
-var ICON_CLASS = "h-4 w-4 flex-shrink-0";
 
 // ─── DOM helper ───────────────────────────────────────────────────────────────
 function mk(tag, cls, txt) {
@@ -62,59 +61,35 @@ var LANG = {
 };
 var MD = {md:1, markdown:1, mdx:1};
 
-// file-type → accent color
-var COLOR = {
-  dir: "var(--warn)",
-  zig: "var(--accent-text)", js: "var(--accent-text)", mjs: "var(--accent-text)",
-  ts: "var(--accent-text)", tsx: "var(--accent-text)", jsx: "var(--accent-text)",
-  py: "var(--accent-text)", rs: "var(--fg)", go: "var(--accent-text)",
-  c: "var(--fg-muted)", h: "var(--fg-muted)", cpp: "var(--fg)", java: "var(--fg)",
-  rb: "var(--danger)", md: "var(--fg)", markdown: "var(--fg)",
-  mdx: "var(--fg)", json: "var(--fg-muted)", toml: "var(--fg-muted)",
-  yaml: "var(--fg-muted)", yml: "var(--fg-muted)", css: "var(--accent-text)",
-  scss: "var(--accent-text)", html: "var(--fg)", xml: "var(--fg)",
-  svg: "var(--warn)", sh: "var(--ok)", bash: "var(--ok)", zsh: "var(--ok)",
-  wasm: "var(--accent-text)", sql: "var(--warn)", lock: "var(--fg-muted)",
-};
-
+// file-type → document kind. Shape, not colour: this used to be a 30-entry
+// table of extensions mapped onto the state tokens --warn, --ok, --danger and
+// --accent-text, so a Ruby file came out signal red, a shell script healthy
+// green and every directory amber. That put a state reading on ordinary content
+// and contradicted the one rule the cabinet is built on: green, amber and red
+// are state and nothing else. The glyphs also came from a private 16-unit grid
+// of filled octicon shapes, so this one column was drawn at a different size,
+// weight and fill than every other icon on the page. Both now come from the
+// shared grid, and kind reads the same tables the viewer does so a row's glyph
+// and its syntax highlighting agree. A structured file (json, toml, yaml) is
+// in LANG too, so it takes the code glyph like any other highlighted source.
 function extOf(n) {
   if (/\.(lock\.json|lockb)$/.test(n)) return "lock";
   var d = n.lastIndexOf(".");
   return d < 0 ? "" : n.slice(d+1).toLowerCase();
 }
-function accentOf(name, isDir) {
-  return isDir ? COLOR.dir : (COLOR[extOf(name)] || "var(--fg-muted)");
-}
 
-// ─── SVG icons (paths hardcoded, never from server) ───────────────────────────
-function svgIcon(paths) {
-  var s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  s.setAttribute("viewBox","0 0 16 16");
-  s.setAttribute("aria-hidden","true");
-  s.setAttribute("class",ICON_CLASS);
-  paths.forEach(function(d) {
-    var p = document.createElementNS("http://www.w3.org/2000/svg","path");
-    p.setAttribute("d", d);
-    p.setAttribute("fill","currentColor");
-    s.appendChild(p);
-  });
-  return s;
-}
-
-// folder (filled)
-var I_DIR  = ["M2 4.25C2 3.56 2.56 3 3.25 3h2.84l1.66 1.5h5C13.44 4.5 14 5.06 14 5.75v6C14 12.44 13.44 13 12.75 13H3.25C2.56 13 2 12.44 2 11.75z"];
-// generic document with folded corner
-var I_FILE = ["M3.75 0A1.75 1.75 0 0 0 2 1.75v12.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0 0 14 14.25V4.5L9.5 0zM9.5 1.5 12.5 4.5H9.5z"];
-// code brackets </>
-var I_CODE = ["M4.72 3.22a.75.75 0 0 1 1.06 1.06L3.06 7l2.72 2.72a.75.75 0 1 1-1.06 1.06L1.47 7.53a.75.75 0 0 1 0-1.06zm6.56 0a.75.75 0 0 0-1.06 1.06L12.94 7l-2.72 2.72a.75.75 0 0 0 1.06 1.06l3.25-3.25a.75.75 0 0 0 0-1.06z"];
-// markdown M↓
-var I_MD   = ["M1.75 3A1.75 1.75 0 0 0 0 4.75v6.5C0 12.22.784 13 1.75 13h12.5A1.75 1.75 0 0 0 16 11.25v-6.5A1.75 1.75 0 0 0 14.25 3zm.5 1.5h11.5a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25H2.25A.25.25 0 0 1 2 11.25v-6.5A.25.25 0 0 1 2.25 4.5z","M4 9.5V6l2 2 2-2v3.5H9.5V5.5h-1L7 7 5.5 5.5h-1V9.5zm8-2.5-1.5 1.5L9 7v2.5h1.5V8l1 1 1-1v1.5H14V7z"];
-
-function fileIcon(name, isDir) {
+function kindOf(name, isDir) {
+  if (isDir) return "folder";
   var ext = extOf(name);
-  var el = svgIcon(isDir ? I_DIR : MD[ext] ? I_MD : LANG[ext] ? I_CODE : I_FILE);
-  el.style.color = accentOf(name, isDir);
-  return el;
+  if (MD[ext]) return "text";
+  if (LANG[ext]) return "code";
+  return "file";
+}
+
+// The row's glyph is the shared grid's, so this column shares a stroke, a cap
+// and a fill with every other icon on the page.
+function fileIcon(api, name, isDir) {
+  return api.icon(kindOf(name, isDir), 16);
 }
 
 // ─── plugin ───────────────────────────────────────────────────────────────────
@@ -332,7 +307,7 @@ clanker.registerView({
         row.setAttribute("tabindex","-1");
 
         var iconCell = mk("span", "flex items-center justify-center");
-        iconCell.appendChild(fileIcon(e.name, e.is_dir));
+        iconCell.appendChild(fileIcon(api, e.name, e.is_dir));
         row.appendChild(iconCell);
 
         var nameCell = mk("span", "min-w-0 wrap-anywhere");

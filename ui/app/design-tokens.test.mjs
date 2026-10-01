@@ -1203,3 +1203,28 @@ test("a peer is one of the eight enamels, not a hue wheel", () => {
     }
   }
 });
+
+test("a glyph is a stroked path on the one grid, never a filled shape set beside it", () => {
+  // The file browser carried a private icon set: filled octicon shapes on a
+  // 16-unit grid, sitting beside the page's 24-unit 1.75 monoline grid. One
+  // column of the same list was then drawn at a different size, weight and fill
+  // than every other glyph here, which is what makes a set read as a drop-in
+  // rather than as this product's. Filled-glyph data is the tell: the cabinet
+  // strokes, so a path painted with currentColor is a foreign grammar and has no
+  // business beside it. (A marker head or a chart canvas is not a glyph, so this
+  // asks only about path fill, never about a viewBox.)
+  const strays = [];
+  for (const [name, src] of scripts()) {
+    src.split("\n").forEach((line, i) => {
+      if (/setAttribute\("fill",\s*"currentColor"/.test(line)) {
+        strays.push(`${name}:${i + 1}  filled glyph instead of a stroked path`);
+      }
+    });
+  }
+  assert.deepEqual(strays, [], `glyphs are stroked paths, not a second icon set:\n${strays.join("\n")}`);
+
+  // And the file browser must actually be drawing its rows with the shared
+  // helper rather than having quietly kept a private one.
+  const files = readFileSync(join(pluginsDir, "files", "app.js"), "utf8");
+  assert.match(files, /api\.icon\(kindOf\(/, "the file browser draws its rows with the shared grid");
+});

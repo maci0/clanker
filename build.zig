@@ -492,6 +492,11 @@ pub fn build(b: *std.Build) void {
     const files_js_test = b.addSystemCommand(&.{ "bun", "test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);
+    // Registered here because build.zig names each JS suite by hand: a suite
+    // nobody lists is never run, and a test that is never run is not a gate.
+    const files_icons_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    files_icons_js_test.addFileArg(b.path("ui/plugins/files/icons.test.mjs"));
+    test_step.dependOn(&files_icons_js_test.step);
     const music_js_test = b.addSystemCommand(&.{ "bun", "test" });
     music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
     test_step.dependOn(&music_js_test.step);

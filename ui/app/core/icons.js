@@ -95,6 +95,12 @@ export const ICON_PATHS = {
   board: ["M4.5 5h4v14h-4z", "M10 5h4v9h-4z", "M15.5 5h4v11.5h-4z"],
   // A folder tab: the file browser.
   folder: ["M3.5 6.5h6l2 2.5h9v10h-17z"],
+  // A sheet with a folded corner: an entry the browser could not classify.
+  file: ["M6 3.5h7.5l4.5 4.5v12.5h-12z", "M13.5 3.5V8h4.5"],
+  // A chevron between two rules: source the browser recognises as code.
+  code: ["M9.5 8L6 12l3.5 4", "M14.5 8L18 12l-3.5 4"],
+  // Three ruled lines: prose, the document kind.
+  text: ["M5 7h14", "M5 12h14", "M5 17h9"],
   // Staggered bars on a time axis: recorded runs.
   timeline: ["M4.5 6.5h7", "M8.5 12h8", "M12.5 17.5h7"],
   // Two racked machines: the fleet of instances.
