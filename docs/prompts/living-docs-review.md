@@ -51,8 +51,8 @@ aging sentence. When doc and code disagree, the doc moves.
 
 ## First decide if this review applies
 
-If there is no root `AGENTS.md`, or it contains fewer than roughly 50 lines
-of substantive prose (rules, tables, commands), print the skip result and
+If there is no root `AGENTS.md`, or it holds fewer than 50 lines of
+substantive prose (rules, tables, commands), print the skip result and
 stop: a stub has nothing to drift.
 
 ## Review the following:
@@ -119,7 +119,7 @@ the owning code review** / **ambiguous wording, tighten it**.
 
 Return these sections in the captured response:
 
-- Scope (files reviewed, date)
+- Scope (files reviewed, date) and the skip result if it applied
 - Per-rule-file verdict line: paths checked, commands checked, citations checked, claims that held
 - Findings table: file plus section, the claim, the current truth from source, the smallest edit that fixes it
 - Ordered fix plan: broken commands first, then broken rules, then stale names
