@@ -72,6 +72,35 @@ test("the frame loop and the polls idle on a hidden view", () => {
   assert.doesNotMatch(js, /container\.hidden/);
 });
 
+test("a room wider than the window pans inside the view instead of being cropped", () => {
+  // The floor is 16 tiles (512px) and cannot scale, so it is wider than a
+  // phone. Two things used to break that: `Math.max(360, ...)` set a width
+  // floor above the container, so the canvas pushed the whole page sideways,
+  // and rooms wrapped against that floor, so the first room -- which never fit
+  // -- was drawn at x=pad with its right half outside the canvas and no way to
+  // reach it. The canvas now sits in an overflow-x-auto panel and its width is
+  // whatever the laid-out floor needs.
+  const scroll = /\bSCROLL_CLASS = "([^"]*)"/.exec(js);
+  assert.ok(scroll, "the scroll panel still states its classes");
+  assert.match(scroll[1], /overflow-x-auto/);
+  assert.match(js, /T\.div\(\{ class: SCROLL_CLASS[\s\S]*?canvas\)/);
+
+  const from = js.indexOf("function draw()");
+  const to = js.indexOf("ctx2d.clearRect", from);
+  assert.ok(from >= 0 && to > from, "draw() is still there");
+  // Comments carry the old spelling, so assert on the code alone.
+  const body = js.slice(from, to)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  // A pixel-count floor on the container width is what put the canvas wider
+  // than the window; the 1 is the guard against a zero-width container, not a
+  // floor, so only a floor of two digits or more is the regression.
+  assert.doesNotMatch(body, /Math\.max\(\s*\d{2,}\s*,\s*container\.clientWidth/,
+    "no pixel floor on the container width");
+  assert.match(body, /canvas\.width = Math\.max\(1, maxW\)/,
+    "the canvas is as wide as the floor is, not clamped to the window");
+});
+
 test("the canvas takes its colours from the page's tokens", () => {
   // Colour is the one thing a theme owns. The plugin ships no sheet any more:
   // its chrome is `bg-bg`/`border-rule` over the theme's var() chain, and the

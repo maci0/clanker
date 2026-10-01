@@ -501,6 +501,9 @@ pub fn build(b: *std.Build) void {
     const office_js_test = b.addSystemCommand(&.{ "bun", "test" });
     office_js_test.addFileArg(b.path("ui/plugins/office/office.test.mjs"));
     test_step.dependOn(&office_js_test.step);
+    const arena3d_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    arena3d_js_test.addFileArg(b.path("ui/plugins/arena3d/arena3d.test.mjs"));
+    test_step.dependOn(&arena3d_js_test.step);
     const composer_suggest_js_test = b.addSystemCommand(&.{ "bun", "test" });
     composer_suggest_js_test.addFileArg(b.path("ui/app/composer-suggest.test.mjs"));
     test_step.dependOn(&composer_suggest_js_test.step);

@@ -15,7 +15,13 @@
 /* The floor and the words that describe it. `pixelated` is a component rule in
    ui/app/tailwind.src.css: nearest-neighbour scaling needs two values
    (crisp-edges then pixelated) and a utility carries one. */
-var CANVAS_CLASS = "pixelated my-4 mx-0 block max-w-none rounded-plate border border-rule bg-bg motion-reduce:transition-none";
+/* The floor is 16 tiles wide per room and cannot be squeezed (the canvas is
+   drawn 1:1 with its backing store, so scaling it would blur the pixels), and
+   a room is wider than a phone. The scroll therefore belongs to a panel around
+   the canvas -- the same shape #board-grid uses -- rather than to the page,
+   which used to be pushed sideways by the 360px floor below. */
+var SCROLL_CLASS = "mt-4 mb-0 overflow-x-auto overflow-y-hidden pb-2 [scrollbar-color:color-mix(in_srgb,var(--fg)_18%,transparent)_transparent] [scrollbar-width:thin]";
+var CANVAS_CLASS = "pixelated mx-0 block max-w-none rounded-plate border border-rule bg-bg motion-reduce:transition-none";
 var LOG_CLASS = "mt-4 mb-0 mx-0 max-h-64 list-none overflow-y-auto p-0 font-mono text-sm text-fg-muted";
 var LOG_ROW_CLASS = "border-b border-rule py-0.5 wrap-anywhere last:border-b-0";
 
@@ -83,8 +89,14 @@ clanker.registerView({
         }),
         " alarm clock"));
 
-    van.add(container, head, canvas,
-      T.p({ class: "meta" }, "One office per room. An avatar walks to the board when an agent moves a card."),
+    /* The canvas sits in its own horizontal scroll panel (SCROLL_CLASS), so a
+       floor wider than the window pans inside the view instead of scrolling
+       the whole page. */
+    var floor = T.div({ class: SCROLL_CLASS, "aria-label": "Offices, pannable" },
+      canvas);
+
+    van.add(container, head, floor,
+      T.p({ class: "meta" }, "One office per room. An avatar walks to the board when an agent moves a card. Scroll the panel sideways to see every room."),
       logList);
 
     /* ---------- deterministic layout ----------
@@ -842,19 +854,30 @@ clanker.registerView({
 
     function draw() {
       var pad = 24;
-      var avail = Math.max(360, container.clientWidth - 8);
+      /* No lower bound on the width. `Math.max(360, ...)` made the canvas
+         wider than a phone viewport and, worse, wrapped rooms against that
+         floor: a room is 16 tiles (512px) and never fit, so on any window
+         narrower than one room the first office was drawn at x=pad and its
+         right half fell outside the canvas. The panel above scrolls, so the
+         canvas may now be as wide as the floor genuinely needs and a lone
+         room wider than the window is reachable rather than cropped. */
+      var avail = Math.max(1, container.clientWidth - 8);
       var x = pad, y = pad + 16, rowH = 0, maxW = 0;
       var placements = [];
       offices.forEach(function (o) {
         var w = o.layout.w * TILE;
         var h = o.layout.h * TILE;
+        // Wrap when the room will not fit beside the last one on this row. The
+        // first room of a row is placed whatever its width: an over-wide lone
+        // room is what the scroll panel is for, and re-flowing to a viewport
+        // wider than itself is not.
         if (x + w > avail && x > pad) { x = pad; y += rowH + pad + 20; rowH = 0; }
         placements.push({ o, x, y });
         x += w + pad;
         rowH = Math.max(rowH, h);
         maxW = Math.max(maxW, x);
       });
-      canvas.width = Math.max(320, Math.min(avail, maxW));
+      canvas.width = Math.max(1, maxW);
       canvas.height = y + rowH + pad;
       // Displayed 1:1 with its backing store, so no fractional scaling.
       canvas.style.width = canvas.width + "px";

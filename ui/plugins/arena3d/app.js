@@ -106,14 +106,41 @@ export function mountArena3D(host) {
       host, renderer, scene, camera,
       avatars: [], effects: [], raf: null, clock: 0, last: 0,
       orbit: { az: 0.9, el: 0.42, r: 9, drag: null, auto: true },
-      match: null, lastMoveKey: "", shattered: {}, disposables: []
+      match: null, lastMoveKey: "", shattered: {}, disposables: [],
+      sizeW: w, sizeH: h, observer: null, onResize: null
     };
+
+    /* The canvas element is CSS width:100%, so it already follows the host;
+       the backing store, the camera aspect and the projection were measured
+       once at mount and never after, which stretched the whole stage the
+       moment the window narrowed or the phone was turned sideways. Watch the
+       host and re-measure. */
+    if (typeof ResizeObserver === "function") {
+      S.observer = new ResizeObserver(function () { resize(); });
+      S.observer.observe(host);
+    } else if (window.addEventListener) {
+      S.onResize = function () { resize(); };
+      window.addEventListener("resize", S.onResize);
+    }
 
     buildStage();
     bindPointer();
     applyTheme();
     return S;
   });
+}
+
+/* Re-measure the host and re-derive everything that was sized from it. */
+function resize() {
+  if (!S) return;
+  var w = S.host.clientWidth || 640;
+  var h = Math.max(240, Math.round(w * 0.45));
+  if (w === S.sizeW && h === S.sizeH) return;
+  S.sizeW = w; S.sizeH = h;
+  S.renderer.setSize(w, h);
+  S.camera.aspect = w / h;
+  S.camera.updateProjectionMatrix();
+  if (reducedMotion.matches) { stepScene(0); S.renderer.render(S.scene, S.camera); }
 }
 
 function track(obj) { S.disposables.push(obj); return obj; }
@@ -477,6 +504,12 @@ function stepScene(dt) {
 function bindPointer() {
   var el = S.renderer.domElement;
   el.style.touchAction = "none";
+  /* #arena-stage carries pointer-events-none: it is a decorative overlay over
+     the transcript, so the 2D canvas under it must stay uninteractive. This
+     host inherits that, and without putting the events back here every handler
+     below -- drag to orbit, wheel to zoom -- was dead: the 3D stage could only
+     be watched auto-orbiting, never turned. */
+  el.style.pointerEvents = "auto";
   el.addEventListener("pointerdown", function (e) {
     S.orbit.drag = { x: e.clientX, y: e.clientY, az: S.orbit.az, el: S.orbit.el };
     S.orbit.auto = false;
@@ -514,6 +547,8 @@ export function retheme() {
 export function unmountArena3D() {
   if (!S) return;
   stopLoop();
+  if (S.observer) { S.observer.disconnect(); S.observer = null; }
+  if (S.onResize) { window.removeEventListener("resize", S.onResize); S.onResize = null; }
   // Dispose GPU resources, not just the DOM node: a toggled-off stage must
   // not keep buffers alive for a view nobody is looking at.
   S.disposables.forEach(function (d) { if (d && d.dispose) d.dispose(); });
