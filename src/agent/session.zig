@@ -1203,8 +1203,9 @@ pub fn importChat(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8
         try out.append(arena, .{ .role = role, .content = sm.content, .steered = sm.steered });
     }
     if (out.items.len == 0) return error.MissingField;
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const new_id = try std.fmt.allocPrint(arena, "sess-{d}-{d}", .{ now, @rem(std.Io.Timestamp.now(io, .real).nanoseconds, 1000000) });
+    const now_ns = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now: i64 = @intCast(@divTrunc(now_ns, 1_000_000_000));
+    const new_id = try importSessionId(arena, now_ns);
     try saveSession(io, arena, sessions_dir, .{
         .id = new_id,
         .title = if (title.len > 0) title else "imported chat",
@@ -1213,6 +1214,61 @@ pub fn importChat(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8
         .updated = now,
     });
     return new_id;
+}
+
+/// Id for a session minted by an import, from one nanosecond reading of the
+/// real clock.
+///
+/// Two components, seconds then microseconds, and the sub-second part is
+/// **zero-padded to six digits**. Every session listing breaks a same-second
+/// tie by comparing ids as bytes (`sortNewestFirst` here, `sessions_logic`'s
+/// copy of it), and unpadded that comparison is not chronological: `5` sorts
+/// after `12345`, so an import that landed at 5us listed *below* one that
+/// landed at 12345us of the same second -- the tiebreak the docstring there
+/// promises, inverted for every import whose microseconds happen to be under
+/// six digits, which is almost all of them. Padding keeps every id the same
+/// length inside its second, which is what makes byte order agree with time
+/// order. `sess-<ns>` from `mintSessionId` and `<id>-fork-<ns>` were already
+/// fixed-width and are unaffected.
+fn importSessionId(arena: std.mem.Allocator, now_ns: i128) ![]const u8 {
+    const secs: i64 = @intCast(@divTrunc(now_ns, 1_000_000_000));
+    const usecs: u32 = @intCast(@divTrunc(@mod(now_ns, 1_000_000_000), 1_000));
+    return std.fmt.allocPrint(arena, "sess-{d}-{d:0>6}", .{ secs, usecs });
+}
+
+test "an import id is fixed width, so byte order inside a second is time order" {
+    const a = std.testing.allocator;
+    // The pair the tiebreak gets wrong: both in second 1787000000, the later
+    // one carrying fewer microsecond digits. Unpadded these compare as
+    // "sess-1787000000-5" > "sess-1787000000-12345", which lists the newer
+    // import last among the two.
+    const early = try importSessionId(a, 1_787_000_000_000_005_000);
+    const late = try importSessionId(a, 1_787_000_000_012_345_000);
+    defer a.free(early);
+    defer a.free(late);
+    try std.testing.expectEqualStrings("sess-1787000000-000005", early);
+    try std.testing.expectEqualStrings("sess-1787000000-012345", late);
+    try std.testing.expect(std.mem.lessThan(u8, early, late));
+    // And the comparator the listing feeds has to agree with that byte order
+    // rather than merely happen to, so assert the comparator's rule directly.
+    const lt = struct {
+        fn f(_: void, x: SessionMeta, y: SessionMeta) bool {
+            if (x.updated != y.updated) return x.updated > y.updated;
+            return std.mem.lessThan(u8, x.id, y.id);
+        }
+    }.f;
+    try std.testing.expect(!lt(
+        .{},
+        .{ .id = late, .updated = 1_787_000_000 },
+        .{ .id = early, .updated = 1_787_000_000 },
+    ));
+    // A whole second later still sorts after, whichever way the digits land.
+    const next = try importSessionId(a, 1_787_000_001_000_001_000);
+    defer a.free(next);
+    try std.testing.expect(std.mem.lessThan(u8, late, next));
+    // The padded shape is still a legal path fragment for the shared alphabet.
+    try std.testing.expect(validSessionId(early));
+    try std.testing.expect(validSessionId(next));
 }
 
 test "importChat keeps user and assistant turns and drops the rest" {
