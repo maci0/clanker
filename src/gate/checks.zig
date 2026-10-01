@@ -10,6 +10,10 @@ const log = @import("../util/log.zig");
 const toml_bridge = @import("../util/toml_bridge.zig");
 /// For depPatchesGate's tests, which build a synthetic dependency tree.
 const ensure_dir = @import("../util/ensure_dir.zig");
+/// The web UI's first-paint budget is stated in delivered bytes, so the
+/// document is measured through the same comment stripper `clanker serve`
+/// applies in `renderWebuiCached` (src/cli.zig) rather than in source bytes.
+const webui_strip = @import("../serve/webui_strip.zig");
 const llm_budget = @import("llm_budget");
 const skills_logic = @import("skills_logic");
 
@@ -2275,23 +2279,51 @@ const WebuiCap = struct {
 /// smaller is covered by the total below, where growth from many small
 /// additions shows up without each file needing its own row to maintain.
 /// Limits are raw bytes measured on this tree with ~15% headroom:
-/// index.html 74382, tailwind.css 184850, app.js 252003,
-/// all as of 2026-08-25. Raising one is
+/// tailwind.css 184850, app.js 252003,
+/// both as of 2026-08-25. Raising one is
 /// a deliberate edit to this table, made with a fresh measurement beside it.
+/// The document is not a row here and cannot be: see
+/// `webui_document_cap_bytes`.
 const webui_first_paint_caps = [_]WebuiCap{
-    .{ .path = "ui/app/index.html", .limit = 88 * 1024 },
     // The one sheet: the cabinet's tokens, its element layer, the port's
     // utilities and the component rules. Measured 184850 raw on 2026-08-25.
     .{ .path = "ui/app/tailwind.css", .limit = 196 * 1024 },
     .{ .path = "ui/app/app.js", .limit = 290 * 1024 },
 };
 
+/// Ceiling on the document itself, and the one entry of the first-paint budget
+/// that is not a row of `webui_first_paint_caps`.
+///
+/// It cannot be a row: that table is consulted per *referenced* URL, and no
+/// tag in the page names its own document, so an `ui/app/index.html` row sat
+/// there looking like a budget while matching nothing. The document is instead
+/// capped here, where it is actually read.
+///
+/// It counts the bytes that reach the socket, not the bytes on disk.
+/// `webui_strip.zig` strips first-party comments in front of the render cache
+/// (`renderWebuiCached` in `src/cli.zig`), so 13 KB of this document is prose
+/// no visitor downloads; a raw ceiling both fails a page for bytes nobody pays
+/// for and buries a real markup regression in comment noise. Measured on the
+/// shipped document as served: 96826 bytes (109835 raw), plus the headroom the
+/// other rows carry.
+const webui_document_cap_bytes: usize = 104 * 1024;
+
 /// Everything every visitor downloads before any interaction: the document
 /// itself plus every `/webui/…` URL its head and body pull eagerly (every
 /// stylesheet, the modulepreloads, the eager `<script type="module">` list).
-/// 1388142 bytes measured across 34 resources on 2026-08-25; the budget is
-/// that plus ~15%.
-const webui_eager_budget_bytes: usize = 1_600_000;
+///
+/// Measured on this tree at 786664 bytes across 33 resources (document as
+/// served, 96826 of its 109835 source bytes; the rest are the eager modules
+/// and the one sheet). The budget is that plus the ~15% headroom the rest of
+/// this table carries.
+///
+/// This was 1388142 measured / 1600000 budgeted on 2026-08-25, and both
+/// numbers were stale in the same direction: the feature views, the runs
+/// inline surface and the cabinet sheet have all been split or deleted since,
+/// so the real figure fell by more than 500 KB while the budget stayed put.
+/// A ceiling set at twice what the page actually weighs cannot catch accretion,
+/// which is the only thing it is for.
+const webui_eager_budget_bytes: usize = 905 * 1024;
 
 /// The web UI's first-paint budget. Nothing else in the repo stated how large
 /// the page's eager download may get, so weight accreted silently: each
@@ -2333,8 +2365,17 @@ fn scanWebuiBudget(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, index_ht
     var miss_buf: [4096]u8 = undefined;
     var miss_w: std.Io.Writer = .fixed(&miss_buf);
 
-    // The document is the one byte set no tag references; count it first.
-    var total: usize = index_html.len;
+    // The document is the one byte set no tag references; count it first, and
+    // cap it here where it can actually be reached (see
+    // `webui_document_cap_bytes`). The strip matches what the serve layer puts
+    // on the wire, so this is the bytes a browser receives rather than the
+    // bytes a contributor edited.
+    const served = webui_strip.strip(.html, arena, index_html);
+    if (served.len > webui_document_cap_bytes) {
+        problems += 1;
+        miss_w.print("ui/app/index.html is {d} bytes served, cap {d}; ", .{ served.len, webui_document_cap_bytes }) catch {};
+    }
+    var total: usize = served.len;
     for (urls.items, 0..) |url, i| {
         // The same URL appears under both a modulepreload and its script tag;
         // the browser fetches it once and so does this count. Only entries
@@ -2443,6 +2484,56 @@ test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips forei
     try std.testing.expectEqual(@as(usize, 3), unique);
 }
 
+test "scanWebuiBudget caps the document itself, on the bytes the wire carries" {
+    // The document was the one resource with no reachable per-file ceiling: the
+    // cap table's `ui/app/index.html` row could never match, because a cap is
+    // only consulted for a path the eager URL list resolves to, and no tag in
+    // the page references its own document. The row therefore read as a stated
+    // budget while bounding nothing, and the only thing standing between the
+    // render-blocking response and the 1.6 MB eager total (which had ~800 KB of
+    // slack) was arithmetic nobody intended as a per-file limit.
+    //
+    // And it would have bounded the wrong thing anyway. `webui_strip.zig`
+    // removes first-party comments before a response is written, so 13 KB of
+    // this document's prose is disk weight the browser never downloads. A
+    // ceiling on raw source fails a page for bytes no visitor pays for and
+    // lets a genuine markup regression hide inside the comment noise, so the
+    // document is measured the way it is served.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "ui/app/core");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/core/utils.js", .data = "export {};" });
+
+    const head = "<script type=\"module\" src=\"/webui/core/utils.js\"></script>";
+
+    // A document over the cap, padded with markup rather than comments, so
+    // stripping cannot move it back under.
+    const pad = try gpa.alloc(u8, webui_document_cap_bytes);
+    defer gpa.free(pad);
+    for (pad, 0..) |*c, i| {
+        c.* = if (i % 2 == 0) '<' else 'a';
+    }
+    const over_html = try std.mem.concat(gpa, u8, &.{ head, pad });
+    defer gpa.free(over_html);
+    var result = try scanWebuiBudget(gpa, io, tmp.dir, over_html);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/index.html is ") != null);
+
+    // The same document made almost entirely of comments is under the cap,
+    // because the serve layer strips those before a byte reaches the socket.
+    const prose = try std.mem.concat(gpa, u8, &.{ head, "<!--", pad, "-->" });
+    defer gpa.free(prose);
+    var ok_result = try scanWebuiBudget(gpa, io, tmp.dir, prose);
+    defer ok_result.deinit(gpa);
+    try std.testing.expect(ok_result.ok);
+}
+
 test "scanWebuiBudget names an over-cap file and a missing reference" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
@@ -2467,6 +2558,25 @@ test "scanWebuiBudget names an over-cap file and a missing reference" {
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/tailwind.css is ") != null);
     try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/core/gone.js does not exist") != null);
+}
+
+test "the eager total is a ceiling the page can actually reach" {
+    // A budget is only a statement if the page sits below it by a margin a real
+    // change could cross. The number was 1600000 against a measured 786664 —
+    // 813 KB of slack, so the total could not fail until the eager set had
+    // roughly doubled, which is the one thing a weight budget exists to notice.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try webuiBudgetGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+
+    // Headroom, not the exact figure: a budget with under a tenth of slack is
+    // one ordinary feature away from being the number it replaced.
+    try std.testing.expect(webui_eager_budget_bytes <= 905 * 1024);
+    try std.testing.expect(webui_eager_budget_bytes >= 786664 + 786664 / 10);
 }
 
 test "scanWebuiBudget passes a synthetic tree whose every file is tiny" {

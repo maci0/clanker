@@ -16,6 +16,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker gate`: the web UI first-paint budget now bounds the page's own
+  document. The `ui/app/index.html` cap was a row in the per-file table, which
+  is consulted per referenced URL — and no tag in the page names its document,
+  so the row matched nothing and the render-blocking response had no ceiling at
+  all. The document is measured where it is read, and in the bytes the browser
+  receives: `webui_strip.zig` already removes first-party comments before a
+  response is written, so 13 KB of the 110 KB source is prose no visitor
+  downloads. The eager total also moved from 1.6 MB to 905 KB against a
+  measured 786,664 bytes, because the 2026-08-25 figure predates the feature
+  views, the runs surface and the cabinet sheet being split out and deleted,
+  and the old number left 813 KB of slack the budget could not notice.
 - HTTP API: a wrong method on a known route answers `405 Method Not Allowed`
   with an `Allow` header naming the methods it takes, instead of the bare 404
   an unknown URL gets. HEAD requests are unchanged.
