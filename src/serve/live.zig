@@ -148,6 +148,46 @@ pub const Taken = struct {
     json: []const u8,
 };
 
+/// Frames as many queued events as fit in `out`, oldest first, and returns the
+/// byte count (0 when the queue is empty). One lock acquisition and one
+/// `write(2)` for the whole batch, where one `take` plus one `writeAll` per
+/// event cost one of each per event.
+///
+/// The lock is held across the framing copies but not across the socket
+/// write: by the time this returns the payload is already in `out`, and a
+/// publisher arriving during the write queues behind `queue_cap` rather than
+/// blocking on this subscriber's socket. Holding it across the `write` would
+/// let one slow client stall every publisher on the bus, which is the opposite
+/// of what a bounded drop-oldest queue is for.
+pub fn drain(id: usize, out: []u8) usize {
+    if (id >= max_subs) return 0;
+    var len: usize = 0;
+    mutex.lock();
+    defer mutex.unlock();
+    const slot = &slots[id];
+    if (!slot.used) return 0;
+    while (qLen(slot) > 0) {
+        const ev = slot.q[slot.head % queue_cap];
+        const json = ev.bytes[0..ev.len];
+        const framed_len = sse_frame_len(json.len) orelse break;
+        if (len + framed_len > out.len) break;
+        // A refusal here is either a payload with a raw newline in it or a
+        // framing overflow. Both are droppable: advance the queue so the
+        // refusal cannot spin, and let the rest of the batch go out. `take`
+        // discarded such an event the same way.
+        const wrote = writeSseInto(out[len..], json) orelse {
+            slot.head +%= 1;
+            continue;
+        };
+        len += wrote;
+        slot.head +%= 1;
+    }
+    // The backlog is clear again: re-arm the drop warning so the next
+    // falling-behind episode reports once more instead of staying silent.
+    if (qLen(slot) == 0) slot.drop_warned = false;
+    return len;
+}
+
 pub const LiveMetrics = struct {
     subscribers: u32,
     dropped_total: u64,
@@ -185,11 +225,24 @@ pub fn take(id: usize, buf: *[event_cap]u8) ?Taken {
     return .{ .topic = ev.topic, .json = buf[0..ev.len] };
 }
 
-/// `event: live\ndata: <json>\n\n`
-fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
-    const prefix = "event: live\ndata: ";
-    const suffix = "\n\n";
-    if (out.len < prefix.len + json.len + suffix.len) return null;
+const sse_prefix = "event: live\ndata: ";
+const sse_suffix = "\n\n";
+
+/// Bytes `writeSseInto` writes for a payload of `json_len`. Null when the
+/// framing itself overflows, which no payload inside `event_cap` can do, so
+/// the caller may size a batch buffer from it once.
+fn sse_frame_len(json_len: usize) ?usize {
+    const total = sse_prefix.len + json_len + sse_suffix.len;
+    if (total < json_len) return null; // wrapping
+    return total;
+}
+
+/// `event: live\ndata: <json>\n\n` into the front of `out`. Both SSE write
+/// paths (the single-event `writeSse` and the batched `drain`) frame through
+/// here, so the injection refusal and the byte layout have one definition.
+fn writeSseInto(out: []u8, json: []const u8) ?usize {
+    const total = sse_frame_len(json.len) orelse return null;
+    if (out.len < total) return null;
     // A raw newline inside the payload terminates the frame early and the
     // bytes after it are read as fabricated SSE fields (`event:`, `data:`).
     // Every publisher emits compact JSON, which never contains bare `\n`/`\r`
@@ -197,10 +250,15 @@ fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
     // a broken or spoofable frame. (An escaped `\\n` inside a JSON string is
     // two characters and passes through untouched.)
     if (std.mem.findAny(u8, json, "\n\r") != null) return null;
-    @memcpy(out[0..prefix.len], prefix);
-    @memcpy(out[prefix.len .. prefix.len + json.len], json);
-    @memcpy(out[prefix.len + json.len .. prefix.len + json.len + suffix.len], suffix);
-    return out[0 .. prefix.len + json.len + suffix.len];
+    @memcpy(out[0..sse_prefix.len], sse_prefix);
+    @memcpy(out[sse_prefix.len .. sse_prefix.len + json.len], json);
+    @memcpy(out[sse_prefix.len + json.len .. total], sse_suffix);
+    return total;
+}
+
+fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
+    const total = writeSseInto(out, json) orelse return null;
+    return out[0..total];
 }
 
 pub fn noteChat(room: []const u8, id: []const u8, from: []const u8, text: []const u8, ts: i64) void {
@@ -352,13 +410,20 @@ pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
     };
     defer unsubscribe(id);
     raw_http.writeAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Accel-Buffering: no\r\n\r\nretry: 2000\n\n") catch return 200;
-    var evbuf: [event_cap]u8 = undefined;
-    var ssebuf: [event_cap + 32]u8 = undefined;
+    // Enough frames for a realistic burst, so a batch of small events is one
+    // `write(2)`. `drain` stops when the buffer is full and the loop comes
+    // straight back for the rest, so this bounds the syscall count without
+    // having to hold a whole `queue_cap` of worst-case 8 KiB payloads
+    // (half a megabyte) on a connection thread's stack.
+    var ssebuf: [64 * 1024]u8 = undefined;
     var idle: u32 = 0;
     while (true) {
-        if (take(id, &evbuf)) |ev| {
-            const framed = writeSse(&ssebuf, ev.json) orelse continue;
-            raw_http.writeAll(fd, framed) catch return 200;
+        // Drain the whole queue and write once. One write per event cost a
+        // syscall and a bus-lock round trip each, on a stream a burst of chat
+        // and metrics events fills all at once.
+        const batched = drain(id, &ssebuf);
+        if (batched > 0) {
+            raw_http.writeAll(fd, ssebuf[0..batched]) catch return 200;
             idle = 0;
             continue;
         }
@@ -444,6 +509,66 @@ test "the subscriber-cap 503 declares the length of the body it actually sends" 
     try std.testing.expect(std.mem.startsWith(u8, too_many_subs_response, "HTTP/1.1 503 Service Unavailable\r\n"));
     // A subscription the server refuses is not one it can keep reading on.
     try std.testing.expect(std.mem.find(u8, too_many_subs_response[0..sep], "Connection: close") != null);
+}
+
+test "drain frames a whole burst in one buffer, in order, and empties the queue" {
+    const a = subscribe(topicBit(.chat)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    // More than one, so a drain that framed a single event per call would
+    // stop short and leave bytes behind.
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        var tmp: [32]u8 = undefined;
+        const line = try std.fmt.bufPrint(&tmp, "{{\"n\":{d}}}", .{i});
+        publish(.chat, line);
+    }
+    var out: [1024]u8 = undefined;
+    const written = drain(a, &out);
+    try std.testing.expect(written > 0);
+    // Every event is present, in publish order, framed exactly as `writeSse`
+    // frames one. This is the identity that matters: the batch is a batching
+    // of the same bytes, not a second framing that drifted.
+    var want: [1024]u8 = undefined;
+    var want_len: usize = 0;
+    i = 0;
+    while (i < 8) : (i += 1) {
+        var tmp: [32]u8 = undefined;
+        const line = try std.fmt.bufPrint(&tmp, "{{\"n\":{d}}}", .{i});
+        const one = writeSse(want[want_len..], line) orelse return error.NoRoom;
+        want_len += one.len;
+    }
+    try std.testing.expectEqualSlices(u8, want[0..want_len], out[0..written]);
+    // A second drain has nothing left: the batch consumed the queue, so
+    // `serveSse` writes once per burst rather than once per event.
+    try std.testing.expectEqual(@as(usize, 0), drain(a, &out));
+}
+
+test "drain leaves a frame that does not fit instead of truncating it" {
+    const a = subscribe(topicBit(.chat)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    publish(.chat, "{\"n\":1}");
+    publish(.chat, "{\"n\":2}");
+    // Room for one framed event and not two.
+    var out: [40]u8 = undefined;
+    const written = drain(a, &out);
+    try std.testing.expect(written > 0);
+    try std.testing.expect(written <= out.len);
+    // The second event is still queued, whole: `serveSse` loops and drains it
+    // on the next pass rather than shipping half a frame.
+    try std.testing.expect(drain(a, &out) > 0);
+}
+
+test "drain drops a newline-bearing payload and still ships the rest" {
+    const a = subscribe(topicBit(.chat)) orelse return error.NoSlot;
+    defer unsubscribe(a);
+    publish(.chat, "{\"a\":1}\n\n{\"b\":2}");
+    publish(.chat, "{\"ok\":true}");
+    var out: [1024]u8 = undefined;
+    const written = drain(a, &out);
+    try std.testing.expectEqualStrings("event: live\ndata: {\"ok\":true}\n\n", out[0..written]);
+    // The refused payload advanced the queue, so the drain terminates rather
+    // than spinning on the same event.
+    try std.testing.expectEqual(@as(usize, 0), drain(a, &out));
 }
 
 test "subscribe publish take, overflow drops oldest" {
