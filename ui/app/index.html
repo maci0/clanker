@@ -453,7 +453,7 @@ tokens and the rules.
         </section>
         <div id="fleet-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Fleet run detail" hidden></div>
         <div class="pointer-events-none absolute inset-0" id="fleet-floor" hidden>
-          <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="fleet-canvas" width="640" height="180"></canvas>
+          <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="fleet-canvas" width="640" height="180" aria-hidden="true"></canvas>
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
         <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
@@ -482,7 +482,7 @@ tokens and the rules.
         <!-- The canvas is decorative; #arena-status carries the same state in
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
-        <div class="pointer-events-none absolute inset-0" id="arena-stage" hidden>
+        <div class="pointer-events-none absolute inset-0" id="arena-stage" aria-hidden="true" hidden>
           <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="arena-canvas" width="640" height="200"></canvas>
           <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
                decorative contract as the canvas above; inherits aria-hidden

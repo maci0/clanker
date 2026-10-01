@@ -719,7 +719,71 @@ test("the operator accent is a blue reading in every theme", () => {
   }
 });
 
+// Every text token against every surface a text run can land on. The accent
+// test above asks one question (is --accent a blue reading on --surface), and
+// the chat-hue test asks another (are the sender enamels legible). Neither
+// looks at --danger / --ok / --warn-text on --surface-2, which is where most
+// body text actually sits: a card, a pill, a composer lane. That gap shipped
+// thirty failing pairs across four themes -- latte's --danger at 3.52:1 on its
+// own raised surface, tokyonight-day's --code-fg at 3.52:1 on its own code
+// well, light's --ok at 3.85:1 on the page it is printed on. A theme's
+// contrast is a property of the *pair*, and only the pair was ever unchecked.
+//
+// Every token below is one a `text-*` utility reaches for, and every surface
+// below is one the sheet paints behind a text run. --accent and --warn are
+// held to the text bar rather than the fill bar: they carry white legend as
+// fills too, and darkening a fill only raises the contrast of what sits on
+// it, so the stricter bar costs nothing and covers the dozens of call sites
+// that paint them as words rather than as fills.
+test("every text token clears 4.5:1 on every surface it can land on", () => {
+  const TEXT_TOKENS = [
+    "--fg", "--fg-muted", "--accent", "--accent-text", "--warn", "--warn-text",
+    "--danger", "--ok", "--code-fg",
+  ];
+  const SURFACE_TOKENS = ["--bg", "--paper", "--surface", "--surface-2", "--code-bg"];
+  const strays = [];
+  for (const [file, tokens] of themeTokens()) {
+    const resolve = tokenValue(tokens);
+    const surfaces = SURFACE_TOKENS.map((k) => resolve(tokens, k))
+      .filter((v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v));
+    assert.ok(surfaces.length, `themes/${file} must declare a literal surface to measure against`);
+    for (const token of TEXT_TOKENS) {
+      const value = resolve(tokens, token);
+      // A token this theme does not define falls back to the sheet's own :root
+      // reading, which has its own pins; a non-literal is color-mix or a ramp
+      // the browser computes, and neither is measurable here.
+      if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) continue;
+      for (const surface of surfaces) {
+        const ratio = contrast(value, surface);
+        if (ratio < 4.5) {
+          strays.push(`themes/${file}  ${token} ${value} on ${surface} is ${ratio.toFixed(2)}:1, want >= 4.5`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(strays, [], `text tokens must stay legible on every theme's own surfaces:\n${strays.join("\n")}`);
+});
+
+// The accent wash is --accent's hue at a fixed alpha: --accent-dim paints the
+// hover and selected-row tint, so it is the same colour as the accent, only
+// transparent. The sheet's own day face spells both hexes out, and a theme
+// copied that habit, so the two drift the moment one is edited alone: every
+// selected row and hover wash in that theme is then tinted with a colour the
+// theme uses nowhere else. Note this is NOT the --accent / --accent-text pair:
+// those are deliberately two readings (a fill behind white legend, and a
+// darker word on a panel), which is why the sheet keeps them apart.
+test("each theme's accent wash is the accent reading at the same alpha", () => {
+  for (const [file, tokens] of themeTokens()) {
+    const wash = tokens["--accent-dim"], accent = tokens["--accent"];
+    if (typeof accent !== "string" || !/^#[0-9a-f]{6}$/i.test(accent)) continue;
+    if (typeof wash !== "string" || !/^#[0-9a-f]{8}$/i.test(wash)) continue;
+    assert.equal(wash, accent + wash.slice(7),
+      `themes/${file} --accent-dim must be --accent ${accent} at alpha ${wash.slice(7)}, not ${wash}`);
+  }
+});
+
 // The icon grid is the sixth axis, and typed pictographs are how it drifts.
+
 // ICON_PATHS exists because a star glyph and a multiplication sign could not
 // share a stroke; its header says so. The music dock still typed its whole
 // transport -- bars from U+23xx, a triangle from U+25B6, speakers from

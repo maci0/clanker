@@ -23,7 +23,7 @@
     "--ok-fill": "#a6d189",
     "--violet": "var(--accent)",
     "--violet-text": "var(--accent-text)",
-    "--danger": "#e78284",
+    "--danger": "#ec9fa0",
     "--on-danger": "#303446",
     "--scrim": "rgba(35, 38, 52, 0.72)",
     "--warn": "#e5c890",

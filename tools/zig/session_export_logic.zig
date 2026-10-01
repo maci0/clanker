@@ -152,7 +152,7 @@ fn roleLabel(role: Role) []const u8 {
 /// it was there for, and both stacks are declared once as --sans/--mono rather
 /// than retyped at four call sites.
 const style =
-    \\:root{color-scheme:light dark;--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--line:#cdc9bf;--edge:#7b7971;--card:#eeebe4;--code:#d4d0c6;--act:#1d5c9e;--ok:#117a3a;--warn:#8a6d00}
+    \\:root{color-scheme:light dark;--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--line:#cdc9bf;--edge:#7b7971;--card:#eeebe4;--code:#d4d0c6;--act:#1d5b9c;--ok:#0e6731;--warn:#6e5700}
     \\@media (prefers-color-scheme:dark){:root{--bg:#171916;--fg:#e8eae5;--muted:#a3aaa1;--line:#353934;--edge:#6e726c;--card:#232622;--code:#121411;--act:#7aa7ff;--ok:#a0d8a7;--warn:#c19a00}}
     \\*{box-sizing:border-box}
     \\body{margin:0;padding:2rem 1rem 4rem;background:var(--bg);color:var(--fg);font:16px/1.6 var(--sans)}

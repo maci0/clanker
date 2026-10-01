@@ -1011,3 +1011,35 @@ test("a count is worded through plural(), never glued to an English noun", funct
   assert.deepEqual(hits, [], "say it with plural(n, {one, other}):\n" + hits.join("\n"));
 });
 
+// A canvas has no accessible name and no fallback content: everything drawn
+// into it is pixels, and a screen reader gets an unnamed graphic at best. The
+// two animated floors therefore ship `aria-hidden` and carry their state in a
+// sibling live region instead (#fleet-floor-status, #arena-status), which is
+// what the draw loops write on every frame and on the reduced-motion still.
+//
+// This was documented but not shipped: features/arena.js's header, the
+// index.html comment above #arena-stage3d, and syncStageMode's comment all
+// say the decorative contract is "inherited from #arena-stage", and #arena-
+// stage carried no aria-hidden at all, so both arenas and both fleet floors
+// announced themselves as an unlabelled graphic.
+test("animated canvases are hidden and their state lives in words", function () {
+  // #arena-stage holds both decorative stages (the canvas and the three.js
+  // one, whose labels are canvas textures), so hiding the wrapper covers both.
+  // #fleet-floor cannot be hidden wholesale: its #fleet-floor-status caption
+  // is the text alternative and is a descendant.
+  const wrapper = html.match(/<div[^>]*\bid="arena-stage"[^>]*>/);
+  assert.ok(wrapper, "missing #arena-stage");
+  assert.match(wrapper[0], /\baria-hidden="true"/,
+    "#arena-stage must be aria-hidden: it is decorative and #arena-status carries its state");
+
+  const floor = html.match(/<canvas[^>]*\bid="fleet-canvas"[^>]*>/);
+  assert.ok(floor, "missing #fleet-canvas");
+  assert.match(floor[0], /\baria-hidden="true"/,
+    "#fleet-canvas must be aria-hidden: #fleet-floor-status carries its state");
+
+  // And the alternative has to exist, or hiding the canvas only hides
+  // everything: each of the two floors names a sibling the draw loop writes.
+  for (const id of ["fleet-floor-status", "fleet-status", "arena-status"]) {
+    assert.ok(html.includes(`id="${id}"`), `the text alternative ${id} must exist`);
+  }
+});
