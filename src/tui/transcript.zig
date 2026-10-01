@@ -548,10 +548,21 @@ pub fn toolCardArgs(gpa: std.mem.Allocator, args: []const u8) !?[]u8 {
 }
 
 /// The closing line: "╰─ done in <N>ms", the same wording the plain status
-/// line used, so logs and muscle memory carry over.
-pub fn toolCardFooter(gpa: std.mem.Allocator, elapsed_ms: u64) ![]u8 {
-    return std.fmt.allocPrint(gpa, card_close ++ " done in {d}ms", .{elapsed_ms});
+/// line used, so logs and muscle memory carry over. A batch where any call
+/// failed closes with "failed in <N>ms" instead: the outcome is a word, not a
+/// colour, because a monochrome terminal (and a terminal with colour turned
+/// off) drops a colour-only marker entirely, and "done" over a refused call
+/// read as a clean step.
+pub fn toolCardFooter(gpa: std.mem.Allocator, elapsed_ms: u64, outcome: CardOutcome) ![]u8 {
+    return switch (outcome) {
+        .ok => std.fmt.allocPrint(gpa, card_close ++ " done in {d}ms", .{elapsed_ms}),
+        .err => std.fmt.allocPrint(gpa, card_close ++ " failed in {d}ms", .{elapsed_ms}),
+    };
 }
+
+/// Whether a tool batch succeeded. `err` covers a partial batch: one refused
+/// call is what the run has to recover from, so the card says so.
+pub const CardOutcome = enum { ok, err };
 
 /// True for lines produced by the card builders above, so a renderer that
 /// styles stored lines after the fact (the vaxis REPL) can give card lines
@@ -865,7 +876,7 @@ test "tool card lines carry the left-bar shape and are recognizable" {
     defer gpa.free(body);
     try std.testing.expectEqualStrings("\u{2502}  {\"path\":\"a\"}", body);
 
-    const foot = try toolCardFooter(gpa, 88);
+    const foot = try toolCardFooter(gpa, 88, .ok);
     defer gpa.free(foot);
     try std.testing.expectEqualStrings("\u{2570}\u{2500} done in 88ms", foot);
 
@@ -934,4 +945,22 @@ test "cardPreview drops a single-character escape with its argument byte" {
     const tail = try cardPreview(gpa, "a\x1b");
     defer gpa.free(tail);
     try std.testing.expectEqualStrings("a", tail);
+}
+
+test "a failed tool's footer names the failure, so it survives a monochrome terminal" {
+    const gpa = std.testing.allocator;
+    // A terminal has no assistive layer, and a colour-only marker is invisible
+    // on a monochrome one, so the outcome rides in the text itself.
+    const bad = try toolCardFooter(gpa, 88, .err);
+    defer gpa.free(bad);
+    try std.testing.expectEqualStrings("\u{2570}\u{2500} failed in 88ms", bad);
+
+    // A partial batch is a failed batch: one refused call is what the run has
+    // to recover from, and "done" over it would read as a clean step.
+    const ok = try toolCardFooter(gpa, 88, .ok);
+    defer gpa.free(ok);
+    try std.testing.expectEqualStrings("\u{2570}\u{2500} done in 88ms", ok);
+
+    try std.testing.expect(isToolCardLine(bad));
+    try std.testing.expect(isToolCardLine(ok));
 }

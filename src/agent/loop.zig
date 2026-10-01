@@ -429,9 +429,12 @@ pub const Agent = struct {
     /// silent gap between tool dispatch and the next streamed token).
     on_tool_call: ?*const fn ([]const types.ToolCall) void = null,
     /// Optional hook fired right after a batch of tool calls finishes, with
-    /// the wall-clock time spent executing them (e.g. the REPL prints
-    /// "done in Nms" under the tool status line).
-    on_tool_result: ?*const fn (u64) void = null,
+    /// the wall-clock time spent executing them and whether the batch
+    /// succeeded (`ok` is false when any call in it returned a refusal).
+    /// A surface that draws the batch draws the outcome as a word or a glyph
+    /// rather than a colour alone: a monochrome terminal drops a colour-only
+    /// marker, so "done" over a refused call reads as a clean step.
+    on_tool_result: ?*const fn (u64, bool) void = null,
     /// Optional hook fired after a tool batch that changed this run's private
     /// todo list, with the list as a bare JSON array (see
     /// `private_todos.listJson`). Lets a viewer watch the run's own checklist
@@ -1322,7 +1325,7 @@ pub const Agent = struct {
             const results = try self.executeCalls(calls);
             if (self.on_tool_result) |cb| {
                 const tool_ms = elapsed.since(self.ctx.io, tool_t0);
-                cb(tool_ms);
+                cb(tool_ms, batchOk(results));
             }
             if (self.cfg.advisor.enabled) {
                 if (advisor_note) |old| self.ctx.gpa.free(old.text);
@@ -1371,7 +1374,7 @@ pub const Agent = struct {
                     }
                 }
                 if (self.cfg.modules.autolearn) {
-                    if (std.mem.startsWith(u8, content, "{\"ok\":false")) {
+                    if (isToolFailure(content)) {
                         const kind: []const u8 = if (std.mem.find(u8, content, "unknown tool") != null) "unknown_tool" else "tool_error";
                         autolearn.record(self.ctx.io, self.ctx.gpa, self.arena, kind, tc.name, errorDetail(self.arena, content));
                     }
@@ -3516,7 +3519,7 @@ pub const Agent = struct {
         for (results, 0..) |maybe_content, i| {
             const content = maybe_content orelse continue;
             noteToolLatency(elapsed.since(self.ctx.io, started_at[i]));
-            if (std.mem.startsWith(u8, content, "{\"ok\":false")) noteToolError();
+            if (isToolFailure(content)) noteToolError();
         }
         // Append-only record of what each call came back with. `duration_ms`
         // is what makes this the pivot target for a slow `tools` bucket in
@@ -3527,7 +3530,7 @@ pub const Agent = struct {
                 const out = if (results[i]) |r| r else "";
                 rec.recordObject(session_events.EventKind.tool_result, &.{
                     .{ .name = "name", .value = .{ .text = tc.name } },
-                    .{ .name = "ok", .value = .{ .bool_ = !std.mem.startsWith(u8, out, "{\"ok\":false") } },
+                    .{ .name = "ok", .value = .{ .bool_ = !isToolFailure(out) } },
                     .{ .name = "duration_ms", .value = .{ .int = eventInt(elapsed.since(self.ctx.io, started_at[i])) } },
                     .{ .name = "preview", .value = .{ .text = utf8.cap(out, tool_result_preview_bytes) } },
                 });
@@ -4188,6 +4191,45 @@ fn errorDetail(arena: std.mem.Allocator, content: []const u8) []const u8 {
     if (e != .string) return "";
     const s = e.string;
     return utf8.cap(s, cap);
+}
+
+/// Whether a whole tool batch succeeded, the `ok` half of the `on_tool_result`
+/// hook. A refusal is the one prefix every failing tool result shares (the
+/// autolearn branch in the run loop reads the same one), and one refused call
+/// makes the batch a failure: a partial batch is exactly the case a reader has
+/// to notice, so "done" over it would claim a clean step.
+fn batchOk(results: []const ?[]const u8) bool {
+    for (results) |maybe_content| {
+        if (isToolFailure(maybe_content orelse continue)) return false;
+    }
+    return true;
+}
+
+/// A tool result is a refusal exactly when the guest wrapper wrote it, which
+/// is the one `{"ok":false` prefix every failure path in the sandbox uses.
+/// One predicate, because four call sites spelled it and any of them could
+/// drift into disagreeing about whether a call failed.
+fn isToolFailure(content: []const u8) bool {
+    return std.mem.startsWith(u8, content, "{\"ok\":false");
+}
+
+test batchOk {
+    const ok_result: ?[]const u8 = "{\"ok\":true,\"result\":\"hi\"}";
+    const bad_result: ?[]const u8 = "{\"ok\":false,\"error\":\"nope\"}";
+    const not_run: ?[]const u8 = null;
+
+    try std.testing.expect(batchOk(&.{}));
+    try std.testing.expect(batchOk(&.{ok_result}));
+    try std.testing.expect(batchOk(&.{not_run}));
+    try std.testing.expect(!batchOk(&.{bad_result}));
+    // Partial batch: the other call succeeded, the batch still failed.
+    try std.testing.expect(!batchOk(&.{ ok_result, bad_result }));
+
+    // The refusal predicate is the one the sandbox writes, so a tool whose
+    // result merely mentions ok:false mid-string is not a failure.
+    try std.testing.expect(isToolFailure("{\"ok\":false,\"error\":\"nope\"}"));
+    try std.testing.expect(!isToolFailure("{\"ok\":true,\"result\":\"{\\\"ok\\\":false}\"}"));
+    try std.testing.expect(!isToolFailure(""));
 }
 
 test errorDetail {

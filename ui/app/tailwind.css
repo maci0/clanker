@@ -420,9 +420,6 @@
 .h-3\.5 {
   height: calc(var(--spacing) * 3.5);
 }
-.h-4 {
-  height: var(--space-4);
-}
 .h-5 {
   height: var(--space-5);
 }
@@ -809,9 +806,6 @@
 }
 .flex-shrink {
   flex-shrink: 1;
-}
-.flex-shrink-0 {
-  flex-shrink: 0;
 }
 .shrink {
   flex-shrink: 1;
@@ -2667,19 +2661,11 @@
   --tw-font-weight: var(--weight-label);
   font-weight: var(--weight-label);
 }
-.aria-\[current\=page\]\:border[aria-current="page"] {
-  border-style: var(--tw-border-style);
-  border-width: 1px;
-}
 .aria-\[current\=page\]\:border-rule[aria-current="page"] {
   border-color: var(--rule);
 }
 .aria-\[current\=page\]\:bg-surface-2[aria-current="page"] {
   background-color: var(--surface-2);
-}
-.aria-\[current\=page\]\:font-medium[aria-current="page"] {
-  --tw-font-weight: var(--weight-label);
-  font-weight: var(--weight-label);
 }
 .aria-\[current\=page\]\:font-semibold[aria-current="page"] {
   --tw-font-weight: var(--weight-structural);

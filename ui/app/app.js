@@ -1575,6 +1575,11 @@ var CARET_CLASS = "inline-block h-[1em] w-[0.6ch] animate-caret bg-accent align-
 var EVENT_TOOL_CLASS = "w-fit max-w-full font-sans text-sm text-fg-muted [&>summary]:flex [&>summary]:cursor-pointer [&>summary]:list-none [&>summary]:items-center [&>summary]:gap-2 [&>summary]:rounded-capsule [&>summary]:border [&>summary]:border-rule [&>summary]:bg-surface-2 [&>summary]:px-3 [&>summary]:py-1 [&>summary::-webkit-details-marker]:hidden [&>summary::before]:text-2xs [&>summary::before]:text-fg-muted [&>summary::before]:content-['▸'] [&[open]>summary::before]:content-['▾'] [&[data-detail=false]>summary]:cursor-default [&[data-detail=false]>summary::before]:content-none";
 var TOOL_ARGS_CLASS = "my-1 ml-4 max-w-[60ch] rounded-plate-lg border border-rule bg-surface-2 px-2 py-1 font-mono text-xs whitespace-pre-wrap text-fg-muted wrap-anywhere";
 var SPIN_CLASS = "inline-block h-[0.8em] w-[0.8em] flex-none animate-spin rounded-full border-2 border-accent-dim border-t-accent motion-reduce:hidden";
+/* A settled row's spinner vanishing says nothing about whether the call
+   succeeded, and under `motion-safe` the word is hidden. A refusal swaps in
+   this class, dropping the `motion-safe:hidden` with it, so the outcome is
+   never motion-only. */
+var RUN_STATE_SETTLED_CLASS = "text-danger";
 var RUN_STATE_CLASS = "text-fg-muted motion-safe:hidden";
 
 /* The rail's conversation list: a row, its overflow pin, the workspace
@@ -1978,14 +1983,17 @@ function settleAsk(row, text, iconName) {
   done.focus();
 }
 
-function settleLastToolEvent(turn, ms) {
+function settleLastToolEvent(turn, ms, ok) {
   var rows = turn.events.querySelectorAll("[data-event=tool]");
   if (rows.length === 0) return;
   var row = rows[rows.length - 1];
   var spin = row.querySelector(".spin");
   if (spin) spin.remove();
   var state = row.querySelector(".run-state");
-  if (state) state.remove();
+  if (state) {
+    state.textContent = ok === false ? "failed" : "done";
+    if (ok === false) state.className = RUN_STATE_SETTLED_CLASS;
+  }
   var dur = document.createElement("span");
 
   dur.textContent = fmtUnit(ms, "millisecond");
@@ -2591,7 +2599,7 @@ el.form.addEventListener("submit", function (e) {
       var evt;
       try { evt = JSON.parse(line.slice(1)); } catch (e) { return; }
       if (evt.type === "tool_call") { addToolEvent(turn, evt.names, evt.calls); setTurnPhase(turn, "tool"); if (evt.names) { runWaitLabel = "running " + evt.names; pushLiveNode("tool", evt.names, evt.names, 0); } bumpStatusTools(evt.calls); sessionMetrics.liveSteps += 1; paintRunMetrics(); }
-      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if (typeof evt.ms === "number") { sessionMetrics.liveToolMs += evt.ms; paintRunMetrics(); } if(evt.ms){
+      else if (evt.type === "tool_result") { settleLastToolEvent(turn, evt.ms, evt.ok); setTurnPhase(turn, "tool"); runWaitLabel = "thinking"; if (typeof evt.ms === "number") { sessionMetrics.liveToolMs += evt.ms; paintRunMetrics(); } if(evt.ms){
         var last = liveGraph.nodes[liveGraph.nodes.length-1]; if(last && last.kind==="tool") last.duration_ms = evt.ms;
       }}
       // The run's own private checklist (features/todos.js): pushed whenever a
@@ -5551,7 +5559,7 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
             var lines=buf.split("\n"); buf=lines.pop();
             lines.forEach(function(line){
               if(!line) return;
-              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"")+"\n"); else if(e.type==="tool_result") { var out=""; try{ out=JSON.parse(e.output||""); }catch(_){ out=e.output||""; } if(out && typeof out==="object") append(JSON.stringify(out, null, 2)+"\n"); else if(out) append(utilClip(String(out), 1200)+"\n"); else append("  done "+(e.ms||0)+"ms\n"); if(e.type==="done" && e.output) lastSummary=e.output; } else if(e.type==="done"){ lastSummary=e.output||""; if(lastSummary) append(utilClip(lastSummary, 2000)+"\n"); else append("done\n"); } else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line.slice(1)+"\n"); } }
+              if(line.charCodeAt(0)===1){ try{ var e=JSON.parse(line.slice(1)); if(e.type==="tool_call") append("… "+(e.names||"")+"\n"); else if(e.type==="tool_result") { var out=""; try{ out=JSON.parse(e.output||""); }catch(_){ out=e.output||""; } if(out && typeof out==="object") append(JSON.stringify(out, null, 2)+"\n"); else if(out) append(utilClip(String(out), 1200)+"\n"); else append((e.ok===false?"  failed ":"  done ")+(e.ms||0)+"ms\n"); if(e.type==="done" && e.output) lastSummary=e.output; } else if(e.type==="done"){ lastSummary=e.output||""; if(lastSummary) append(utilClip(lastSummary, 2000)+"\n"); else append("done\n"); } else if(e.type==="error") append("[error] "+(e.message||"")+"\n"); }catch(_){ append(line.slice(1)+"\n"); } }
               else { lastSummary=line; append(line+"\n"); }
             });
             return pump();

@@ -10377,9 +10377,9 @@ fn runStreamToolCall(calls: []const types.ToolCall) void {
     raw_http.writeAllFd(fd, buf[0..w.end]);
 }
 
-fn runStreamToolResult(ms: u64) void {
+fn runStreamToolResult(ms: u64, ok: bool) void {
     const fd = run_stream_socket orelse return;
-    writeStreamEvent(fd, "tool_result", .{ .ms = ms });
+    writeStreamEvent(fd, "tool_result", .{ .ms = ms, .ok = ok });
 }
 
 /// Announces the model about to serve an agent iteration, so a live viewer can

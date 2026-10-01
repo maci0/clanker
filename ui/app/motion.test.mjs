@@ -178,3 +178,21 @@ test("no smooth scroll is written without the reduced-motion answer", function (
     }
   }
 });
+
+test("a settled tool row names its outcome, so motion is not the only signal", function () {
+  const app = readFileSync(join(root, "ui", "app", "app.js"), "utf8");
+
+  // The spinner carries "still working" and then simply disappears. What it
+  // cannot say is whether the call succeeded, so the settle path has to say so
+  // in words, under the motion setting where the word would otherwise be hidden.
+  assert.match(app, /ok === false \? "failed" : "done"/);
+  assert.match(app, /RUN_STATE_SETTLED_CLASS/);
+  assert.match(app, /state\.className = RUN_STATE_SETTLED_CLASS/);
+
+  // The class the failure swaps in must not keep the motion-safe hiding rule,
+  // or the word would be back to invisible exactly where it is needed.
+  const settled = app.match(/var RUN_STATE_SETTLED_CLASS = "([^"]+)"/);
+  assert.ok(settled, "RUN_STATE_SETTLED_CLASS is missing");
+  assert.ok(!/motion-safe/.test(settled[1]),
+    "the settled-failure class keeps motion-safe:hidden: " + settled[1]);
+});

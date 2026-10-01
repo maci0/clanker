@@ -499,12 +499,15 @@ fn onToolCall(calls: []const types.ToolCall) void {
     }
 }
 
-fn onToolResult(elapsed_ms: u64) void {
+fn onToolResult(elapsed_ms: u64, ok: bool) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
     bridge_active_tool_len = 0;
     bridge_live_tool_ms +|= elapsed_ms;
-    const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms) catch return;
+    // A refused call closes the card with a word rather than a colour: a
+    // monochrome terminal drops a colour-only marker, and "done" over a
+    // failed tool read as a clean step.
+    const line = transcript_mod.toolCardFooter(bridge_gpa, elapsed_ms, if (ok) .ok else .err) catch return;
     bridge_tool_lines.append(bridge_gpa, line) catch bridge_gpa.free(line);
 }
 
