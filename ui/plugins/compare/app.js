@@ -221,8 +221,8 @@ clanker.registerView({
       if (doc.revealed) { renderKey(key, cols); }
 
       status.textContent = doc.revealed
-        ? (cols.length + " answers, revealed" + (picked ? ", you picked " + picked : "") + ".")
-        : (cols.length + " answers, still blind. Read them, then pick one.");
+        ? (api.fmt.plural(cols.length, { one: "answer", other: "answers" }) + ", revealed" + (picked ? ", you picked " + picked : "") + ".")
+        : (api.fmt.plural(cols.length, { one: "answer", other: "answers" }) + ", still blind. Read them, then pick one.");
       api.status(status.textContent);
     }
 

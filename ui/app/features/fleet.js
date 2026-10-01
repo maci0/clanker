@@ -1,7 +1,7 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
 import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix, fmtInt, fmtUnit, plural } from "../core/utils.js";
-import { toolRow as chrome } from "../core/ui.js";
+import { toolRow as chrome, showLoadError } from "../core/ui.js";
 import { readJson } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -100,16 +100,12 @@ function skeleton(container, count) {
   }
 }
 
+/* The page's one failed-list shape: the reason and a retry where the rows
+   would have been. A hand-rolled copy here put its "Try again" outside the
+   paragraph as a sibling block, so this view's failure read as two stacked
+   elements while every other view's reads as one line. */
 function renderError(container, msg, retryFn) {
-  container.textContent = "";
-  var p = el("p", "run-empty", msg);
-  container.appendChild(p);
-  if (typeof retryFn === "function") {
-    var btn = el("button", "secondary", "Try again");
-    btn.type = "button";
-    btn.addEventListener("click", retryFn);
-    container.appendChild(btn);
-  }
+  showLoadError(container, msg, retryFn);
 }
 
 function renderRoster(container, status, a2a, cards) {
@@ -655,8 +651,8 @@ function _floorFrame(ts){
     if(bucket==="sub"){ ctx.fillStyle=pal.okFill; ctx.fillRect(x+Math.floor(cw/2)+12, by+6, 6, 10); }
   }
   if(lab){
-    if(reduced) lab.textContent="Fleet floor: still frame ("+names.length+" desks). Respecting reduced motion.";
-    else lab.textContent=names.length+" desk(s) · animated by tool events; roster and runs below are source of truth.";
+    if(reduced) lab.textContent="Fleet floor: still frame ("+plural(names.length,{one:"desk",other:"desks"})+"). Respecting reduced motion.";
+    else lab.textContent=plural(names.length,{one:"desk",other:"desks"})+" · animated by tool events; roster and runs below are source of truth.";
   }
   if(!reduced) _floorRAF=requestAnimationFrame(_floorFrame);
   else _floorRAF=null;

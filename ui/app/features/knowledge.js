@@ -142,7 +142,7 @@ function fillPreview(row, text) {
   pre.textContent = full.slice(0, cap);
   row.appendChild(pre);
   var more = kit.button({variant:"secondary"}, "Show all");
-  more.title = "Show the rest of this document (" + full.length + " characters)";
+  more.title = "Show the rest of this document (" + plural(full.length, { one: "character", other: "characters" }) + ")";
   more.addEventListener("click", function () {
     pre.textContent = full;
     more.remove();
@@ -286,7 +286,6 @@ function openCollection(id, docId){
       var failed=document.createElement("p");
       failed.className="run-empty";
       failed.appendChild(document.createTextNode("Could not open this collection. "+err.message+" "));
-      var retry=document.createElement("button");
       var retry = kit.button({variant:"secondary"}, "Try again");
       retry.addEventListener("click",function(){ openCollection(id, docId); });
       failed.appendChild(retry);

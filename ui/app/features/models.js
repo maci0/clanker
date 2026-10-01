@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh, showLoading } from "../core/utils.js";
+import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh, showLoading, plural } from "../core/utils.js";
 import { paintTomlInto, reducedMotion } from "../core/vendor.js";
 
 /* The Models view's own shapes, as Tailwind utilities over the cabinet tokens
@@ -627,11 +627,11 @@ function groupToggle(label, count, groupKey) {
   btn.type = "button";
   btn.className = GROUP_TOGGLE_CLASS;
   btn.setAttribute("aria-expanded", "false");
-  btn.textContent = "▸ " + label + " · " + count + " variants";
+  btn.textContent = "▸ " + label + " · " + plural(count, { one: "variant", other: "variants" });
   btn.addEventListener("click", function () {
     var open = btn.getAttribute("aria-expanded") === "true";
     btn.setAttribute("aria-expanded", String(!open));
-    btn.textContent = (open ? "▸ " : "▾ ") + label + " · " + count + " variants";
+    btn.textContent = (open ? "▸ " : "▾ ") + label + " · " + plural(count, { one: "variant", other: "variants" });
     // Attribute-value comparison instead of a selector: the key is data,
     // not selector syntax, so no escaping questions.
     document.querySelectorAll("tr[data-group]").forEach(function (tr) {
@@ -1043,7 +1043,7 @@ function loadLive() {
       }
 
       out.appendChild(table(["id", "ctx", { sr: "Actions" }], rows));
-      status(rows.length + " models from " + sel.value + ".", "live");
+      status(plural(rows.length, { one: "model", other: "models" }) + " from " + sel.value + ".", "live");
     })
     .catch(function (err) {
       status("Could not list models: " + err.message, "live");
@@ -1119,10 +1119,10 @@ function searchCatalog() {
       }
 
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", { sr: "Actions" }], rows));
-      status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.", "catalog");
+      status(plural(rows.length, { one: "match", other: "matches" }) + (d.truncated ? "+ (truncated)" : "") + " in the catalog.", "catalog");
 
       if (d.truncated) {
-        out.appendChild(empty("Showing the first " + rows.length + " matches; narrow the query for more specific results."));
+        out.appendChild(empty("Showing the first " + plural(rows.length, { one: "match", other: "matches" }) + "; narrow the query for more specific results."));
       }
     })
     .catch(function (err) {

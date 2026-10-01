@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
 // Imported lazily by features/runs.js, the only caller. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
-import { fmtInt, fmtUnit, fmtMs, fmtPct, searchFold } from "../core/utils.js";
+import { fmtInt, fmtUnit, fmtMs, fmtPct, searchFold, plural } from "../core/utils.js";
 
 /* The run graph's shapes, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). An element is addressed by a data attribute rather
@@ -93,8 +93,12 @@ export function graphSummaryText(built) {
   }
   built.stages.forEach(function (stage) {
     var seg = "iteration " + stage.iteration + " called the model";
-    if (stage.tools.length === 1) seg += ", then ran " + stepName(stage.tools[0]);
-    else if (stage.tools.length > 1) seg += ", then ran " + stage.tools.length + " steps in parallel (" + stage.tools.map(stepName).join(", ") + ")";
+    var tools = stage.tools;
+    if (tools.length) {
+      seg += ", then ran " + plural(tools.length, { one: "tool", other: "tools" }) +
+        (tools.length > 1 ? " in parallel" : "") +
+        " (" + tools.map(stepName).join(", ") + ")";
+    }
     parts.push(seg + ".");
   });
   parts.push(built.final ? "The run ended with a final answer." : "The run ended without a final answer.");
@@ -306,7 +310,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
       svg.style.opacity = "0.35";
       if (statusEl) {
         var n = data.filter(function(x){ return x._matches; }).length;
-        statusEl.textContent = n + " of " + data.length + " nodes match" + (n ? "" : "; try Clear");
+        statusEl.textContent = fmtInt(n) + " of " + fmtInt(data.length) + " nodes match" + (n ? "" : "; try Clear");
       }
     } else {
       data.forEach(function(d){ d.el.removeAttribute("data-match"); d.el.style.opacity = ""; });

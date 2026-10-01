@@ -977,4 +977,37 @@ test("shell fixes use cabinet tokens, not a one-off shadow or a second palette",
   assert.doesNotMatch(chat, /black\)/);
 });
 
+test("a count is worded through plural(), never glued to an English noun", function () {
+  /* "1 characters" in a button title is the shape of the bug: `plural()` picks
+     the right form for Polish one/few/many, and a hand-written `n + " " + word`
+     is wrong there whichever locale ships. Walk the shipped page and plugin
+     sources and flag the glued shape. A plural noun with no count at all
+     ("Save prompt") does not match, and neither does a count that is one of
+     two numbers ("3 of 8 nodes match"). */
+  const { readdirSync } = require("node:fs");
+  const roots = [join(here, ".."), join(here, "..", "..", "plugins")];
+  const hits = [];
+  /* `<expr>.length + " <noun>s`", the concatenation every offender used. The
+     noun is followed by whatever the sentence continues with — a space, a
+     closing quote, a comma — so the boundary is any non-word character. */
+  const glued = /\b(\w+)\.length\s*\+\s*"\s([a-z]+?)s(?=\W)/;
+  const bare = /\bcount\s*\+\s*"\s([a-z]+?)s(?=\W)/;
+  function walk(dir) {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === "vendor" || e.name === "node_modules") continue;
+        walk(p);
+      } else if (/\.(js|mjs)$/.test(e.name) && !/\.test\./.test(e.name)) {
+        const rel = p.slice(join(here, "..", "..").length + 1);
+        readFileSync(p, "utf8").split("\n").forEach((line, i) => {
+          const m = line.match(glued) || line.match(bare);
+          if (m) hits.push(rel + ":" + (i + 1) + ": " + m[0].trim());
+        });
+      }
+    }
+  }
+  for (const r of roots) walk(r);
+  assert.deepEqual(hits, [], "say it with plural(n, {one, other}):\n" + hits.join("\n"));
+});
 

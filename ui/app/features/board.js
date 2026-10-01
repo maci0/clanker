@@ -912,7 +912,7 @@ function cardNode(c) {
     actBadge.className = CARD_BADGE_CLASS;
     actBadge.appendChild(icon("activity", 14));
     actBadge.appendChild(document.createTextNode(" " + c.activity.length));
-    actBadge.title = c.activity.length + " activity entries";
+    actBadge.title = plural(c.activity.length, { one: "activity entry", other: "activity entries" });
     badges.appendChild(actBadge);
     hasBadges = true;
   }

@@ -1108,7 +1108,7 @@ function switchSession(id, jump) {
     // actually still running rather than leaving it pointing at one the
     // composer is not using.
     renderSessionOptions(null);
-    el.sessionStatus.textContent = "Finish or stop the current run before switching conversation.";
+    sessionNotice("Finish or stop the current run before switching conversation.");
     return;
   }
   // Written down before the id moves, or it would be saved against the
@@ -1202,11 +1202,11 @@ if (el.workspaceNewForm) {
         if (el.workspaceNewDialog) overlayClose(el.workspaceNewDialog);
         return loadWorkspaces().then(function () {
           setCurrentWorkspace(data.id || name);
-          el.sessionStatus.textContent = "Workspace " + (data.name || name) + " ready.";
+          sessionNotice("Workspace " + (data.name || name) + " ready.");
         });
       })
       .catch(function (err) {
-        el.sessionStatus.textContent = "Could not create workspace: " + err.message;
+        sessionNotice("Could not create workspace: " + err.message);
       });
   });
 }
@@ -1223,11 +1223,11 @@ if (el.workspaceRemove) {
         .then(function () {
           return Promise.all([loadWorkspaces(), loadSessions()]).then(function () {
             setCurrentWorkspace("");
-            el.sessionStatus.textContent = "Removed " + label + ".";
+            sessionNotice("Removed " + label + ".");
           });
         })
         .catch(function (err) {
-          el.sessionStatus.textContent = "Could not remove workspace: " + err.message;
+          sessionNotice("Could not remove workspace: " + err.message);
         });
     });
   });
@@ -1236,7 +1236,7 @@ if (el.workspaceRemove) {
 el.sessionMove.addEventListener("click", function () {
   var meta = currentSessionMeta();
   if (!meta) {
-    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    sessionNotice("This conversation has no saved turns yet.");
     return;
   }
   var existing = knownWorkspaces.map(function (w) { return w.id || ""; }).filter(function (w) { return w !== ""; });
@@ -1259,14 +1259,14 @@ el.sessionMove.addEventListener("click", function () {
     })
       .then(readJson)
       .then(function () {
-        el.sessionStatus.textContent = next.trim()
+        sessionNotice(next.trim()
           ? "Moved to " + next.trim() + "."
-          : "Moved to this folder.";
+          : "Moved to this folder.");
         return Promise.all([loadSessions(), loadWorkspaces()]).then(function () {
           if (next.trim()) setCurrentWorkspace(next.trim(), { silent: true });
         });
       })
-      .catch(function (err) { el.sessionStatus.textContent = "Move failed: " + err.message; })
+      .catch(function (err) { sessionNotice("Move failed: " + err.message); })
       .then(function () { el.sessionMove.disabled = false; });
   });
 });
@@ -1311,7 +1311,7 @@ function withSessionMeta(then) {
    adopt the id the server answers with, and continue in the copy. */
 function switchToSessionCopy(path, btn, verb, doneMessage) {
   if (!currentSessionMeta()) {
-    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    sessionNotice("This conversation has no saved turns yet.");
     return;
   }
   btn.disabled = true;
@@ -1327,11 +1327,11 @@ function switchToSessionCopy(path, btn, verb, doneMessage) {
       sessionId = newId;
       rememberSession(sessionId);
       renderSessionChip();
-      el.sessionStatus.textContent = doneMessage;
+      sessionNotice(doneMessage);
       return loadSessions();
     })
     .catch(function (err) {
-      el.sessionStatus.textContent = "Could not " + verb + ": " + err.message;
+      sessionNotice("Could not " + verb + ": " + err.message);
     })
     .finally(function () { btn.disabled = false; });
 }
@@ -2280,7 +2280,7 @@ window.addEventListener("clanker:stylesheet-error", function (e) {
     var base = el.task.value;
     rec.onstart = function(){ setListening(true); };
     rec.onend = function(){ setListening(false); };
-    rec.onerror = function(){ setListening(false); el.sessionStatus.textContent = "Voice input failed: check microphone permission."; };
+    rec.onerror = function(){ setListening(false); sessionNotice("Voice input failed: check microphone permission."); };
     rec.onresult = function(e){
       var transcript = "";
       for(var i=e.resultIndex;i<e.results.length;i++) transcript += e.results[i][0].transcript;
@@ -2705,7 +2705,7 @@ el.form.addEventListener("submit", function (e) {
        image with it, as though the run had succeeded. */
     if (!statsRendered) {
       markTurn(turn, "\n[the run ended before it finished]");
-      el.sessionStatus.textContent = "The run ended before it finished; your task is still in the composer.";
+      sessionNotice("The run ended before it finished; your task is still in the composer.");
       return;
     }
     el.task.value = "";
@@ -4895,9 +4895,9 @@ el.sessionExportJson.addEventListener("click", function () {
     .then(readJson)
     .then(function (data) {
       downloadText("clanker-" + sessionId.slice(0, 8) + ".json", JSON.stringify(data, null, 2), "application/json");
-      el.sessionStatus.textContent = "Exported as JSON.";
+      sessionNotice("Exported as JSON.");
     })
-    .catch(function (err) { el.sessionStatus.textContent = "Export failed: " + err.message; });
+    .catch(function (err) { sessionNotice("Export failed: " + err.message); });
 });
 
 /* ---------- first-run suggestions ---------- */
@@ -5019,16 +5019,16 @@ try {
 el.promptSave.addEventListener("click", function () {
   var text = el.task.value.trim();
   if (!text) {
-    el.sessionStatus.textContent = "Write the prompt in the composer first.";
+    sessionNotice("Write the prompt in the composer first.");
     return;
   }
   if (prompts.indexOf(text) !== -1) {
-    el.sessionStatus.textContent = "That prompt is already saved.";
+    sessionNotice("That prompt is already saved.");
     return;
   }
   prompts.push(text);
   savePrompts();
-  el.sessionStatus.textContent = "Prompt saved. Type / in the composer to use it.";
+  sessionNotice("Prompt saved. Type / in the composer to use it.");
 });
 
 var promptIndex = 0;
@@ -5215,7 +5215,7 @@ el.task.addEventListener("keydown", function (e) {
       if (!yes) return;
       if (!compForgetPrompt(prompts, doomed)) return;
       savePrompts();
-      el.sessionStatus.textContent = "Deleted that prompt.";
+      sessionNotice("Deleted that prompt.");
       renderPromptList();
     });
     return;
@@ -5266,11 +5266,11 @@ el.sessionFilter.addEventListener("input", function () { renderSessionOptions(nu
    trim on demand, and reports the size it left behind. */
 el.sessionCompact.addEventListener("click", function () {
   if (!currentSessionMeta()) {
-    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
+    sessionNotice("This conversation has no saved turns yet.");
     return;
   }
   if (busy) {
-    el.sessionStatus.textContent = "Finish or stop the current run before compacting.";
+    sessionNotice("Finish or stop the current run before compacting.");
     return;
   }
   // Irreversible: the dropped exchanges are gone from what the model can see.
@@ -5282,7 +5282,7 @@ el.sessionCompact.addEventListener("click", function () {
     fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/compact", { method: "POST" })
       .then(readJson)
       .then(function (d) {
-        el.sessionStatus.textContent = "Compacted to " + fmtBytes(d.bytes) + ".";
+        sessionNotice("Compacted to " + fmtBytes(d.bytes) + ".");
         return loadSessions().then(function () {
           el.transcript.textContent = "";
           return fetch("/api/sessions/" + encodeURIComponent(sessionId))
@@ -5290,7 +5290,7 @@ el.sessionCompact.addEventListener("click", function () {
             .then(function (data) { return renderSessionHistory(data.messages || []); });
         });
       })
-      .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })
+      .catch(function (err) { sessionNotice("Compact failed: " + err.message); })
       .then(function () { el.sessionCompact.disabled = false; });
   });
 });
@@ -5316,11 +5316,11 @@ var downloadText = compDownloadText;
 el.sessionExport.addEventListener("click", function () {
   var md = transcriptMarkdown();
   if (!md.trim()) {
-    el.sessionStatus.textContent = "Nothing to export yet.";
+    sessionNotice("Nothing to export yet.");
     return;
   }
   downloadText("clanker-" + sessionId.slice(0, 8) + ".md", md, "text/markdown");
-  el.sessionStatus.textContent = "Exported as Markdown.";
+  sessionNotice("Exported as Markdown.");
 });
 
 el.sessionCopy.addEventListener("click", function () {
@@ -5410,7 +5410,7 @@ el.runCopy.addEventListener("click", function () {
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
-            el.sessionStatus.textContent = "Imported.";
+            sessionNotice("Imported.");
             if (d.id){ chatPrefsCarry(sessionId, d.id); sessionId = d.id; rememberSession(sessionId); renderSessionChip(); }
             return loadSessions();
           }).catch(function(err){ uiToast("Import failed: "+err.message); });

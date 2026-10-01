@@ -263,7 +263,7 @@ function renderTranscript(m) {
   var judge = m.judge === "third" ? "third-party judge" : "self-reported judging";
   if (m.judge_provider) judge += " (" + m.judge_provider + ")";
   if (m.judge_downgraded) judge += ", downgraded: " + m.judge_downgraded;
-  head.textContent = (m.combatants || []).length + " positions, round " + m.rounds_played + " of " + m.max_rounds + ", " + judge + ".";
+  head.textContent = plural((m.combatants || []).length, { one: "position", other: "positions" }) + ", round " + m.rounds_played + " of " + m.max_rounds + ", " + judge + ".";
   host.appendChild(head);
 
   (m.combatants || []).forEach(function (c) {
@@ -810,7 +810,7 @@ function renderHpGraph(m) {
   if (caption) {
     caption.textContent = cs.map(function (c, i) {
       return c.label + " " + series[i][series[i].length - 1] + " HP";
-    }).join(" · ") + " after " + moves.length + " moves.";
+    }).join(" · ") + " after " + plural(moves.length, { one: "move", other: "moves" }) + ".";
   }
 }
 
