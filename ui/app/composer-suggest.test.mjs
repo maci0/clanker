@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 // The lifted renderers filter through the shared folding helper, so the
 // context gets the shipped one rather than a re-implementation of it.
-import { searchFold } from "./core/utils.js";
+import { searchFold, plural } from "./core/utils.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(here, "app.js"), "utf8");
@@ -88,13 +88,18 @@ function harness(taskValue) {
   taskCombobox.appendChild(task);
   taskCombobox.appendChild(promptList);
   const fetches = [];
+  // Records the badge repaints the `#` list asks for, so a test can assert a
+  // pick from the composer said so on screen.
+  const badgeRenders = [];
   const ctx = {
     el: { task, taskCombobox, promptList },
     pendingFiles: [],
+    loadKnowledgeModule: () => Promise.resolve({ refreshBadge() { badgeRenders.push(1); } }),
     // app.js styles the list rows from the chrome vocabulary (core/ui.js);
     // this sandbox strips that import, so the strings are handed in.
     PALETTE_ITEM_CLASS: "palette-item", PALETTE_KIND_CLASS: "palette-kind", PALETTE_LABEL_CLASS: "palette-label",
     utilSearchFold: searchFold,
+    plural,
     renderFileChips() {},
     kbSelected: [],
     document: {
@@ -117,7 +122,7 @@ function harness(taskValue) {
   // function has reassigned (node does not), so `ctx.kbMentionActive` read
   // here lagged one mutation behind the code under test.
   const g = (name) => vm.runInContext(name, ctx);
-  return { ctx, task, taskCombobox, promptList, fetches, g };
+  return { ctx, task, taskCombobox, promptList, fetches, badgeRenders, g };
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
@@ -209,6 +214,80 @@ test("dismissing the # list does not leave #task claiming to be expanded", async
     "aria-activedescendant kept pointing at an option that is no longer shown"
   );
   assert.equal(h.g("kbMentionActive"), false);
+});
+
+test("picking a # collection repaints the composer badge", async function () {
+  // The moment: a user in Chat types `#` and picks a collection, and never
+  // opens the Knowledge view. The pick reached localStorage and
+  // `#knowledge-hint`, which is rendered inside that view, so from Chat there
+  // was nothing on screen confirming the collection would be included -- the
+  // badge is the one piece of the composer that says so.
+  const h = harness("recall #zig");
+  h.ctx.renderKbMentionList();
+  h.fetches[0].reply({ collections: [{ id: "zig", title: "zig", doc_count: 1 }] });
+  await settle();
+  assert.equal(h.promptList.hidden, false, "the # list is open");
+
+  // Read the label before the pick, because picking clears the list. One
+  // document reads "1 doc", not "1 docs": the row counts through the shared
+  // plural formatter, the way every other count in the app does.
+  const rowLabel = h.promptList.childNodes[0].childNodes.map((c) => c.textContent).join("");
+  assert.match(rowLabel, /1 doc\b/);
+  assert.doesNotMatch(rowLabel, /1 docs/);
+
+  h.promptList.childNodes[0].listeners.mousedown({ preventDefault() {} });
+  await settle();
+  assert.equal(h.badgeRenders.length, 1, "the composer badge was repainted after the pick");
+});
+
+test("the voice toggle restores the composer's own placeholder", function () {
+  // The moment: dictation starts and ends, and the composer comes back. The
+  // toggle used to restore a second, hand-typed copy of the placeholder, which
+  // had already drifted from the markup -- it named `/` and not `@`, and would
+  // drift again the next time a trigger was added. One spelling lives in
+  // index.html, and this is that line under test.
+  const voiceSrc = slice("// Voice input — Web Speech API", "})();\n\nel.task.addEventListener(\"keydown\"") + "})();\n";
+  const btn = elem("button");
+  const task = elem("textarea");
+  task.placeholder = "Describe the task, / for prompts, @ for files, # for knowledge";
+
+  // The stub hands the recogniser back, because the shipped code only reaches
+  // setListening through the instance's own onstart and onend.
+  const made = [];
+  function SR() {
+    const rec = { start() { rec.onstart(); }, stop() { rec.onend(); } };
+    made.push(rec);
+    return rec;
+  }
+
+  const ctx = {
+    el: { task },
+    document: { createElement: elem, getElementById: () => btn },
+    navigator: { language: "en-US" },
+    window: { SpeechRecognition: SR },
+    icon: () => elem("span"),
+    sessionNotice() {},
+    syncControls() {},
+    autoGrow() {},
+    console,
+  };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(voiceSrc, ctx);
+
+  // A click starts dictation, which is the browser firing onstart.
+  btn.listeners.click();
+  assert.equal(made.length, 1, "the click built a recogniser");
+  made[0].onstart();
+  assert.equal(task.placeholder, "Listening…", "the placeholder says it is listening");
+
+  // A second click stops it, which is the browser firing onend.
+  btn.listeners.click();
+  made[0].onend();
+  assert.equal(
+    task.placeholder, "Describe the task, / for prompts, @ for files, # for knowledge",
+    "the idle placeholder came back as the markup spelled it"
+  );
 });
 
 test("hidePromptList is the only place that hides the suggestion list", function () {

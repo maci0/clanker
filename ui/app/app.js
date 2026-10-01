@@ -2263,6 +2263,8 @@ window.addEventListener("clanker:stylesheet-error", function (e) {
 (function(){
   var btn = document.getElementById("voice-btn");
   if (!btn) return;
+  // One spelling of the placeholder lives in index.html.
+  var idlePlaceholder = el.task.placeholder;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { btn.hidden = true; return; }
   var rec = null, listening = false;
@@ -2273,7 +2275,7 @@ window.addEventListener("clanker:stylesheet-error", function (e) {
     btn.setAttribute("aria-pressed", String(on));
     btn.title = on ? "Listening (click to stop)" : "Voice input (click to start)";
     btn.setAttribute("aria-label", btn.title);
-    el.task.placeholder = on ? "Listening…" : "Describe the task, / for prompts";
+    el.task.placeholder = on ? "Listening…" : idlePlaceholder;
   }
   btn.addEventListener("click", function(){
     if (listening && rec) { try{ rec.stop(); }catch(_){ } return; }
@@ -5720,10 +5722,10 @@ function renderKbMentionList() {
       li.className = PALETTE_ITEM_CLASS; li.id = "prompt-item-" + i;
       li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===kbMentionIndex));
       var k = document.createElement("span"); k.className=PALETTE_KIND_CLASS; k.textContent="# " + c.title; li.appendChild(k);
-      var label = document.createElement("span"); label.className=PALETTE_LABEL_CLASS; label.textContent=c.doc_count + " docs"; li.appendChild(label);
+      var label = document.createElement("span"); label.className=PALETTE_LABEL_CLASS; label.textContent=plural(c.doc_count,{one:"doc",other:"docs"}); li.appendChild(label);
       li.addEventListener("mousedown", function(e){
         e.preventDefault();
-        if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) { kbSelected.push(c.id); try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(kbSelected)); } catch(_){} } 
+        if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) { kbSelected.push(c.id); try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(kbSelected)); } catch(_){} }
         var before = el.task.value.slice(0, mq.at);
         var after = el.task.value.slice(mq.at + 1 + mq.q.length);
         el.task.value = before + "#" + c.title + " " + after;
@@ -5734,6 +5736,9 @@ function renderKbMentionList() {
           var n = kbSelected.length;
           hint.textContent = plural(n, { one: "collection", other: "collections" }) + " will be included in the next prompt.";
         }
+        // Paint the composer's badge too: `#knowledge-hint` lives in the
+        // Knowledge view, so a pick from here had nothing on screen.
+        loadKnowledgeModule().then(function (m) { m.refreshBadge(); }).catch(function () {});
       });
       el.promptList.appendChild(li);
     });

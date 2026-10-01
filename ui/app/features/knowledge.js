@@ -15,7 +15,12 @@ function ensureBadge(){
   if (composer) composer.insertBefore(badge, composer.querySelector(".toolbar") || null);
   return badge;
 }
-function refreshBadge(){
+/* Paints (or hides) the composer badge. Exported because the composer's own
+   `#collection` mention list adds a collection without ever loading this view:
+   the pick landed in localStorage and in `#knowledge-hint`, which lives in the
+   Knowledge view, so from Chat nothing on screen said the collection had been
+   included. */
+export function refreshBadge(){
   var badge = ensureBadge();
   if (!badge) return;
   if (!selectedKnowledge.length){ badge.hidden = true; badge.textContent=""; return; }
@@ -73,7 +78,7 @@ export function loadKnowledge(){
         include.appendChild(includeTxt);
         title.appendChild(include);
         var name=document.createElement("span"); name.className="min-w-0 flex-1 basis-48 wrap-anywhere";
-        name.textContent=c.title+"  ·  "+c.doc_count+" docs  ·  "+fmtBytes(c.bytes||0);
+        name.textContent=c.title+"  ·  "+plural(c.doc_count,{one:"doc",other:"docs"})+"  ·  "+fmtBytes(c.bytes||0);
         if(c.description) name.title=c.description; title.appendChild(name);
         var actions=document.createElement("span"); actions.className="ml-auto flex gap-2";
         var open=kit.button({variant:"secondary"}, "Open");

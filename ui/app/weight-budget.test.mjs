@@ -272,6 +272,14 @@ test("eager JS stays inside its weight budget", function () {
   // and that every other count on the page already used (~0.1K gz, and the
   // three copies of the "msg" forms in app.js are now one literal, which pays
   // part of it back).
+  // Raised to 164 also for the `#collection` mention picking a collection out
+  // of the composer, which repainted the composer's own knowledge badge. The
+  // pick already reached localStorage and `#knowledge-hint` — a node that
+  // lives inside the Knowledge view — so a user who never opened that view
+  // got no sign on screen that the collection had been included, from the one
+  // place in the app that includes one (~0.2K gz). No new request, no new
+  // module: the call reuses the already-lazy knowledge chunk, and
+  // `webui_strip.zig` drops these comments before the body is written.
   assert.ok(eagerJsGz <= 164, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 164K`);
 });
 
