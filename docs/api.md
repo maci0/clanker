@@ -265,7 +265,7 @@ restart serve"`, not the `<x> module disabled` form above.
 | GET | `/api/janitor` | dry-run scan only; nothing is deleted |
 | GET | `/api/stats` | token usage aggregate (module `token_stats`) |
 | GET | `/api/mcp/servers` | names only, values redacted |
-| GET | `/api/feedback` , POST | |
+| GET | `/api/feedback` , POST | duplicate-safe: the same `(session, turn, rating)` stores one row, so a replayed or double-clicked POST is a no-op; the other rating of a turn is a second row |
 | POST | `/api/notify` | peer notification delivery |
 
 ## A2A
