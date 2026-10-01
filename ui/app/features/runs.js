@@ -42,7 +42,10 @@ var EXPORT_FALLBACK = {
   "--fg-muted": "#4f534b",
   "--border": "#7b7971",
   "--surface": "#eeebe4",
-  "--code-bg": "#d4d0c6"
+  "--code-bg": "#d4d0c6",
+  "--accent": "#1d5b9c",
+  "--ok": "#0e6731",
+  "--danger": "#a72920"
 };
 
 /* The exported graph's stylesheet, in the cabinet vocabulary: RAL panel greys,
@@ -264,7 +267,7 @@ function buildRunRow(row, isSelected) {
   if (row.nodes) meta.appendChild(runRowChip(plural(row.nodes, { one: "step", other: "steps" }), ""));
   if (row.durationMs) meta.appendChild(runRowChip(fmtMs(row.durationMs), ""));
   if (row.tokens) meta.appendChild(runRowChip(fmtInt(row.tokens) + " tok", ""));
-  if (row.failed) meta.appendChild(runRowChip("⚠ failed check", "run-row-failed"));
+  if (row.failed) meta.appendChild(runRowChip("failed check", "run-row-failed"));
   item.appendChild(meta);
 
   item.addEventListener("click", function () { selectRunFromList(row.id); });
@@ -794,9 +797,9 @@ function drawRun(g) {
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
       var sw = mmSW, sh = mmSH;
-      var accent = mmToken("--accent", "#1d5c9e");
-      var ok = mmToken("--ok", "#117a3a");
-      var danger = mmToken("--danger", "#a72920");
+      var accent = mmToken("--accent", EXPORT_FALLBACK["--accent"]);
+      var ok = mmToken("--ok", EXPORT_FALLBACK["--ok"]);
+      var danger = mmToken("--danger", EXPORT_FALLBACK["--danger"]);
       var fg = mmToken("--fg", EXPORT_FALLBACK["--fg"]);
       var muted = mmToken("--fg-muted", EXPORT_FALLBACK["--fg-muted"]);
       ctx.strokeStyle = muted;
@@ -936,7 +939,7 @@ function drawRun(g) {
     matches[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
   }
   // An error lens — one button jumps to failed nodes
-  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "⚠ Failed";
+  var graphFailedBtn = document.createElement("button"); graphFailedBtn.type = "button"; graphFailedBtn.className = "secondary"; graphFailedBtn.textContent = "Failed";
   graphFailedBtn.title = "Next failed node";
   graphSearch.appendChild(graphFailedBtn);
   function focusNextFailed(){

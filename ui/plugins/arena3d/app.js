@@ -9,22 +9,26 @@
 // for it.
 //
 // The scene: a ringed disc floating in fog. One geometric avatar per
-// combatant — a different platonic-ish solid per index, hue from the same
-// hash the 2D view and Fleet use, so a combatant keeps its colour across
-// every view. HP is a depleting arc under each avatar. Moves play as
+// combatant — a different platonic-ish solid per index, colour from the same
+// --chat-hue enamel the 2D view and Fleet use, so a combatant keeps its
+// colour across every view. HP is a depleting arc under each avatar. Moves play as
 // effects: attack/counter fire a glowing bolt along an arc, block flashes a
 // shield shell, final_stand raises a light pillar, a concession sinks the
 // avatar, and an elimination shatters it into particles that drain into the
 // centre — the compactor's job, done as a vortex.
 
 import { reducedMotion } from "/webui/core/vendor.js";
-import { hashName, themeToken } from "/webui/core/utils.js";
+import { peerColor, themeToken } from "/webui/core/utils.js";
 import { lastMove } from "/webui/features/arena.js";
 
 var THREE = null;
 var S = null; // live scene state, null when unmounted
 
-function hueFor(name) { return (hashName(name || "") % 360) / 360; }
+/* The combatant's cabinet enamel as a three colour, so a lit material in the
+   3D stage is the same colour the 2D canvas, Fleet and the board give that
+   name. This hashed a raw hue and let three paint it at its own lightness,
+   which is how a name here was a colour nowhere else and not the panel's. */
+function colorFor(name) { return new THREE.Color(peerColor(name)); }
 
 function pal() {
   return {
@@ -67,7 +71,7 @@ function labelSprite(text, color) {
   return sp;
 }
 
-// One solid per slot: the shape is identity the way the hue is.
+// One solid per slot: the shape is identity the way the colour is.
 function avatarGeometry(i) {
   switch (i % 6) {
     case 0: return new THREE.IcosahedronGeometry(0.55, 0);
@@ -181,8 +185,7 @@ function buildAvatars(m) {
   S.avatars = [];
   var cs = m.combatants || [];
   cs.forEach(function (c, i) {
-    var hue = hueFor(c.label || String(i));
-    var color = new THREE.Color().setHSL(hue, 0.5, 0.6);
+    var color = colorFor(c.label || String(i));
     var group = new THREE.Group();
     var body = new THREE.Mesh(
       track(avatarGeometry(i)),
@@ -208,7 +211,7 @@ function buildAvatars(m) {
 
     group.position.copy(placeFor(i, cs.length));
     S.scene.add(group);
-    S.avatars.push({ group, body, hp: hpArc, base: group.position.clone(), hue, hpFrac: 1, out: false });
+    S.avatars.push({ group, body, hp: hpArc, base: group.position.clone(), color: color.clone(), hpFrac: 1, out: false });
   });
 }
 
@@ -305,7 +308,7 @@ function addShatter(i) {
   if (!a || a.shattered) return;
   a.shattered = true;
   a.body.visible = false;
-  var color = new THREE.Color().setHSL(a.hue, 0.5, 0.6);
+  var color = a.color.clone();
   var count = 90;
   var geo = track(new THREE.BufferGeometry());
   var pos = new Float32Array(count * 3);
@@ -396,8 +399,8 @@ export function updateArena3D(m) {
     if (!reducedMotion.matches) {
       var actor = last.combatant;
       var target = typeof last.target === "number" ? last.target : (actor === 0 ? 1 : 0);
-      var hue = S.avatars[actor] ? S.avatars[actor].hue : 0;
-      var color = new THREE.Color().setHSL(hue, 0.7, 0.6);
+      var color = (S.avatars[actor] ? S.avatars[actor].color : new THREE.Color(pal().accent)).clone();
+      color.multiplyScalar(1.3);
       if (last.move === "attack" || last.move === "counter") addBolt(actor, target, color);
       else if (last.move === "block") addShield(actor, color);
       else if (last.move === "final_stand") { addPillar(actor, color); addBolt(actor, target, color); }

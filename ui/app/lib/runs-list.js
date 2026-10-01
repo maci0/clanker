@@ -103,7 +103,12 @@ export function runFailed(run) {
   return Array.isArray(run.nodes) && run.nodes.some(function (n) { return n && n.ok === false; });
 }
 
-const FAILED_WORDS = ["failed", ":failed", "⚠ failed"];
+/* Input aliases, not chrome: nothing in the interface prints these, so a
+   query typed from an older session still selects the state. The
+   glyph-prefixed spelling was here because a chip used to be typed that way;
+   the chip is the board's `run-row-failed` colour now, and the glyph never
+   comes back. */
+const FAILED_WORDS = ["failed", ":failed"];
 
 /** The filter box: a text match over id, task and provider, except for the
     `failed` keyword, which selects on state instead. */

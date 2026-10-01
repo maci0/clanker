@@ -576,7 +576,7 @@ export function hashName(s) {
 }
 
 export function peerColor(name) {
-  return "hsl(" + (hashName(name || "") % 360) + " 35% 62%)";
+  return themeToken("--chat-hue-" + (hashName(name || "") % 8)) || "#1d5c9e";
 }
 
 export function parseCssColor(color) {

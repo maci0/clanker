@@ -792,9 +792,14 @@ test("each theme's accent wash is the accent reading at the same alpha", () => {
 // room avatar, a :shortcode:), never chrome.
 
 test("colour emoji are chat content, never drawn chrome", () => {
-  // Emoji-presentation blocks only. U+2713/U+25B6-style symbols render as
-  // monochrome text and are not what this is about.
-  const emoji = /[\u{1F300}-\u{1FAFF}]|️/u;
+  // Colour emoji (U+1F300-U+1FAFF, plus the variation selector that promotes
+  // a symbol such as U+26A0 to colour) and the emoji-keycap range. U+2713/
+  // U+25B6-style text symbols render monochrome in the panel's ink and are
+  // not what this is about; U+26A0 WARNING SIGN is in the emoji range in every
+  // font a browser will pick for it, and a run chip that types one is chrome
+  // drawn outside ICON_PATHS -- which is how "⚠ failed check" shipped past
+  // this test for as long as the class existed.
+  const emoji = /[\u{1F300}-\u{1FAFF}\u{20E3}\u{26A0}\u{2705}\u{274C}\u{2757}]|️/u;
   // The three tables that own emoji as data: the :shortcode: map, the
   // reaction sets, and the room-avatar ring.
   const owners = new Set(["app/app.js", "app/core/chat.js"]);
@@ -1168,5 +1173,33 @@ test("the office canvas paints the cabinet's signal colours, not a borrowed ramp
     if (token.startsWith("--chat-hue-")) continue;
     assert.equal(value, tokens[token],
       `office fallback for ${token} must be the day face ${tokens[token]}, not ${value}`);
+  }
+});
+
+test("a peer is one of the eight enamels, not a hue wheel", () => {
+  const utils = readFileSync(join(here, "core", "utils.js"), "utf8");
+  const peer = /export function peerColor\([^)]*\)\s*\{[^}]*\}/.exec(utils);
+
+  assert.ok(peer, "utils.js must keep peerColor");
+  assert.match(peer[0], /themeToken\("--chat-hue-"/,
+    "peerColor must read a --chat-hue-N enamel, so a name is one colour in every view");
+  assert.doesNotMatch(peer[0], /hsl\(/, "a private hue wheel is a second identity for the same people");
+
+  // The 3D stage lit the same names through the same helper, so a combatant
+  // is one colour in both stages; it painted a raw hue through three instead.
+  const arena3d = readFileSync(join(pluginsDir, "arena3d", "app.js"), "utf8");
+
+  assert.match(arena3d, /new THREE\.Color\(peerColor\(/,
+    "arena3d must build its lit materials from peerColor");
+  assert.doesNotMatch(arena3d, /setHSL\(/, "three must not re-derive a name's colour at its own lightness");
+
+  // Every canvas that paints a peer reads the same eight, so neither arena
+  // nor the fleet can drift from the board's avatars.
+  for (const [name, src] of scripts()) {
+    for (const line of src.split("\n")) {
+      if (/fillStyle|strokeStyle|\.background\s*=/.test(line) && /hsl/i.test(line)) {
+        assert.fail(`${name}: a canvas paints a name with its own hue: ${line.trim().slice(0, 72)}`);
+      }
+    }
   }
 });
