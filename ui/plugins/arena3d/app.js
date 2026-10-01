@@ -38,7 +38,7 @@ function pal() {
   };
 }
 
-export function loadThree() {
+function loadThree() {
   if (THREE) return Promise.resolve(THREE);
   return import("/webui/vendor/three.module.min.js").then(function (mod) {
     THREE = mod;

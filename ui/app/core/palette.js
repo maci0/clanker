@@ -120,7 +120,7 @@ function runPalette(i) {
   if (entry) entry.run();
 }
 
-export function openPalette() {
+function openPalette() {
   _el.paletteInput.value = "";
   paletteIndex = 0;
   overlayOpen(_el.palette, _el.paletteInput);

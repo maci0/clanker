@@ -62,7 +62,7 @@ export function setOpenCardId(id) { openCardId = id; }
    and that render runs on every card change, not only when the toggle is
    clicked. */
 var listMode = false;
-export function setListMode(on) {
+function setListMode(on) {
   listMode = !!on;
   var grid = document.getElementById("board-grid");
   var listViewEl = document.getElementById("board-list-view");

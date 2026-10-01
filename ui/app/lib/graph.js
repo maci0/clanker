@@ -149,7 +149,7 @@ export function toDagInput(built) {
   return data;
 }
 
-export function buildIncompleteNode(nodeW) {
+function buildIncompleteNode(nodeW) {
   var stop = document.createElement("div");
   stop.className = STOP_CLASS;
   stop.dataset.runNode = "";

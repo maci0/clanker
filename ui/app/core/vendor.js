@@ -1,6 +1,6 @@
 export var vendorLoads = {};
 
-export var tomlRegistered = false;
+var tomlRegistered = false;
 
 import { readJson } from "./utils.js";
 
@@ -50,7 +50,7 @@ export function loadD3() {
   return loadVendor("d3-dag.min.js", function () { return !!(window.d3 && window.d3.dagStratify); });
 }
 
-export function registerToml() {
+function registerToml() {
   if (tomlRegistered) { return; }
 
   tomlRegistered = true;

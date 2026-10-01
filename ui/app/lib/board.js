@@ -2,7 +2,7 @@
 // Importable as ES module.
 import { fmtInt, fmtUsd } from "../core/utils.js";
 
-export var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done", archive: "Archive" };
+var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done", archive: "Archive" };
 
 export function boardActionLine(raw) {
   if (typeof raw !== "string" || raw.slice(0, 6) !== "@todo ") { return null; }
@@ -92,7 +92,7 @@ export function blockers(card, board, cardByIdFn) {
    for a missing key rather than for a falsy rank. Testing for falsy is what
    quietly folded every high card in with the normal ones, in both places that
    offer to sort by priority. */
-export var PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
+var PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
 
 export function priorityRank(card) {
   var rank = PRIORITY_RANK[(card && card.priority) || "normal"];

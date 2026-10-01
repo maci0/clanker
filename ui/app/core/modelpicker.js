@@ -45,9 +45,7 @@ var _flat = [];
 
 var _open = false;
 
-export function getProviderCache() { return _providerCache; }
 
-export function getModelIndex() { return _modelIndex; }
 
 /// One side of a "per 1M tokens" price. A missing side reads "?", not $0.
 function per1m(v) {
@@ -242,23 +240,23 @@ export var PICKER_CLASS = "fixed inset-0 z-200 pointer-events-none";
 
 export var PICKER_PANEL_CLASS = "pointer-events-auto fixed box-border flex min-h-0 flex-col overflow-hidden rounded-plate-lg border border-border bg-surface shadow-[var(--lift-high)]";
 
-export var PICKER_SEARCH_CLASS = "m-0 w-full box-border flex-none rounded-none border-0 border-b border-rule bg-surface-2 px-4 py-2 text-base text-fg focus:shadow-[inset_0_0_0_2px_var(--accent)] focus:outline-none";
+var PICKER_SEARCH_CLASS = "m-0 w-full box-border flex-none rounded-none border-0 border-b border-rule bg-surface-2 px-4 py-2 text-base text-fg focus:shadow-[inset_0_0_0_2px_var(--accent)] focus:outline-none";
 
 export var PICKER_LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain p-2";
 
-export var PICKER_EMPTY_CLASS = "m-4 text-center font-mono text-sm text-fg-muted";
+var PICKER_EMPTY_CLASS = "m-4 text-center font-mono text-sm text-fg-muted";
 
-export var PICKER_GROUP_CLASS = "mt-1 first:mt-0";
+var PICKER_GROUP_CLASS = "mt-1 first:mt-0";
 
-export var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-sans text-2xs font-semibold text-fg-muted";
+var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-sans text-2xs font-semibold text-fg-muted";
 
 export var PICKER_OPTION_BASE = "m-0 flex w-full cursor-pointer gap-0.5 rounded-plate border border-transparent bg-transparent px-3 py-1 text-start font-sans text-fg shadow-none hover:border-rule hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 data-[active=true]:border-rule data-[active=true]:bg-surface-2 data-[current=true]:border-[color-mix(in_srgb,var(--accent)_35%,var(--rule))] data-[current=true]:bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface-2))]";
 
-export var PICKER_OPTION_CLASS = PICKER_OPTION_BASE + " flex-col items-start";
+var PICKER_OPTION_CLASS = PICKER_OPTION_BASE + " flex-col items-start";
 
 export var PICKER_OPTION_LABEL_CLASS = "text-sm font-semibold text-fg";
 
-export var PICKER_OPTION_META_CLASS = "font-mono text-xs text-fg-muted";
+var PICKER_OPTION_META_CLASS = "font-mono text-xs text-fg-muted";
 
 function ensurePickerDom() {
   if (_picker) { return; }
@@ -566,7 +564,7 @@ export function openModelPicker(anchor) {
   _search.select();
 }
 
-export function closeModelPicker() {
+function closeModelPicker() {
   if (!_open) { return; }
 
   _open = false;
@@ -723,7 +721,7 @@ export function runOptions() {
   return out;
 }
 
-export function fallbackProviderValue() {
+function fallbackProviderValue() {
   return (_el.fallbackProvider && _el.fallbackProvider.value) || "";
 }
 

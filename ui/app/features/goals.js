@@ -76,7 +76,7 @@ var runningIds = {};
 var goalMirrorRequested = {};
 
 /* Newest first: the goal most recently set is the one steering runs now. */
-export function renderGoals(goals) {
+function renderGoals(goals) {
   goalState.val = (goals || []).slice().sort(goalSortKey);
 }
 

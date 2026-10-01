@@ -1,6 +1,6 @@
 // Pure DM/chat helpers — no DOM, no page state. Safe to import as ES module.
 // dmPartner takes (room, instanceName) explicitly so it never closes over a mutable global.
-export function dmSafeName(name) {
+function dmSafeName(name) {
   return String(name).replace(/\|/g, "-");
 }
 
@@ -62,7 +62,7 @@ export function hasServerId(m) {
   return !!(m && m.id);
 }
 
-export var CLANKER_MARKS = [
+var CLANKER_MARKS = [
   "🐙", "🦊", "🦉", "🐢", "🦋", "🐝", "🦔", "🦦",
   "🦭", "🐬", "🦅", "🦩", "🐸", "🦎", "🐿️", "🦡",
   "🪼", "🦑", "🐳", "🦌", "🐺", "🦂", "🕷️", "🦜"

@@ -3,20 +3,20 @@ import { plural } from "./utils.js";
 
 export var pendingImages = [];
 
-export var max_image_bytes = 4 * 1024 * 1024;
+var max_image_bytes = 4 * 1024 * 1024;
 
-export var max_images = 4;
+var max_images = 4;
 
 // Video input (Kimi Code parity: "drop a screen recording into the chat").
 // The run's image path is the channel — a video is sampled to up to
 // `max_video_frames` JPEG frames, evenly spaced, each well under the
 // per-image cap, and rides the same pendingImages list the server already
 // accepts. Nothing server-side changes.
-export var max_video_frames = 4;
+var max_video_frames = 4;
 
-export var max_video_bytes = 256 * 1024 * 1024;
+var max_video_bytes = 256 * 1024 * 1024;
 
-export var video_frame_width = 640;
+var video_frame_width = 640;
 
 /* An attached image and its remove control. Small enough to stay out of the
    way, large enough to tell two screenshots apart. */
@@ -125,7 +125,7 @@ export function addMediaFile(file, els, iconFn, fmtBytesFn) {
 /// Frames are drawn to a canvas at most `video_frame_width` wide and encoded
 /// at jpeg 0.72 — a screen recording's frames land at tens of KB, far under
 /// the 4 MB per-image cap, so four frames fit comfortably.
-export function addVideoFile(file, els, iconFn, fmtBytesFn) {
+function addVideoFile(file, els, iconFn, fmtBytesFn) {
   if (!file) { return false; }
 
   if (file.type.indexOf("video/") !== 0) { return false; }

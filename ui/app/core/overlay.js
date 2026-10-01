@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Generic overlay helpers — no app state, no `el`.
-export var lastFocus = null;
+var lastFocus = null;
 
 export function openOverlay(node, toFocus) {
   lastFocus = document.activeElement;

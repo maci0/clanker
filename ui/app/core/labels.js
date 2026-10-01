@@ -42,7 +42,7 @@ export function chatRoomLabel(room, isDmFn, dmPartnerFn, clankerMarkFn) {
 
 // Manifest `category` keys, work-first then instance-ops. Keep in step with
 // `src/toolhost/manifest.zig` `categories` and `tools/zig/tools.zig`.
-export var toolCategoryOrder = ["code", "chat", "kanban", "agent", "knowledge", "web", "media", "compute", "transform", "harness"];
+var toolCategoryOrder = ["code", "chat", "kanban", "agent", "knowledge", "web", "media", "compute", "transform", "harness"];
 
 var toolCategoryLabels = {
   agent: "Agent",

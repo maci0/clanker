@@ -881,7 +881,7 @@ function observeFloorTheme() {
   }).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
 }
 
-export function initFleet() {
+function initFleet() {
   var view = byId("view-fleet");
   if (!view) return;
   var roster = byId(ROSTER_CLASS);

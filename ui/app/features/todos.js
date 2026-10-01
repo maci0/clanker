@@ -37,13 +37,13 @@ var STATE_CLASS = "flex-none font-mono text-xs text-fg-muted group-data-[status=
 // A title is capped at 512 chars server-side and the list at 100 items; both
 // are honest numbers to render, but a pathological run should not be able to
 // push 50 KB of text into one turn card either. Clip for display only.
-export var max_title_chars = 240;
+var max_title_chars = 240;
 
-export var max_items = 100;
+var max_items = 100;
 
 /// Normalizes whatever came down the stream into the shape the panel renders.
 /// Pure, and defensive: a malformed event must not take the turn down.
-export function normalizeTodos(raw) {
+function normalizeTodos(raw) {
   if (!raw || !raw.length) { return []; }
 
   var out = [];
@@ -66,7 +66,7 @@ export function normalizeTodos(raw) {
 
 /// "2/5 done", or "" for an empty list. Pure, so the count shown and the count
 /// tested are the same function.
-export function todoSummary(todos) {
+function todoSummary(todos) {
   if (!todos || !todos.length) { return ""; }
 
   var closed = 0;

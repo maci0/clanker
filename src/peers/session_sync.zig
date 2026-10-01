@@ -256,11 +256,6 @@ fn encodeBatch(arena: std.mem.Allocator, owner: []const u8, events: []const sess
 /// sender already holds, so following it would resend the same batch forever.
 pub const CursorError = error{CursorStalled};
 
-/// A peer answered the erase request with something that is not the
-/// confirmation, so its replica is still there and the operator's delete did
-/// not reach that machine.
-pub const EraseError = error{PeerDidNotErase};
-
 pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config, session_id: []const u8) void {
     if (session_id.len == 0) return;
     const peers = peersOf(cfg, arena);

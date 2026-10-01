@@ -86,7 +86,7 @@ var UNDECOMPOSED = {
   "Ħ": "h", "ħ": "h", "ı": "i", "Ł": "l", "ł": "l", "ß": "ss"
 };
 
-export function searchFoldWithMap(str) {
+function searchFoldWithMap(str) {
   var s = String(str);
   var folded = "";
   var ranges = [];

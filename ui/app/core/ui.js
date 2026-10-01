@@ -352,13 +352,6 @@ export var runDetail = {
    core/plugins.js, so the list lives here rather than on eleven elements. */
 export var VIEW_CLASS = "[&:focus]:outline-none [&:focus-visible]:-outline-offset-2 [&:focus-visible]:outline-2 [&:focus-visible]:outline-accent [&:not([hidden])]:min-h-0 [&:not([hidden])]:w-full [&:not([hidden])]:flex-auto [&:not([hidden])]:overscroll-contain [&:not([hidden])]:overflow-y-auto [&>section]:w-full [&>section]:max-w-none [&>section+section]:mt-6 [&>section+section]:border-t [&>section+section]:border-rule [&>section+section]:pt-4 [&>section:first-child]:mt-0 [&>section:first-child]:border-t-0 [&>section:first-child]:pt-0";
 
-/* The jump palette's rows: a kind stamp, a label, and the empty line that
-   stands in for no match. app.js builds the prompt and action rows, palette.js
-   the view and conversation ones. */
-export var paletteItem = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-[current=page]:border aria-[current=page]:border-rule aria-[current=page]:bg-surface-2 aria-[current=page]:font-medium";
-export var paletteKind = "min-w-18 flex-none text-sm text-fg-muted";
-export var paletteLabel = "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
-
 /* The gauge chip: a reading in mono behind a lamp, worn by the masthead's
    status line and by any view that reports one. The lamp itself is a component
    rule (`.chip::before`); the states are attributes, so the sheet reads what

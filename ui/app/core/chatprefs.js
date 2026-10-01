@@ -15,7 +15,7 @@
    Shape and bounds mirror `drafts` in composer.js: one entry per session id,
    `at` stamped on every touch, and the `max_prefs` most recently touched kept
    so a long-lived browser cannot grow the key without limit. */
-export var prefs_key = "clanker.chatprefs";
+var prefs_key = "clanker.chatprefs";
 
 export var max_prefs = 50;
 

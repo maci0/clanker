@@ -65,9 +65,9 @@ export function setActiveItem(listEl, index, taskEl) {
    entries: `setDraft` bounds the store to the `max_drafts` most recently
    touched and drops the rest. A draft is the composer's business only — it is
    never sent, and clearing it is what a finished run does. */
-export var drafts_key = "clanker.drafts";
+var drafts_key = "clanker.drafts";
 
-export var max_drafts = 20;
+var max_drafts = 20;
 
 export function loadDrafts() {
   try {

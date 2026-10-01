@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Text prompt dialog + shortcut table — no app state.
 import { view_digit_max } from "./utils.js";
 
-export var SHORTCUTS = [
+var SHORTCUTS = [
   ["Ctrl/\u2318 + K", "Jump to a view, conversation, run, tool or action"],
   ["?", "This list"],
   ["1 to " + view_digit_max, "Go to one of the first " + view_digit_max + " views by number"],

@@ -7,8 +7,8 @@ export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(~~
 /* A citation path is any filename on disk; \p{M} keeps a decomposed one
    (markdown.test.mjs). The ASCII class it replaced truncated the chip to
    "bersicht.zig:12", so data-ref opened the wrong file in the callgraph. */
-export var CITATION_RE = /[\p{L}\p{N}\p{M}_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/gu;
-export var RUN_RE = /\[subagent run:\s*(?:sub|run)-\d+\]|\b(?:sub|run)-\d+\b(?!\.\w)/g;
+var CITATION_RE = /[\p{L}\p{N}\p{M}_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/gu;
+var RUN_RE = /\[subagent run:\s*(?:sub|run)-\d+\]|\b(?:sub|run)-\d+\b(?!\.\w)/g;
 function runIdOf(m) {
   var mm = /(sub|run)-\d+/.exec(m);
   return mm ? mm[0] : m;
@@ -21,7 +21,7 @@ var CITATION_CHIP_CLASS = "inline-flex cursor-pointer items-center gap-0.5 round
 /* Run references (`run-<ts>`, `sub-<ns>`, or the trailing `[subagent run:
    sub-…]` a nested run appends to its answer) become chips that open that
    run's graph, the way file:line citations open the callgraph search. */
-export function appendRunRefs(parent, text) {
+function appendRunRefs(parent, text) {
   RUN_RE.lastIndex = 0;
   var last = 0, m;
   while ((m = RUN_RE.exec(text)) !== null) {
@@ -151,14 +151,14 @@ export function inlineInto(parent, text) {
   }
 }
 
-export function paragraphInto(parent, lines) {
+function paragraphInto(parent, lines) {
   lines.forEach(function (line, i) {
     if (i) parent.appendChild(document.createElement("br"));
     inlineInto(parent, line);
   });
 }
 
-export function tableRow(tr, cells, cellTag) {
+function tableRow(tr, cells, cellTag) {
   cells.forEach(function (c) {
     var cell = document.createElement(cellTag);
     // Header cells name the column below them; scope keeps that association
@@ -179,19 +179,19 @@ export function tableRow(tr, cells, cellTag) {
    to look at those lines because the paragraph had already eaten them, so a
    table rendered as the wall of literal `|` characters this file exists to
    avoid, and `---` as three hyphens mid-sentence. */
-export function ruleAt(line) {
+function ruleAt(line) {
   return /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line);
 }
 
 /* A table is its header plus the `|---|---|` line under it: the header alone
    is just a line with pipes in it, so both are needed to tell one from prose. */
-export function tableAt(lines, i) {
+function tableAt(lines, i) {
   return lines[i].indexOf("|") !== -1 &&
     i + 1 < lines.length &&
     /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1]);
 }
 
-export function blockAt(lines, i) {
+function blockAt(lines, i) {
   var line = lines[i];
   return /^(#{1,6})\s/.test(line) ||
     /^\s*[-*+]\s/.test(line) ||
@@ -418,7 +418,7 @@ export function buildCodeBlock(lang, code) {
    source is the receipt. The raw code is parked in `data-src` until the
    lazily-loaded renderer replaces it, so Copy answer and Export .md still
    read `markdownSource`, never the rendered SVG. */
-export function buildMermaidBlock(code) {
+function buildMermaidBlock(code) {
   var wrap = document.createElement("div");
   wrap.className = "code-block";
   wrap.setAttribute("data-mermaid", "block");

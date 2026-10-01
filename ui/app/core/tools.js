@@ -56,7 +56,7 @@ function toggleToolGroupCollapsed(g) {
 
 function groupLabel(cat) { return toolCategoryLabel(cat); }
 
-export function renderTools(filterText) {
+function renderTools(filterText) {
   _toolState.val = {
     tools: _allToolsHolder.list,
     filter: (filterText == null ? _el.toolFilter.value : filterText).trim()
@@ -328,7 +328,7 @@ function sectionTitle(text) {
   return h;
 }
 
-export function toggleTool(t, btn) {
+function toggleTool(t, btn) {
   var want = !t.enabled;
   btn.disabled = true;
   fetch("/api/plugins", {
