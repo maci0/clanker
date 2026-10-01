@@ -157,6 +157,33 @@
   /* Labels are sentence case with no letter-spacing (DESIGN.md). */
   --track-label: 0;
 
+  /* Leading, as three rungs rather than Tailwind's five, for the same reason
+     the radius scale is three and not nine: one value per role, so a row
+     cannot pick a leading nobody chose. Prose (a chat answer and a document),
+     control (a button or a field), and the caption rows that are mostly a
+     single short line (a legend above a meter). Anything a `leading-*` class
+     asks for outside these three compiles to nothing, exactly as `rounded-md`
+     does. */
+  --leading-prose: 1.65;
+  --leading-control: 1.4;
+  --leading-caption: 1.25;
+
+  /* Motion, in a panel's terms. A cabinet is a machined surface: a control
+     answers a press, it does not glide. `--motion-tap` is a state change
+     under a finger (opacity, an edge colour, a lifted button), `--motion-slide`
+     is a panel arriving (a toast, a drawer, a caret opening), and
+     `--motion-settle` is a card being dropped, the one movement here with
+     travel worth seeing. Tailwind's `duration-100/150/200` and
+     `ease-in/in-out/out` are cleared below, and a duration off the three
+     rungs styles nothing, so a speed nobody chose cannot be asked for: the
+     panel's speed is a token like the rest of it. */
+  --motion-tap: 120ms;
+  --motion-slide: 180ms;
+  --motion-settle: 220ms;
+  --curve-tap: ease;
+  --curve-slide: ease-out;
+  --curve-settle: cubic-bezier(0.2, 0.9, 0.3, 1);
+
   --space-1: 0.25rem;
   --space-2: 0.4rem;
   --space-3: 0.6rem;
@@ -314,13 +341,18 @@
 @layer base {
   * { box-sizing: border-box; }
   html, body { height: 100%; }
+  /* Tailwind's preflight sets the root leading to 1.5, and the closed
+     `leading-*` namespace cannot reach a preflight declaration, so the last
+     number nobody chose in the sheet would sit on everything the body rule
+     does not cover. Same selector, same layer, so this wins on order. */
+  html, :host { line-height: var(--leading-prose); }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--fg);
     font-family: var(--sans);
     font-size: var(--step-1);
-    line-height: 1.6;
+    line-height: var(--leading-prose);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -498,7 +530,7 @@
 
   textarea {
     width: 100%; min-height: 5rem; padding: 0.75rem;
-    font-family: var(--sans); font-size: var(--step-1); line-height: 1.55;
+    font-family: var(--sans); font-size: var(--step-1); line-height: var(--leading-control);
     background: var(--surface); color: var(--fg);
     border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
     box-shadow: var(--bevel-inset);
@@ -565,9 +597,9 @@
   h2 {
     font-family: var(--sans);
     font-size: var(--step-1); font-weight: 600;
-    color: var(--fg); margin: 0; line-height: 1.3;
+    color: var(--fg); margin: 0; line-height: var(--leading-caption);
   }
-  .runs { margin-top: var(--space-4); }.run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }.run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: 1.4; border-radius: var(--radius-pill); }.run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }.run-list-head {
+  .runs { margin-top: var(--space-4); }.run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }.run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: var(--leading-control); border-radius: var(--radius-pill); }.run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }.run-list-head {
     display: flex; align-items: baseline; gap: var(--space-3);
     margin: var(--space-4) 0 var(--space-2);
   }.run-list-head h3 { margin: 0; font-size: var(--step-0); }.run-list {
@@ -617,7 +649,7 @@
     font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-weight: 600;
     padding-bottom: var(--space-3); border-bottom: 1px dashed var(--rule); margin-bottom: var(--space-4);
     overflow-wrap: anywhere; white-space: pre-line;
-  }.run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }.run-detail-head {
+  }.run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: var(--leading-prose); max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }.run-detail-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem;
     font-family: var(--sans); font-size: var(--step-0); font-weight: 600; margin-bottom: 0.5rem;
   }.run-detail-title { color: var(--fg); font-weight: 700; }dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
@@ -984,7 +1016,7 @@
     margin-inline-start: auto;
     flex: none;
     opacity: 0.6;
-    transition: transform 120ms ease-out;
+    transition: transform var(--motion-slide) var(--curve-slide);
   }
   .rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
   /* The corner sits on the inline end, so the rotation that folds it down has
@@ -1090,14 +1122,14 @@
   .code-block pre {
     margin: 0; padding: 0.75rem var(--space-4); background: var(--code-bg); color: var(--code-fg);
     border: 0; border-radius: 0; overflow-x: auto;
-    white-space: pre; font-family: var(--mono); font-size: var(--step-0); line-height: 1.6;
+    white-space: pre; font-family: var(--mono); font-size: var(--step-0); line-height: var(--leading-prose);
     tab-size: 2;
   }
   .code-lang {
     font-family: var(--mono); font-size: var(--step-0);
     color: var(--fg-muted);
   }
-  .code-block .copy-code-btn { opacity: 0; transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease; }
+  .code-block .copy-code-btn { opacity: 0; transition: opacity var(--motion-tap) var(--curve-tap), background var(--motion-tap) var(--curve-tap), border-color var(--motion-tap) var(--curve-tap); }
   .code-block:hover .copy-code-btn, .code-block:focus-within .copy-code-btn { opacity: 1; }
   @media (hover: none) { .code-block .copy-code-btn { opacity: 1; } }
   .copy-code-btn {
@@ -1126,14 +1158,14 @@
   /* Rendered markdown. Sized against the text face it sits in: headings step
      up rather than shout. Blocks fill the Chat column so tables and code
      are not re-capped inside it. */
-  .md .md-p { margin: 0 0 var(--space-4); max-width: none; line-height: 1.7; font-size: var(--step-1); }
+  .md .md-p { margin: 0 0 var(--space-4); max-width: none; line-height: var(--leading-prose); font-size: var(--step-1); }
   .md .md-p:last-child { margin-bottom: 0; }
   .md .md-h {
     font-family: var(--sans); font-size: var(--step-1); font-weight: 700;
-    color: var(--fg); margin: var(--space-6) 0 var(--space-3); line-height: 1.25;
+    color: var(--fg); margin: var(--space-6) 0 var(--space-3); line-height: var(--leading-caption);
     scroll-margin-top: var(--space-5);
   }
-  .md h3.md-h { font-size: var(--step-2); line-height: 1.25; }
+  .md h3.md-h { font-size: var(--step-2); line-height: var(--leading-caption); }
   /* Most model output leads with "##", which lands here. Below it, the legend
      plate treatment the rest of the page already uses for section names, so the
      last two levels are distinguishable without inventing a type scale. */
@@ -1148,7 +1180,7 @@
   }
   .md ul { list-style-type: disc; }
   .md ol { list-style-type: decimal; }
-  .md li { margin: var(--space-2) 0; line-height: 1.55; display: list-item; }
+  .md li { margin: var(--space-2) 0; line-height: var(--leading-prose); display: list-item; }
   .md li::marker { color: var(--fg-muted); }
   .md blockquote {
     margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4);
@@ -1309,7 +1341,7 @@
     background: var(--surface-raised); color: var(--fg);
     font-family: var(--mono); font-size: var(--step-0);
     box-shadow: var(--lift);
-    animation: toast-in 180ms ease-out;
+    animation: toast-in var(--motion-slide) var(--curve-slide);
   }
 
   .toast-dismiss {
@@ -1329,7 +1361,7 @@
 
   .meta {
     font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
-    font-variant-numeric: tabular-nums; line-height: 1.5;
+    font-variant-numeric: tabular-nums; line-height: var(--leading-control);
     opacity: 1;
   }
 
@@ -1345,7 +1377,7 @@
 
   .run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }
 
-  .run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: 1.4; border-radius: var(--radius-pill); }
+  .run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: var(--leading-control); border-radius: var(--radius-pill); }
 
   .run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }
 
@@ -1446,7 +1478,7 @@
     overflow-wrap: anywhere; white-space: pre-line;
   }
 
-  .run-empty { font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }
+  .run-empty { font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); line-height: var(--leading-prose); max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }
 
   .run-detail-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem;
@@ -1601,7 +1633,7 @@
      for a document, and "a paragraph inside a rendered body" is a descendant
      relationship, which is what a component rule is for — the same case as the
      JSON tree and the settings fold. */
-  [data-md="true"] .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: 1.5; }
+  [data-md="true"] .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: var(--leading-control); }
   [data-md="true"] .md-p:last-child { margin-bottom: 0; }
   [data-md="true"] .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
   [data-md="true"] ul,
@@ -1626,7 +1658,7 @@
   content: ""; display: inline-block; width: 0.85em; height: 0.85em;
   background: currentColor; color: var(--fg-muted);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform 120ms ease-out;
+  transition: transform var(--motion-slide) var(--curve-slide);
   }
   .disclosure-caret[open] > summary::before { transform: rotate(90deg); }
   /* The masked path is a right-pointing chevron, so the fold opens toward the
@@ -1719,6 +1751,29 @@
    is nothing to reveal them. */
 @custom-variant hover-none (@media (hover: none));
 
+/* The three motion rungs, as utilities, because the duration namespace is the
+   one Tailwind hard-codes rather than reading from the theme block: its own
+   numbered rungs are literals in the utility layer, which is why the views
+   were spelling 150ms seven times and 200ms twice without anyone choosing
+   either. Naming the three leaves a numbered rung compiling to nothing, so a
+   speed nobody put on the panel cannot be asked for.
+
+   (Spelled without the class names, deliberately: this file is one of the
+   sources the scanner reads, so naming a rung in prose here is enough to
+   compile it back in.) */
+@utility duration-tap {
+  --tw-duration: var(--motion-tap);
+  transition-duration: var(--motion-tap);
+}
+@utility duration-slide {
+  --tw-duration: var(--motion-slide);
+  transition-duration: var(--motion-slide);
+}
+@utility duration-settle {
+  --tw-duration: var(--motion-settle);
+  transition-duration: var(--motion-settle);
+}
+
 @theme inline {
   /* No Tailwind palette: every colour on this page is a cabinet token, so a
      stray `text-red-500` must compile to nothing rather than to Tailwind red. */
@@ -1799,7 +1854,58 @@
 
   --font-sans: var(--sans);
   --font-mono: var(--mono);
+  /* Letter-spacing, closed like the radius scale. Tailwind's own
+     `tracking-wide` is `0.025em`, and it was live in five views (a board lane
+     head, a card label, an activity avatar, the goals and fleet meta rows)
+     while the cabinet says labels are sentence case and untracked
+     (DESIGN.md; `themes/win2k.css` spells `--track-label: 0` too). So
+     `tracking-wide` now resolves to the same `0` as `tracking-normal`: the
+     class names the views already write stay, and what they mean is the
+     cabinet's. No other rung is defined, so a class asking for spacing
+     nobody chose compiles to nothing rather than to Tailwind's 0.025em. */
+  --tracking-*: initial;
+  --tracking-normal: var(--track-label);
+  --tracking-wide: var(--track-label);
   --tracking-label: var(--track-label);
+
+  /* Leading, the same shape: the three rungs above under the class names the
+     views already write, and nothing else. `leading-relaxed` was the name for
+     prose here before, at Tailwind's own 1.625, which is the same sentence
+     `--leading-prose` now says out loud; `leading-snug` was 1.375, a
+     half-step under the control rung and half a step above it, which is what
+     a leading nobody chose looks like. `leading-none` keeps the theme key
+     Tailwind emits it from and is the caption rung, since the only thing it
+     is asked for is a single-line label. */
+  --leading-*: initial;
+  --leading-normal: var(--leading-prose);
+  --leading-relaxed: var(--leading-prose);
+  --leading-snug: var(--leading-control);
+  --leading-tight: var(--leading-caption);
+  --leading-none: var(--leading-caption);
+
+  /* Durations and easings, closed for the reason the header gives for radii.
+     The easings clear the same way: `ease-out` is the slide curve, `ease-in-out`
+     the settle one, `ease-in` the tap, and no other curve is defined, so
+     `ease-bounce` styles nothing.
+
+     Durations get the three `@utility` rungs above instead of theme keys,
+     because the numbered rungs are literals in the utility layer and a
+     `@theme` block cannot reach them. Nine call sites were spelling a
+     millisecond count nobody had thought about, and the rooms drawer carried
+     a hand-typed curve beside them; all three speeds now go through a token,
+     and a fourth has to be added to the panel before it can be used.
+
+     The default transition picks up the tap rung, so the seventeen views that
+     write a bare `transition-colors` with no duration get the machined answer
+     rather than Tailwind's 150ms default nobody chose. */
+  --default-transition-duration: var(--motion-tap);
+  --default-transition-timing-function: var(--curve-tap);
+  --ease-*: initial;
+  --ease-out: var(--curve-slide);
+  --ease-in-out: var(--curve-settle);
+  --ease-in: var(--curve-tap);
+  --ease-linear: linear;
+
   /* Four roles, not Tailwind's nine. The class names stay so a pasted
      snippet still reads; what they resolve to is a cabinet token. */
   --font-weight-*: initial;

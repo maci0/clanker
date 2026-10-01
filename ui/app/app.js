@@ -1562,7 +1562,7 @@ var TURN_BODY_CLASS = "p-0";
 var TURN_EVENTS_CLASS = "mb-3 flex flex-col gap-1 empty:hidden";
 var TURN_ANSWER_CLASS = "m-0 max-w-none font-sans text-base leading-relaxed whitespace-pre-wrap wrap-anywhere empty:before:inline-block empty:before:animate-pulse-soft empty:before:text-fg-muted empty:before:content-['…'] motion-reduce:empty:before:animate-none motion-reduce:empty:before:opacity-60 [&_.failed]:text-danger";
 var TURN_FOOT_CLASS = "mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t-0 pt-2 font-sans text-sm tabular-nums text-fg-muted empty:hidden [&_button]:rounded-capsule [&_button]:border [&_button]:border-border [&_button]:bg-surface [&_button]:px-3 [&_button]:py-1 [&_button]:text-sm [&_button]:text-fg-muted";
-var TURN_FOOT_ACTIONS_CLASS = "opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 hover-none:opacity-100 motion-reduce:opacity-100";
+var TURN_FOOT_ACTIONS_CLASS = "opacity-0 transition-opacity duration-tap group-hover:opacity-100 group-focus-within:opacity-100 hover-none:opacity-100 motion-reduce:opacity-100";
 var TURN_BRANCHES_CLASS = "mt-3 flex flex-wrap gap-2 border-l-2 border-rule pl-3 text-sm empty:hidden";
 var BRANCH_CHIP_CLASS = "inline-flex cursor-pointer items-center gap-0.5 rounded-capsule border border-border bg-surface-2 px-3 py-0.5 font-sans text-sm text-fg-muted hover:border-accent hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 data-[current=true]:border-accent data-[current=true]:bg-accent-dim data-[current=true]:font-semibold data-[current=true]:text-accent-text";
 var TURN_HELD_CLASS = "turn-held inline-flex items-center gap-2 font-sans text-sm font-bold text-ok data-[held=false]:text-danger";

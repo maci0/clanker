@@ -176,6 +176,172 @@ test("the scale the sheets reference is the scale the source declares", () => {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
   assert.match(appCss, /\n\s*--track-label\s*:\s*0\s*;/, "--track-label is the 0 DESIGN.md names: labels are sentence case, untracked");
+  for (const token of ["--leading-prose", "--leading-control", "--leading-caption"]) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+  for (const token of ["--motion-tap", "--motion-slide", "--motion-settle"]) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+  for (const token of ["--curve-tap", "--curve-slide", "--curve-settle"]) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+});
+
+// Tracking, leading, duration and easing are the four axes Tailwind supplies
+// defaults for, and a default is a value nobody in this project chose. The
+// radius scale was closed first (`--radius-*: initial`, then the four cabinet
+// edges), and these four were left open: `tracking-wide` was live in five views
+// at Tailwind's 0.025em while the cabinet says labels are untracked, and nine
+// call sites were spelling a millisecond count out by hand. So the same closure
+// applies, and these assertions read the COMPILED sheet, where a raw literal
+// would show up as a number rather than as a var().
+test("the compiled sheet carries no raw tracking, leading, duration or easing default", () => {
+  // The committed sheet is a clean rebuild of the source, so reading it here
+  // is reading what the browser gets: a value written as a var() in the
+  // source arrives as a var(), and a Tailwind default arrives as a number.
+  const compiled = readFileSync(join(here, "tailwind.css"), "utf8");
+  // The closed utilities, and what each has to resolve to. `--tw-*` is the
+  // utility's own property, so a value read off it is what the rule paints.
+  const closed = {
+    "tracking-normal": "--track-label",
+    "tracking-wide": "--track-label",
+    "leading-normal": "--leading-prose",
+    "leading-relaxed": "--leading-prose",
+    "leading-snug": "--leading-control",
+    "leading-tight": "--leading-caption",
+    "leading-none": "--leading-caption",
+    "duration-tap": "--motion-tap",
+    "duration-settle": "--motion-settle",
+    "ease-in": "--curve-tap",
+    "ease-out": "--curve-slide",
+    "ease-in-out": "--curve-settle",
+  };
+  const strays = [];
+  for (const [utility, token] of Object.entries(closed)) {
+    const rule = new RegExp(`\\.${utility}\\s*\\{([^}]*)\\}`);
+    const m = compiled.match(rule);
+    // Not every closed utility is a standalone class: `tracking-normal` is
+    // written as an arbitrary-variant descendant (`[&_dt]:tracking-normal`),
+    // which the compiler inlines rather than emitting a `.tracking-normal`
+    // rule. So the theme keys below are what assert the binding, and this
+    // loop only has to agree with them wherever a rule does exist.
+    if (m && !m[1].includes(token)) strays.push(`${utility} does not resolve to ${token}: ${m[1].trim()}`);
+  }
+  // The theme keys those utilities read, at the top of the sheet. A number
+  // here is Tailwind's default leaking through a name that survived.
+  for (const [key, token] of [
+    ["--tracking-normal", "--track-label"],
+    ["--tracking-wide", "--track-label"],
+    ["--leading-normal", "--leading-prose"],
+    ["--leading-snug", "--leading-control"],
+    ["--ease-out", "--curve-slide"],
+    ["--ease-in-out", "--curve-settle"],
+    ["--ease-in", "--curve-tap"],
+    ["--default-transition-duration", "--motion-tap"],
+    ["--default-transition-timing-function", "--curve-tap"],
+  ]) {
+    const decl = new RegExp(`(^|[;{\\s])${key.replace(/-/g, "\\-")}\\s*:\\s*([^;}]+)`);
+    const m = decl.exec(compiled);
+    assert.ok(m, `${key} is missing from the compiled sheet`);
+    if (m[2].trim() !== `var(${token})`) strays.push(`${key} is ${m[2].trim()}, not var(${token})`);
+  }
+  assert.deepEqual(strays, [], `every track, lead, duration and curve is a cabinet token:\n${strays.join("\n")}`);
+});
+
+// A closed namespace has to actually be closed. Clearing the namespace and
+// re-declaring three rungs only holds if the framework's own rungs are gone
+// from the compiled sheet, and this is the half that is easy to get wrong: the
+// names can be absent from the source's `@theme` and still be emitted by the
+// utility layer (`--duration-*` is exactly that case, which is why the three
+// motion rungs are `@utility` blocks rather than theme keys).
+test("no framework default survived the closure", () => {
+  const compiled = readFileSync(join(here, "tailwind.css"), "utf8");
+  const strays = [];
+  // 0.025em is Tailwind's `tracking-wide`, live in five views while the cabinet
+  // says labels are untracked.
+  for (const literal of [/letter-spacing:\s*0\.025em/, /letter-spacing:\s*0\.02em(?!\d)/]) {
+    if (literal.test(compiled)) strays.push(`compiled ${literal} is Tailwind's tracking default`);
+  }
+  // A millisecond count or a bare easing keyword outside the three tokens, in
+  // the sheet's own rules or in a utility it emitted.
+  const authored = compiled.replace(/var\(--motion-[a-z]+\)|var\(--curve-[a-z]+\)|var\(--track-label\)|var\(--leading-[a-z]+\)/g, "");
+  for (const m of authored.matchAll(/transition-duration:\s*([^;}]+)|--tw-duration:\s*([^;}]+)/g)) {
+    const value = (m[1] || m[2] || "").trim();
+    if (/^\d+m?s$/.test(value)) strays.push(`transition-duration: ${value} is a literal, not a rung`);
+  }
+  for (const m of authored.matchAll(/transition-timing-function:\s*([^;}]+)|--tw-ease:\s*([^;}]+)/g)) {
+    const value = (m[1] || m[2] || "").trim();
+    // `var(--tw-ease, ...)` is Tailwind's own fallback spelling and is fine;
+    // what must not appear is a hand-typed curve.
+    if (/^cubic-bezier/.test(value) && !/var\(--curve-settle\)/.test(compiled)) {
+      strays.push(`transition-timing-function: ${value} is a curve nobody put on the panel`);
+    }
+  }
+  assert.deepEqual(strays, [], `a speed is a token, not a number typed in a view:\n${strays.join("\n")}`);
+  // And the views ask for the rungs by name, so a numbered rung cannot creep
+  // back in the one place the compiler would silently honour it. (This file is
+  // a scanned source too, so it must not spell one either.)
+  const strays2 = [];
+  for (const [, src] of scripts()) {
+    for (const m of src.matchAll(/\bduration-\d+\b|\bease-(?!in-out|out|in\b|linear)\w+\b/g)) {
+      const i = m.index;
+      strays2.push(`${m[0]} at offset ${i}`);
+    }
+  }
+  assert.deepEqual(strays2, [], `motion is a rung name, not a Tailwind number:\n${strays2.join("\n")}`);
+  // Naming a rung for the movement it makes is half the discipline: a duration
+  // paired with a curve from a different rung is the incoherence the tokens
+  // exist to prevent, and it survives review because both halves look
+  // reasonable alone (the board's expanding card label shipped a tap speed
+  // beside a settle curve). The only pairs that mean anything are the three
+  // matching rungs.
+  const paired = [];
+  for (const [file, src] of scripts()) {
+    for (const m of src.matchAll(/duration-(tap|slide|settle)\b[^"'`]*?\[transition-timing-function:var\(--curve-([a-z]+)\)\]/g)) {
+      const [, rung, curve] = m;
+      if (curve !== rung) paired.push(`${file}: duration-${rung} beside --curve-${curve}`);
+    }
+  }
+  assert.deepEqual(paired, [], `a speed and a curve come from the same rung:\n${paired.join("\n")}`);
+  // Preflight declares a root leading of 1.5 that the `leading-*` closure cannot
+  // delete, and no amount of a token above makes its number go away: what
+  // matters is which of the two declarations wins. Both are in `layer(base)`,
+  // so the later one is the applied value, and the last `html, :host` rule has
+  // to be the cabinet's. If this ever fails, the element layer has grown a
+  // rule that lands after it and the default is live again.
+  const rootLeading = [...compiled.matchAll(/html,\s*:host\s*\{([^}]*)\}/g)].pop();
+  assert.ok(rootLeading, "the root leading rule is gone from the compiled sheet");
+  assert.match(
+    rootLeading[1],
+    /line-height:\s*var\(--leading-[a-z]+\)/,
+    `the applied root leading is not a rung: ${rootLeading[1].trim()}`,
+  );
+});
+
+// The sheet's own declarations go through the same tokens as the utilities.
+// Fourteen `line-height: 1.6` and five `transition: … 120ms ease-out` are the
+// same unconsidered number the utility closure removes, written where nobody
+// sees a class name.
+test("no raw leading or motion literal in the sheet's own rules", () => {
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
+  const strays = [];
+  for (const { value, line } of declarations(appCss, "line-height")) {
+    // A `calc()`, a var(), or a unitless em is fine; a bare number is a
+    // leading nobody chose.
+    if (/^var\(--leading-/.test(value)) continue;
+    if (/^1(\.\d+)?$/.test(value)) strays.push(`tailwind.src.css:${line}  line-height: ${value}`);
+  }
+  for (const { value, line } of declarations(appCss, "transition")) {
+    if (/\d+ms/.test(value)) strays.push(`tailwind.src.css:${line}  transition: ${value}`);
+    if (/^cubic-bezier/.test(value)) strays.push(`tailwind.src.css:${line}  transition: ${value}`);
+  }
+  for (const { value, line } of declarations(appCss, "animation")) {
+    // An animation's own period is a design choice the sheet states in full
+    // (a lamp breathes on a 1.8s cycle); only a bare millisecond count, which
+    // cannot be read as a cycle, is a stray.
+    if (/^\d+m?s\s/.test(value)) strays.push(`tailwind.src.css:${line}  animation: ${value}`);
+  }
+  assert.deepEqual(strays, [], `the sheet reads the panel's tokens:\n${strays.join("\n")}`);
 });
 
 // Engraved labels are one tracking. Headings are untracked. The SaaS pair

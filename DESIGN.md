@@ -116,12 +116,22 @@ Every theme in `themes/` carries its own reading of each role, derived from that
 System sans for prose and labels; system mono for status chips, measurements, code and IDs. No web fonts.
 
 - **Title** (600, `1.375rem`): view headings.
-- **Body** (400, `1rem`, `1.6`): prose and transcript; reading measure near `70ch`.
+- **Body** (400, `1rem`): prose and transcript; reading measure near `70ch`.
 - **Control** (600, `0.875rem`): buttons, inputs, dense rows.
 - **Label** (600, `0.75rem`): group and field labels, sentence case, no letter-spacing (`--track-label: 0`).
 - **Micro** (`0.6875rem`): counts and graph stamps only.
 
 Sentence case everywhere. No uppercase labels.
+
+Leading is three rungs, not a scale anyone picks from: `--leading-prose` for a transcript
+answer or a document, `--leading-control` for a button or a field, `--leading-caption` for the
+short single-line rows above a meter. A bare number in a `line-height` is off the panel: the
+`leading-*` namespace is closed, so a leading nobody chose compiles to nothing, exactly as
+`rounded-md` does. The same closure covers letter-spacing (`--track-label`, so the numbered
+`tracking-*` rungs all resolve to the untracked label) and motion (`--motion-tap`,
+`--motion-slide`, `--motion-settle` with `--curve-tap`/`-slide`/`-settle`), which is why a
+duration is named for the movement and not for a millisecond count. `ui/app/design-tokens.test.mjs`
+reads the compiled sheet and fails on any of the four axes arriving as a number.
 
 ## Layout
 
