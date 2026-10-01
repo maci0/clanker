@@ -5,6 +5,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Security
+
+- `POST /api/a2a/message`: the reply cache no longer replays one task's agent
+  answer to a different caller. The route is unauthenticated, so every local
+  client shared one id namespace; a request reusing another request's id was
+  answered with that request's stored output. Replay now requires the id and
+  the task text to agree, and a string id is no longer the same key as the
+  integer with the same spelling.
+
 ## [0.11.1] - 2026-09-29
 
 ### Security

@@ -8794,6 +8794,38 @@ test "the A2A envelope is checked the way JSON-RPC 2.0 spells it" {
     try std.testing.expectEqualStrings("missing method", a2aEnvelopeError(.{ .method = "" }).?);
 }
 
+test "the A2A task text is the message part the agent runs" {
+    // This string is what the dedup fingerprint is taken over, so a shape the
+    // handler answers as one task must not fingerprint as another (or as none,
+    // which would make every id look like the same request).
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const envelope =
+        \\{"params":{"message":{"role":"user","parts":[{"kind":"text","text":"summarise the changelog"}]}}}
+    ;
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, envelope, .{});
+    try std.testing.expectEqualStrings("summarise the changelog", a2aTaskText(parsed.object.get("params")));
+
+    // A different task fingerprints differently, so a reused id does not
+    // replay the first one's answer.
+    const other =
+        \\{"params":{"message":{"role":"user","parts":[{"kind":"text","text":"what is 2+2"}]}}}
+    ;
+    const other_parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, other, .{});
+    try std.testing.expect(a2a_reply_cache.taskFingerprint(a2aTaskText(parsed.object.get("params"))) !=
+        a2a_reply_cache.taskFingerprint(a2aTaskText(other_parsed.object.get("params"))));
+
+    // Malformed shapes yield no text, which the handler refuses before it
+    // takes an id: an empty fingerprint would otherwise be one shared claim.
+    try std.testing.expectEqualStrings("", a2aTaskText(null));
+    try std.testing.expectEqualStrings("", a2aTaskText(.{ .integer = 1 }));
+    try std.testing.expectEqualStrings("", a2aTaskText(.{ .object = .{} }));
+    const empty_parts = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"message\":{\"parts\":[]}}", .{});
+    try std.testing.expectEqualStrings("", a2aTaskText(empty_parts));
+}
+
 /// POST /api/notify: a peer clanker delivering a notification. The store is
 /// the `notifications` WASM tool (state/notifications.jsonl); this route
 /// validates the body, relays it, and maps the reply, like `/api/schedule`.
@@ -9846,6 +9878,24 @@ fn a2aReplyCache(gpa: std.mem.Allocator) *a2a_reply_cache.Cache {
     return &a2a_cache.?;
 }
 
+/// The task text out of an A2A `message/send` envelope, or "" when the
+/// request carries none. Split out of the handler because the dedup key is
+/// this text's fingerprint: the bytes the agent runs and the bytes the cache
+/// keys on have to be the same ones, and only a test can hold them to that.
+fn a2aTaskText(params: ?std.json.Value) []const u8 {
+    const p = params orelse return "";
+    if (p != .object) return "";
+    const m = p.object.get("message") orelse return "";
+    if (m != .object) return "";
+    const parts = m.object.get("parts") orelse return "";
+    if (parts != .array or parts.array.items.len == 0) return "";
+    const first = parts.array.items[0];
+    if (first != .object) return "";
+    const t = first.object.get("text") orelse return "";
+    if (t != .string) return "";
+    return t.string;
+}
+
 fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -9859,18 +9909,42 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     }
     const id = parsed.id orelse .null;
 
+    // The task text is read before the cache, not after: the dedup key is the
+    // id *and* a fingerprint of this text. The route has no caller identity
+    // (`docs/THREAT_MODEL.md` R1), so every local client shares one id
+    // namespace and ids are the countable kind (`1`, `"req-1"`) that collides
+    // by accident. Keyed on the id alone, the second sender of an id was
+    // answered with the first one's agent output.
+    const text = a2aTaskText(parsed.params);
+    // Run the incoming message through the agent model instead of echoing
+    // it back. The agent card advertises real skills; echoing raw input
+    // makes the peer receive its own message as the "answer".
+    //
+    // Checked before the claim below: an empty request must not take an id
+    // away from a real request that follows it.
+    if (text.len == 0) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
+        return;
+    }
+
+    const task_fp = a2a_reply_cache.taskFingerprint(text);
+
     // A peer that never got the answer resends the same id. The task behind
     // it is a full agent run, so the retry is billed and its tools run twice
     // unless the id is remembered. An id that cannot be spelled stably (null,
     // float, object) is not deduplicated: there is nothing to compare.
-    var key_buf: [32]u8 = undefined;
+    // Sized for the tag `keyFor` prepends plus an integer id's digits; a long
+    // string id that does not fit is not deduplicated at all (`keyFor`
+    // reports null), which silently traded the cache away for those senders,
+    // so keep it generous rather than exact.
+    var key_buf: [256]u8 = undefined;
     const dedup_key: ?[]const u8 = a2a_reply_cache.Cache.keyFor(id, &key_buf);
     const cache = a2aReplyCache(gpa);
     if (dedup_key) |k| {
         const claimed_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
-        switch (cache.begin(k, claimed_at)) {
+        switch (cache.begin(k, task_fp, claimed_at)) {
             .replay => |replay| {
-                log.log(.info, "a2a: id {s} already answered; replaying the stored reply", .{k});
+                log.log(.info, "a2a: id {s} already answered this task; replaying the stored reply", .{k});
                 respond(stream, 200, "OK", replay);
                 return;
             },
@@ -9892,34 +9966,8 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // an answer: releasing the claim is what lets the peer's retry run the
     // agent again instead of replaying a failure as a success.
     var claimed: ?[]const u8 = dedup_key;
-    defer if (claimed) |k| cache.release(k);
+    defer if (claimed) |k| cache.release(k, task_fp);
 
-    var text: []const u8 = "";
-    if (parsed.params) |p| {
-        if (p == .object) {
-            if (p.object.get("message")) |m| {
-                if (m == .object) {
-                    if (m.object.get("parts")) |parts| {
-                        if (parts == .array and parts.array.items.len > 0) {
-                            if (parts.array.items[0] == .object) {
-                                if (parts.array.items[0].object.get("text")) |t| {
-                                    if (t == .string) text = t.string;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Run the incoming message through the agent model instead of echoing
-    // it back. The agent card advertises real skills; echoing raw input
-    // makes the peer receive its own message as the "answer".
-    if (text.len == 0) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
-        return;
-    }
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
     var provider = cfg.provider(null) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"provider unavailable\"}");
@@ -9991,7 +10039,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     // the write and its read is the case this whole path exists for, and a
     // claim still marked in flight would answer 409 forever.
     if (dedup_key) |k| {
-        cache.finish(k, buf[0..w.end]);
+        cache.finish(k, task_fp, buf[0..w.end]);
         claimed = null;
     }
     respond(stream, 200, "OK", buf[0..w.end]);

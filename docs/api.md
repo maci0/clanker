@@ -292,6 +292,13 @@ starts a new one. An `id` of `null`, or one that is not a string or an integer,
 is not deduplicated. The window and the table size are
 `src/serve/a2a_reply_cache.zig`.
 
+Two requests are the same only when the id *and* the task text agree, because
+this route has no caller authentication (see `docs/THREAT_MODEL.md` R1) and
+every local client therefore shares one id namespace: an id reused for a
+different task runs the agent again rather than replaying the first task's
+answer. A string id and an integer id are also distinct keys, so `"42"` and
+`42` are two requests.
+
 ## Proxy
 
 `/proxy/v1/*` forwards to the configured provider 1:1, in the shape of
