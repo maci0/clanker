@@ -371,10 +371,15 @@ fn actionAddDoc(obj: std.json.Value, out: *lib.Out) !void {
             col.updated = nowSec();
             saveCollection(col) catch return lib.fail(out, "save failed");
             // Chunks are keyed by doc id, so deriving over the same id
-            // replaces the old ones rather than adding to them.
-            deriveChunks(col.id, docs.items[at]) catch {};
+            // replaces the old ones rather than adding to them. A failure here
+            // leaves the collection holding the new text and the chunk index
+            // holding the old, and `memory`'s search reads the index, so the
+            // document is retrievable at its previous revision forever with
+            // nothing re-deriving it. Saying so in the reply is what lets a
+            // caller retry instead of treating the upsert as done.
+            deriveChunks(col.id, docs.items[at]) catch |err| return respondAddDoc(out, doc_id, false, err);
         }
-        return respondAddDoc(out, doc_id, false);
+        return respondAddDoc(out, doc_id, false, null);
     }
 
     const doc_id = newId();
@@ -387,14 +392,21 @@ fn actionAddDoc(obj: std.json.Value, out: *lib.Out) !void {
     col.updated = nowSec();
     saveCollection(col) catch return lib.fail(out, "save failed");
 
-    deriveChunks(col.id, doc) catch {};
+    deriveChunks(col.id, doc) catch |err| return respondAddDoc(out, doc_id, true, err);
 
-    return respondAddDoc(out, doc_id, true);
+    return respondAddDoc(out, doc_id, true, null);
 }
 
 /// `created:false` says the name was already in the collection, so a caller
 /// retrying a lost call can tell "done" from "added a second one".
-fn respondAddDoc(out: *lib.Out, doc_id: []const u8, created: bool) !void {
+///
+/// `index_error` is set only when the chunk derivation failed after the
+/// collection itself was saved. The document is stored either way (reporting
+/// a failure here would invite a retry that writes a second copy), so the
+/// reply stays `ok:true` and carries `indexed:false` plus the reason, which is
+/// the only place a caller can learn that retrieval will still answer with the
+/// previous revision.
+fn respondAddDoc(out: *lib.Out, doc_id: []const u8, created: bool, index_error: ?anyerror) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -404,6 +416,12 @@ fn respondAddDoc(out: *lib.Out, doc_id: []const u8, created: bool) !void {
     try s.write(doc_id);
     try s.objectField("created");
     try s.write(created);
+    try s.objectField("indexed");
+    try s.write(index_error == null);
+    if (index_error) |err| {
+        try s.objectField("index_error");
+        try s.write(@errorName(err));
+    }
     try s.endObject();
     lib.commit(out, &w);
 }
@@ -428,7 +446,14 @@ fn actionDeleteDoc(obj: std.json.Value, out: *lib.Out) !void {
     col.updated = nowSec();
     saveCollection(col) catch return lib.fail(out, "save failed");
 
-    invalidateChunks(col.id, doc_id) catch {};
+    invalidateChunks(col.id, doc_id) catch |err| {
+        // The document is gone from the collection either way, so the reply
+        // stays ok. But `memory`'s search reads the index, not the collection,
+        // and nothing re-derives it: without this line the deleted document's
+        // text is injected into the prompt of every later run while the reply
+        // says the delete worked.
+        lib.logFmt(2, "knowledge: delete_doc {s} left the search index unchanged ({s}); the deleted text is still retrievable", .{ doc_id, @errorName(err) });
+    };
 
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -563,8 +588,17 @@ fn deriveChunks(col_id: []const u8, doc: StoredDoc) !void {
 
     var buf: std.Io.Writer.Allocating = .init(lib.alloc);
     defer buf.deinit();
-    std.json.Stringify.value(.{ .array = filtered.toOwnedSlice(lib.alloc) catch &.{} }, .{}, &buf.writer) catch return;
-    lib.fsWrite(path, buf.written()) catch {};
+    // Every step here writes the whole index for the collection, so a failure
+    // after the read is a failure that *would* replace every other
+    // collection's chunks too if it were written as an empty array. Both
+    // `catch &.{}` fallbacks below did exactly that on an arena that could
+    // not hold the slice: the collection's documents stayed searchable by
+    // name and unsearchable by meaning, with nothing to say so. Propagating
+    // leaves the previous index on disk, which is stale for this document and
+    // correct for every other one, and the caller can report it.
+    const items = filtered.toOwnedSlice(lib.alloc) catch return error.OutOfMemory;
+    try std.json.Stringify.value(.{ .array = items }, .{}, &buf.writer);
+    try lib.fsWrite(path, buf.written());
 }
 
 fn invalidateChunks(col_id: []const u8, doc_id: []const u8) !void {
@@ -580,8 +614,12 @@ fn invalidateChunks(col_id: []const u8, doc_id: []const u8) !void {
     }
     var buf: std.Io.Writer.Allocating = .init(lib.alloc);
     defer buf.deinit();
-    std.json.Stringify.value(.{ .array = kept.toOwnedSlice(lib.alloc) catch &.{} }, .{}, &buf.writer) catch return;
-    lib.fsWrite(path, buf.written()) catch {};
+    // Same rule as `deriveChunks`: a partial index write here is a write of
+    // *every other* document's chunks too, and the document just deleted stays
+    // in it. The previous file is the lesser failure.
+    const items = kept.toOwnedSlice(lib.alloc) catch return error.OutOfMemory;
+    try std.json.Stringify.value(.{ .array = items }, .{}, &buf.writer);
+    try lib.fsWrite(path, buf.written());
 }
 
 const SearchHit = struct {

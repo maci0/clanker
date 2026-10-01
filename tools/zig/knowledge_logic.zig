@@ -114,3 +114,28 @@ test "a collection file written by the guest parses here, title and docs include
     try testing.expectEqualStrings("body", col.docs[0].content);
     try testing.expectEqual(@as(usize, 4), col.docs[0].bytes);
 }
+
+/// Whether an `add_doc` reply says the search index followed the document.
+///
+/// The reply is the only place a caller can learn that a stored document is
+/// not retrievable: `memory`'s search reads the chunk index, not the
+/// collection, and nothing re-derives it, so a document whose chunk write
+/// failed is searchable at its previous revision forever. The host folder sync
+/// (`src/cli.zig`) counts these to report `unindexed`, and both sides read the
+/// field through this predicate so a rename in the guest breaks here rather
+/// than as a sync that reports every document as indexed.
+pub fn replyIsUnindexed(reply: []const u8) bool {
+    return std.mem.indexOf(u8, reply, "\"indexed\":false") != null;
+}
+
+test "an add_doc reply is read as unindexed only when it says so" {
+    try testing.expect(replyIsUnindexed("{\"ok\":true,\"id\":\"kb-1\",\"created\":true,\"indexed\":false,\"index_error\":\"IoError\"}"));
+    try testing.expect(replyIsUnindexed("{\"indexed\":false}"));
+    // Indexed, and the key absent: a reply predating the field cannot be
+    // read as unindexed, since the old reply meant the derivation succeeded.
+    try testing.expect(!replyIsUnindexed("{\"ok\":true,\"id\":\"kb-1\",\"created\":true,\"indexed\":true}"));
+    try testing.expect(!replyIsUnindexed("{\"ok\":true,\"id\":\"kb-1\",\"created\":true}"));
+    // A refusal carries neither field, and a substring match must not find
+    // the word in an error message the guest chose.
+    try testing.expect(!replyIsUnindexed("{\"ok\":false,\"error\":\"indexed:false is not a valid name\"}"));
+}

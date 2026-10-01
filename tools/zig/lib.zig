@@ -329,6 +329,16 @@ pub fn logInfo(msg: []const u8) void {
     log(1, msg);
 }
 
+/// `log` with formatting. The formatted line lives in the arena for the rest of
+/// the call, which is all a log record needs, and a message too long to format
+/// is dropped rather than truncated: a half-sentence in the log is worse than
+/// the omission, and `log(2, @errorName(err))` is the fallback a caller can
+/// always afford.
+pub fn logFmt(comptime level: u32, comptime fmt: []const u8, args: anytype) void {
+    const msg = std.fmt.allocPrint(alloc, fmt, args) catch return;
+    log(level, msg);
+}
+
 /// Delegates a task to a nested sub-agent run (host-side).
 pub fn subagent(task: []const u8, provider: ?[]const u8) FsError![]const u8 {
     var buf: [8192]u8 = undefined;

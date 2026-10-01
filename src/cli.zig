@@ -15805,6 +15805,11 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
     var listing_complete = true;
     var synced: usize = 0;
     var skipped: usize = 0;
+    // Documents the guest stored but could not index for search. Counted apart
+    // from `skipped` (which counts files never stored) because the two need
+    // different next steps: a skipped file is absent, an unindexed one is
+    // present and stale.
+    var unindexed: usize = 0;
     var it = dir.iterate();
     while (true) {
         const entry = (it.next(io) catch {
@@ -15865,6 +15870,11 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
             continue;
         }
         synced += 1;
+        // The document is stored, but `add_doc` reports whether the search
+        // index followed it. Without this the folder sync counted a document
+        // as searchable when `memory` would still answer with the previous
+        // revision of that file (or, for a new file, with nothing at all).
+        if (knowledge_logic.replyIsUnindexed(add_out)) unindexed += 1;
     }
 
     var removed: usize = 0;
@@ -15888,6 +15898,12 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
     s.print("{d}", .{removed}) catch return;
     s.objectField("skipped") catch return;
     s.print("{d}", .{skipped}) catch return;
+    // Only when nonzero: the common case is every document indexed, and a
+    // field that is always present teaches a reader to skip it.
+    if (unindexed > 0) {
+        s.objectField("unindexed") catch return;
+        s.print("{d}", .{unindexed}) catch return;
+    }
     // Say so rather than reporting a quiet `removed: 0`, which reads as
     // "nothing to prune" when it means "I could not tell what to prune".
     if (req.prune and !listing_complete) {
