@@ -24,11 +24,12 @@ Two details matter and both are learned the hard way:
   unrelated code. Def occurrences are preferred over incidental mentions, and
   when a symbol has both, the span must hit a definition.
 
-Exit status is 0 when every reference resolves and 1 otherwise, so this can be
-wired into `scripts/verify.sh` or a gate later without further work.
+Exit status is 0 when every reference resolves and 1 otherwise. CI runs it as
+the "Check threat model references" step, and scripts/verify.sh as its local
+mirror, alongside scripts/test_check_threat_model.py.
 
-Usage: python3 scripts/check-threat-model.sh [path/to/THREAT_MODEL.md]
-       python3 scripts/check-threat-model.sh --list   # print every resolution
+Usage: python3 scripts/check-threat-model.py [path/to/THREAT_MODEL.md]
+       python3 scripts/check-threat-model.py --list   # print every resolution
 """
 
 import os
@@ -82,7 +83,7 @@ class Tree:
         return [n for n, line in enumerate(self.lines(rel) or [], 1) if rx.search(line)]
 
 
-def resolve(tree, path, a, b, symbols):
+def resolve(tree, path, a, b, symbols, *, bare=False):
     """Return (ok, detail). Definitions win over incidental mentions.
 
     A cell names several symbols and a reference is expected to land on any of
@@ -90,14 +91,25 @@ def resolve(tree, path, a, b, symbols):
     and the thread that refuses over it, and each reference answers a different
     one. Requiring every reference to match the cell's first symbol would flag
     a correct citation because the constant is not the symbol it names.
+
+    `bare` says the reference is the `:NNNN` form, which inherits its file from
+    the cell rather than naming it, and only that form is allowed the port
+    number waiver below.
     """
     lines = tree.lines(path)
     if lines is None:
         return False, 'no such file'
     if a > len(lines) or b > len(lines):
         # A bare number past the end of the file is usually a port number in
-        # prose (`:17921`, `:7420`), not a citation. Not an error.
-        return True, 'out of range (port number?)'
+        # prose (`:17921`, `:7420`), not a citation. Not an error -- but only
+        # for the bare form. A reference that spells its own file out
+        # (`src/cli.zig:NNNN`) is naming the file, so a line number past its
+        # end is drift, and waiving it was a hole a moved symbol walked
+        # straight through: a citation rewritten to any large number reported
+        # clean rather than stale.
+        if bare:
+            return True, 'out of range (port number?)'
+        return False, f'out of range ({path} has {len(lines)} lines)'
     if not symbols:
         return True, 'no symbol named in the cell'
     for symbol in symbols:
@@ -126,6 +138,7 @@ def check(doc_path, list_all):
             for span in re.finditer(r'`([^`]+)`', cell):
                 text = span.group(1).strip()
                 explicit = REF.search(text)
+                is_bare = False
                 if explicit and explicit.end() == len(text):
                     path = explicit.group(1)
                     a = int(explicit.group(2))
@@ -137,6 +150,7 @@ def check(doc_path, list_all):
                         path = last_file
                         a = int(bare.group(1))
                         b = int(bare.group(2) or bare.group(1))
+                        is_bare = True
                     elif PLAIN_PATH.match(text):
                         last_file = text
                         continue
@@ -156,12 +170,15 @@ def check(doc_path, list_all):
                 named |= set(SYMBOL.findall(row_subjects(cell, line)))
                 symbols = sorted(named)
                 symbols = [s for s in symbols if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', s)]
-                span = f'{a}-{b}' if b != a else str(a)
-                if (path, span) in ASSERTED:
-                    ok, detail = assert_text(tree, path, a, b, ASSERTED[(path, span)])
+                # `span` is already the re.finditer match over the cell; the
+                # ASSERTED key needs its own name, and reusing the loop
+                # variable shadowed it for the rest of the iteration.
+                cited = f'{a}-{b}' if b != a else str(a)
+                if (path, cited) in ASSERTED:
+                    ok, detail = assert_text(tree, path, a, b, ASSERTED[(path, cited)])
                     by_text += 1
                 else:
-                    ok, detail = resolve(tree, path, a, b, symbols)
+                    ok, detail = resolve(tree, path, a, b, symbols, bare=is_bare)
                     by_symbol += 1
                 if 'port number' in detail:
                     skipped += 1
@@ -188,15 +205,15 @@ def check(doc_path, list_all):
 # waiver, and a waiver is how the last three passes each reported green over 96
 # stale references. Each string below was taken from the line it describes.
 ASSERTED = {
-    ('src/cli.zig', '8410-8413'): ('on_proxy', 'authorize'),
-    ('src/cli.zig', '8750'): ('"/api/run"',),
-    ('src/cli.zig', '8746'): ('"/api/ask"',),
-    ('src/cli.zig', '8564'): ('is_mcp_servers', '"/api/mcp/servers"'),
-    ('src/cli.zig', '8362'): ('max_body_bytes',),
-    ('src/cli.zig', '10161'): ('max_image_bytes',),
-    ('src/cli.zig', '10161-10162'): ('max_run_images',),
-    ('src/cli.zig', '8465'): ('HEAD',),
-    ('src/cli.zig', '12474'): ('handleMcpServers',),
+    ('src/cli.zig', '8441-8446'): ('on_proxy', 'authorize'),
+    ('src/cli.zig', '8782'): ('"/api/run"',),
+    ('src/cli.zig', '8778'): ('"/api/ask"',),
+    ('src/cli.zig', '8596'): ('is_mcp_servers', '"/api/mcp/servers"'),
+    ('src/cli.zig', '8391-8394'): ('max_body_bytes',),
+    ('src/cli.zig', '10193'): ('max_image_bytes',),
+    ('src/cli.zig', '10193-10194'): ('max_run_images',),
+    ('src/cli.zig', '8503'): ('request_head',),
+    ('src/cli.zig', '12506'): ('handleMcpServers',),
     ('src/serve/proxy.zig', '30-31'): ('default_first_byte_s', 'default_idle_s'),
     ('src/serve/proxy.zig', '57'): ('fn authorize',),
     ('src/serve/proxy.zig', '426-427'): ('first_byte',),
@@ -210,6 +227,16 @@ ASSERTED = {
     ('src/sandbox/host.zig', '2172'): ('debug.enabled',),
     ('src/llm/oauth_store.zig', '31'): ('oauth',),
     ('src/llm/oauth_store.zig', '55'): ('private_file',),
+    ('tools/manifests/skills.tool.json', '18'): ('fs_prefixes',),
+    # The files route cites the shared rule by file, and the symbols the row
+    # names (safeJoin, read_file, env_allow) live in other files, so the
+    # keyword rule cannot see them from the cited span.
+    ('src/util/secret_dotenv.zig', '49'): ('isSecretDotenvPath',),
+    ('src/cli.zig', '14402'): ('isSecretDotenvName',),
+    ('src/cli.zig', '14416'): ('pathHasSymlinkComponent', 'symlinked'),
+    ('src/cli.zig', '14486'): ('secret',),
+    ('src/cli.zig', '14613-14624'): ('pathHasSymlinkComponent',),
+    ('src/cli.zig', '8628'): ('health/live',),
     ('docs/README.md', '865'): ('repl_exec_allow',),
     ('docs/README.md', '1625'): ('What it binds',),
     ('docs/README.md', '1621-1625'): ('binds',),

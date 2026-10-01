@@ -67,9 +67,40 @@ class CheckerUnit(unittest.TestCase):
 
     def test_resolve_tolerates_a_span_past_the_end_as_a_port_number(self):
         self.write("src/a.zig", "pub fn one() void {}\n")
-        ok, detail = self.mod.resolve(self.tree, "src/a.zig", 17921, 17921, ["one"])
+        ok, detail = self.mod.resolve(self.tree, "src/a.zig", 17921, 17921, ["one"], bare=True)
         self.assertTrue(ok)
         self.assertIn("port number", detail)
+
+    def test_resolve_rejects_a_span_past_the_end_that_names_its_file(self):
+        """A `file:NNNN` citation past EOF is drift, not a port.
+
+        The port waiver existed because prose writes bare `:17921` for a port.
+        It applied to both forms, so rewiring a citation to any large number
+        reported clean instead of stale -- a hole a moved symbol walked
+        straight through, in the one check whose whole job is reporting those.
+        """
+        self.write("src/a.zig", "pub fn one() void {}\n")
+        ok, detail = self.mod.resolve(self.tree, "src/a.zig", 17921, 17921, ["one"])
+        self.assertFalse(ok)
+        self.assertIn("out of range", detail)
+
+    def test_a_citation_rewired_past_eof_is_reported_stale(self):
+        """End to end, not just resolve(): the hole was in the report."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        (root / "src").mkdir()
+        (root / "src" / "a.zig").write_text("pub fn one() void {}\n", encoding="utf-8")
+        doc = root / "TM.md"
+        doc.write_text("Cited `src/a.zig:1` and `src/a.zig:99999`.\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), str(doc)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("stale", result.stdout)
 
     def test_assert_text_fails_when_the_line_moved_off_the_code(self):
         self.write("src/a.zig", "pub fn unrelated() void {}\n" * 40 + "const max_body_bytes = 1;\n")

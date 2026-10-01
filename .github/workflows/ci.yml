@@ -195,6 +195,19 @@ jobs:
           python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup \
             scripts.test_install_state_backup
 
+      # scripts/check-threat-model.py re-resolves every file:line reference in
+      # docs/THREAT_MODEL.md against the tree and exits non-zero on any that
+      # moved. The document asserts in its own header that this is what keeps
+      # it honest, so the claim is only worth as much as something running it:
+      # nothing in the build, the pre-commit hook or the other suites invoked
+      # either it or its tests, which is how it reached 98 stale references
+      # while its test module sat unrun in the tree. The unit test covers the
+      # resolution rules and pins the shipped model clean.
+      - name: Check threat model references
+        run: |
+          python3 -B -m unittest scripts.test_check_threat_model
+          python3 scripts/check-threat-model.py
+
       # The ruff release is read from ruff.toml rather than restated here, the
       # same one-place pin the Zig and bun steps take. The literal used to live
       # only in the run block below, so the pre-commit hook and

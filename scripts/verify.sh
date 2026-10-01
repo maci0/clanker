@@ -105,6 +105,20 @@ else
     skip "python3 is not installed (state backup drills)"
 fi
 
+# The threat model claims in its own header that every file:line reference in
+# it is machine-checked, and scripts/check-threat-model.py is that check. It is
+# here for the same reason as the drills above: nothing else ran it, so the
+# references drifted while the header kept asserting they had not. The unit
+# test covers the resolution rules and pins the shipped model clean, so a
+# checker that quietly stopped detecting drift fails here too.
+step "Threat model references (CI: Check threat model references)"
+if command -v python3 >/dev/null 2>&1; then
+    python3 -B -m unittest scripts.test_check_threat_model || status=1
+    python3 scripts/check-threat-model.py || status=1
+else
+    skip "python3 is not installed (threat model references)"
+fi
+
 step "Python lint (CI: Lint Python)"
 # ruff.toml carries `required-version`, so a ruff on PATH that is not the one CI
 # installs refuses to load the config instead of quietly applying a different
