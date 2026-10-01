@@ -206,6 +206,24 @@ jobs:
       # local `ruff` on a contributor's PATH and this job end up being two rule
       # sets. A venv because ubuntu-24.04 marks the system python externally
       # managed.
+      #
+      # pip's HTTP cache is the same idea as the bun cache above, applied to
+      # the one network fetch left in this job: a fresh runner has an empty
+      # pip cache, so every run downloaded ruff and its wheel again out of
+      # PyPI for a repository that pins the release one file away. Keyed by
+      # the pinned ruff and the OS, because the release is the only input that
+      # changes what resolves out of the cache, so a ruff bump is a miss rather
+      # than a stale hit. Only the download cache is kept, not the venv: the venv
+      # is built per-run under $RUNNER_TEMP and its layout is not what decides
+      # the result — `pip install ruff==<pinned>` against this cache is.
+      - name: Cache pip downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ steps.ruffpin.outputs.version }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
       - name: Lint Python
         run: |
           python3 -m venv "$RUNNER_TEMP/ruff-venv"
