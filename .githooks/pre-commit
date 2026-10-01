@@ -70,7 +70,11 @@ fi
 # .yamllint.yml is itself a staged trigger, since it is what the check reads.
 if command -v yamllint >/dev/null 2>&1; then
     if [ -n "$(staged '*.yml' '*.yaml' '.yamllint.yml' | tr -d '\0')" ]; then
-        staged '*.yml' '*.yaml' | xargs -0 -r yamllint -c .yamllint.yml || fail "yamllint failed"
+        # No `-r`: a GNU findutils extension that BSD xargs (every macOS
+        # checkout) rejects with `illegal option -- r`, running nothing.
+        # BSD xargs already never runs the utility on empty input, so the
+        # emptiness test above is the whole guard.
+        staged '*.yml' '*.yaml' '.yamllint.yml' | xargs -0 yamllint -c .yamllint.yml || fail "yamllint failed"
     fi
 fi
 

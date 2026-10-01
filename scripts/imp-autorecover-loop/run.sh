@@ -8,6 +8,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 LOOP="$SCRIPT_DIR/loop.py"
 
+# bash 4 or newer, for the `${title,,}` case fold and `${!options[@]}` below.
+# macOS ships bash 3.2 as /bin/bash and puts nothing newer on PATH unless the
+# operator installed one, so refuse here with a reason instead of dying later
+# inside `pick` with `bad substitution`, after the checkout is already
+# resolved. scripts/clanker-improve.sh guards for the same reason.
+[ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || {
+    echo "error: bash 4+ required (run.sh uses bash 4 parameter expansion)" >&2
+    exit 1
+}
+
 # Same knob as clank.sh. Defaults to the checkout this script lives in;
 # override from the environment to drive another one.
 CLANKER_DIR="${CLANKER_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
