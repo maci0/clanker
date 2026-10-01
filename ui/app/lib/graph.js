@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
 // Imported lazily by features/runs.js, the only caller. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
-import { fmtInt, fmtUnit, fmtMs, fmtPct, searchFold, plural } from "../core/utils.js";
+import { fmtInt, fmtBytes, fmtUnit, fmtMs, fmtPct, searchFold, plural } from "../core/utils.js";
 
 /* The run graph's shapes, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). An element is addressed by a data attribute rather
@@ -22,7 +22,7 @@ var EDGE_CLASS = "fill-none stroke-border stroke-[1.5] forced-colors:stroke-[Can
 
 export function metricsFor(n) {
   if (n.kind === "llm") return fmtInt(n.prompt_tokens) + "/" + fmtInt(n.completion_tokens) + " tok \u00b7 " + fmtMs(n.duration_ms);
-  if (n.kind === "tool") return fmtInt(n.result_bytes) + " B \u00b7 " + fmtMs(n.duration_ms);
+  if (n.kind === "tool") return fmtBytes(n.result_bytes) + " \u00b7 " + fmtMs(n.duration_ms);
   // A check node's metric is its verdict, which is the same mark the CLI
   // renderer writes (`tools/zig/graph.zig`); a decision node carries the
   // answer the human gave, not a byte count.
@@ -310,7 +310,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
       svg.style.opacity = "0.35";
       if (statusEl) {
         var n = data.filter(function(x){ return x._matches; }).length;
-        statusEl.textContent = fmtInt(n) + " of " + fmtInt(data.length) + " nodes match" + (n ? "" : "; try Clear");
+        statusEl.textContent = fmtInt(n) + " of " + plural(data.length, { one: "node", other: "nodes" }) + " match" + (n ? "" : "; try Clear");
       }
     } else {
       data.forEach(function(d){ d.el.removeAttribute("data-match"); d.el.style.opacity = ""; });

@@ -15,6 +15,7 @@
 // showing the checklist that run ended with, not the next run's.
 
 import { T, state, bind } from "../core/ui.js";
+import { plural } from "../core/utils.js";
 
 /* The panel's shapes, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css) — only palette variables, so the checklist
@@ -73,7 +74,7 @@ function todoSummary(todos) {
 
   for (var i = 0; i < todos.length; i++) { if (todos[i].status === "closed") { closed++; } }
 
-  return closed + "/" + todos.length + " done";
+  return closed + "/" + todos.length + " " + plural(todos.length, { one: "done", other: "done" });
 }
 
 function todoRow(item) {

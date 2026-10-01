@@ -209,7 +209,7 @@ test("a spring-forward weekend is grouped by calendar day, not by 24 hours", fun
     assert.ok(Math.abs((now - at(2026, 3, 28, 0, 0)) / 3600000 - 47.5) < 1.5);
     assert.equal(recencyGroup(atS(2026, 3, 30, 0, 0), now), rtf.format(0, "day"));
     assert.equal(recencyGroup(atS(2026, 3, 29, 23, 30), now), rtf.format(-1, "day"));
-    assert.equal(recencyGroup(atS(2026, 3, 28, 0, 0), now), "Previous 7 days");
+    assert.equal(recencyGroup(atS(2026, 3, 28, 0, 0), now), rtf.format(-7, "day"));
   } finally {
     if (before === undefined) { delete process.env.TZ; }
     else { process.env.TZ = before; }
@@ -220,10 +220,11 @@ test("an ordinary week is unchanged, and a future stamp reads as today", functio
   const now = at(2026, 6, 17, 12, 0);
   assert.equal(recencyGroup(atS(2026, 6, 17, 1, 0), now), rtf.format(0, "day"));
   assert.equal(recencyGroup(atS(2026, 6, 16, 23, 0), now), rtf.format(-1, "day"));
-  assert.equal(recencyGroup(atS(2026, 6, 15, 12, 0), now), "Previous 7 days");
-  assert.equal(recencyGroup(atS(2026, 6, 11, 12, 0), now), "Previous 7 days");
-  assert.equal(recencyGroup(atS(2026, 6, 10, 12, 0), now), "Previous 30 days");
-  assert.equal(recencyGroup(atS(2026, 6, 1, 12, 0), now), "Previous 30 days");
+  assert.equal(recencyGroup(atS(2026, 6, 15, 12, 0), now), rtf.format(-7, "day"));
+  assert.equal(recencyGroup(atS(2026, 6, 11, 12, 0), now), rtf.format(-7, "day"));
+  assert.equal(recencyGroup(atS(2026, 6, 10, 12, 0), now), rtf.format(-30, "day"));
+  assert.equal(recencyGroup(atS(2026, 6, 1, 12, 0), now), rtf.format(-30, "day"));
+  // "Older" has no Intl category, so it stays the one literal heading.
   assert.equal(recencyGroup(atS(2026, 4, 1, 12, 0), now), "Older");
   // A clock stepped backwards leaves a session stamped in the future.
   assert.equal(recencyGroup(now + 3600, now), rtf.format(0, "day"));
@@ -233,6 +234,28 @@ test("an ordinary week is unchanged, and a future stamp reads as today", functio
 // The locale-sensitive formatters. These are the ones a reader in another
 // language notices first, so each asserts the shape the fix exists for rather
 // than a fixed string (the exact wording comes from the runtime locale).
+
+test("every rail heading except \"Undated\" and \"Older\" comes from the locale", function () {
+  // The rail grouped a whole week under the literal "Previous 7 days" while
+  // the rows above it read "today" and "yesterday" through Intl, so a German
+  // or Japanese rail was half English. The two headings with no Intl
+  // equivalent are named here so a new one cannot join them by accident.
+  const now = at(2026, 6, 17, 12, 0);
+  const headings = [
+    recencyGroup(atS(2026, 6, 17, 1, 0), now),
+    recencyGroup(atS(2026, 6, 16, 1, 0), now),
+    recencyGroup(atS(2026, 6, 14, 1, 0), now),
+    recencyGroup(atS(2026, 6, 5, 1, 0), now),
+  ];
+  const fromIntl = [
+    rtf.format(0, "day"),
+    rtf.format(-1, "day"),
+    rtf.format(-7, "day"),
+    rtf.format(-30, "day"),
+  ];
+
+  assert.deepEqual(headings, fromIntl);
+});
 
 test("plural picks the form Intl.PluralRules names, not `n === 1`", function () {
   const rules = new Intl.PluralRules();

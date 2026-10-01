@@ -987,11 +987,29 @@ test("a count is worded through plural(), never glued to an English noun", funct
   const { readdirSync } = require("node:fs");
   const roots = [join(here, ".."), join(here, "..", "..", "plugins")];
   const hits = [];
-  /* `<expr>.length + " <noun>s`", the concatenation every offender used. The
+  /* `<count> + " <noun>s`", the concatenation every offender used. The
      noun is followed by whatever the sentence continues with — a space, a
-     closing quote, a comma — so the boundary is any non-word character. */
-  const glued = /\b(\w+)\.length\s*\+\s*"\s([a-z]+?)s(?=\W)/;
-  const bare = /\bcount\s*\+\s*"\s([a-z]+?)s(?=\W)/;
+     closing quote, a comma — so the boundary is any non-word character.
+
+     The count is any formatted number, not only `.length`, and the noun is
+     any bare English word, not only one ending in `s`. This scanner matched
+     just `<expr>.length + " nouns"` and a bare `count + " nouns"`, so
+     `fmtInt(n) + " tokens"` walked past it, and so did
+     `fmtInt(n) + " prompt"` -- the noun there reads singular in English
+     ("1 prompt + 2 completion") while Polish, Russian and Arabic still take
+     three, four or six forms off the count. The defect this rule exists for
+     is a number glued to an English word, so it keys on that, not on which
+     formatter supplied the number or whether the word ends in "s".
+
+     A unit abbreviation is not that defect and stays out of scope: `tok` is
+     "tokens" shortened the way "kB" shortens "kilobyte", which is how every
+     locale writes a token count per run, and Intl has no unit for it. What
+     would be wrong is the separator or the digits beside it, and those are
+     the number formatter's job -- see `fmtBytes` for the shipped pattern. */
+  const glued = /\b(?:(\w+)\.length|count|fmtInt\([^)]*\))\s*\+\s*"\s([a-z]{3,})(?=\s|[",.·+/)])/;
+  const bare = /\bcount\s*\+\s*"\s([a-z]{3,})(?=\s|[",.·+/)])/;
+  // A unit abbreviation, not an English noun: it is exempt from the rule.
+  const isUnit = (word) => word === "tok";
   function walk(dir) {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
@@ -1002,7 +1020,7 @@ test("a count is worded through plural(), never glued to an English noun", funct
         const rel = p.slice(join(here, "..", "..").length + 1);
         readFileSync(p, "utf8").split("\n").forEach((line, i) => {
           const m = line.match(glued) || line.match(bare);
-          if (m) hits.push(rel + ":" + (i + 1) + ": " + m[0].trim());
+          if (m && !isUnit(m[2])) hits.push(rel + ":" + (i + 1) + ": " + m[0].trim());
         });
       }
     }

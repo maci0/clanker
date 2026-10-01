@@ -1,6 +1,6 @@
 // Vanilla, no bundler. Board card-action helpers — pure, no DOM, no page state.
 // Importable as ES module.
-import { fmtInt, fmtUsd } from "../core/utils.js";
+import { fmtUsd, plural } from "../core/utils.js";
 
 var BOARD_COLUMNS = { backlog: "Backlog", ready: "Ready", doing: "Doing", review: "Review", done: "Done", archive: "Archive" };
 
@@ -54,7 +54,7 @@ export function boardActionLine(raw) {
       var bits = [];
       var tok = (a.prompt_tokens || 0) + (a.completion_tokens || 0);
 
-      if (tok) { bits.push(fmtInt(tok) + " tokens"); }
+      if (tok) { bits.push(plural(tok, { one: "token", other: "tokens" })); }
 
       if (a.cost) { bits.push(fmtUsd(Number(a.cost), 4)); }
 

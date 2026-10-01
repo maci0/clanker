@@ -2169,8 +2169,9 @@ function showCardDetail(id) {
     var u = detailSection(mainCol, "Cost so far");
     var line = document.createElement("p");
     line.className = "meta";
-    line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
-      " completion  ·  " + fmtCost(usage.cost || 0) +
+    line.textContent = plural(usage.prompt_tokens || 0, { one: "prompt token", other: "prompt tokens" }) + " + " +
+      plural(usage.completion_tokens || 0, { one: "completion token", other: "completion tokens" }) +
+      "  ·  " + fmtCost(usage.cost || 0) +
       ((usage.runs || []).length ? "  ·  " + plural(usage.runs.length, { one: "run", other: "runs" }) : "");
     u.appendChild(line);
     (usage.runs || []).forEach(function (rid) {

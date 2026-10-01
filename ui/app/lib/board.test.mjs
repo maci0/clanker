@@ -84,6 +84,20 @@ test("boardActionLine still renders every action the board records", function ()
   assert.equal(boardActionLine("not an action"), null);
 });
 
+test("a card's usage line pluralises the token count, not `n === 1`", function () {
+  // `fmtInt(tok) + " tokens"` spelled the English rule into the string, so a
+  // Polish, Russian or Arabic reader got "one" for 21 and 2. The category is
+  // Intl.PluralRules' now, so the assertion compares against it rather than
+  // against English wording.
+  const rules = new Intl.PluralRules();
+  const forms = { one: "token", other: "tokens" };
+  const line = (tok) => boardActionLine('@todo {"action":"usage","prompt_tokens":' + tok + ',"completion_tokens":0}');
+
+  for (const n of [1, 2, 3, 5, 21]) {
+    assert.match(line(n), new RegExp("\\b" + n + " " + forms[rules.select(n)] + "\\b"));
+  }
+});
+
 test("the Activity plugin reads both feeds and merges them", function () {
   assert.match(plugin, /\/api\/chat\/messages\?room=board/);
   assert.match(plugin, /api\.boardTimeline/);

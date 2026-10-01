@@ -260,7 +260,19 @@ test("eager JS stays inside its weight budget", function () {
   // ASCII only: a 300-character objective of two-byte letters is 600 bytes,
   // passed the cut whole, and was refused by the guest anyway, pinning the
   // goal mirror as "requested" forever (~0.4K gz).
-  assert.ok(eagerJsGz <= 163, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 163K`);
+  // Raised to 164 for the plural and unit fixes beside the formatters the
+  // eager set already carries. Call sites glued a count to an English noun
+  // with `fmtInt(n) + " tokens"` (lib/board.js), `"N prompt + M completion"`
+  // (app.js, features/board.js) and a `"N nodes match"` label (lib/graph.js),
+  // so Polish "1 token / 2 tokens / 5 tokens", Arabic and Russian all picked
+  // the wrong CLDR category off a `n === 1` ternary baked into the string, and
+  // lib/graph.js's tool byte count printed a glued `"N B"` where German reads
+  // "1,2 kB". Each now goes through plural() / fmtBytes(), the
+  // Intl.PluralRules and Intl.NumberFormat calls core/utils.js already exports
+  // and that every other count on the page already used (~0.1K gz, and the
+  // three copies of the "msg" forms in app.js are now one literal, which pays
+  // part of it back).
+  assert.ok(eagerJsGz <= 164, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 164K`);
 });
 
 test("first paint stays inside its weight budget", function () {

@@ -757,8 +757,11 @@ function meshStatusText(data, live) {
   }
   bits.push(plural(nodes.length, { one: "node", other: "nodes" }));
   if (links.length) bits.push(plural(links.length, { one: "link", other: "links" }));
-  if (working) bits.push(fmtInt(working) + " working");
-  if (pulses.length) bits.push(fmtInt(pulses.length) + " talking");
+  // Identical forms are the point: "working" and "talking" are the same word
+  // in every number, but the count still has to be grouped and placed the way
+  // the reader's locale writes a number, which is what plural() does.
+  if (working) bits.push(plural(working, { one: "working", other: "working" }));
+  if (pulses.length) bits.push(plural(pulses.length, { one: "talking", other: "talking" }));
   if (data.mesh === false) bits.push("module off; showing configured peers");
   return bits.join(" · ");
 }

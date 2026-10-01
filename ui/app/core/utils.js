@@ -532,9 +532,22 @@ export function recencyGroup(updated, nowMs) {
 
   if (days === 1) { return relative_time.format(-1, "day"); }
 
-  if (days < 7) { return "Previous 7 days"; }
+  // The week and month buckets go through Intl too. They used to be the
+  // literals "Previous 7 days" / "Previous 30 days", so a rail grouped every
+  // conversation under an English heading while the two rows above it read
+  // "today" and "yesterday" in the reader's own language: the one place the
+  // rail was half-localized. `numeric: "auto"` folds -7 days into the reader's
+  // own "last week" and -30 into "last month"; these are headings rather than
+  // counts, and each names its own far edge, so the label stays stable while a
+  // session moves through the range.
+  //
+  // "Older" stays a literal. Intl has no "older than" category, and the
+  // nearest relative unit ("last year") would claim a year for a range that
+  // starts at 31 days: a different statement about the same rows, not a
+  // translation of them.
+  if (days < 7) { return relative_time.format(-7, "day"); }
 
-  if (days < 30) { return "Previous 30 days"; }
+  if (days < 30) { return relative_time.format(-30, "day"); }
 
   return "Older";
 }

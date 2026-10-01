@@ -447,7 +447,7 @@ function diffRuns(aId, bId){
       removed.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
       changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="var(--ring-warn)"; }); });
     }, 260);
-    if(status) status.textContent = "Showing A in the graph · "+added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
+    if(status) status.textContent = "Showing A in the graph · " + plural(added.length, { one: "added", other: "added" }) + " · " + plural(removed.length, { one: "removed", other: "removed" }) + " · " + plural(changed.length, { one: "changed", other: "changed" });
     if(clearBtn) clearBtn.hidden=false;
     el.runDetail.hidden=false; el.runDetail.textContent="";
     var pre=document.createElement("pre"); pre.style.whiteSpace="pre-wrap"; pre.style.fontSize="12px";

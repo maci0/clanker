@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildNodeBox, buildStages, graphTotals, graphSummaryText, metricsFor, slowestWorthNaming, toDagInput } from "./graph.js";
+import { fmtMs } from "../core/utils.js";
 
 // The smallest element the builder needs: children, a className, textContent,
 // dataset, and a style object the assertions read back.
@@ -122,6 +123,19 @@ test("a step carries its own kind into the layout, so the filter and the box agr
 test("a check node reads as its verdict, the mark the CLI renderer prints", function () {
   assert.equal(metricsFor(verdict), "FAIL");
   assert.equal(metricsFor(Object.assign({}, verdict, { ok: true })), "pass");
+});
+
+test("a tool's byte count is a formatted unit, not a glued \"N B\"", function () {
+  // `fmtInt(n) + " B"` printed "2048 B" where every German, French and Polish
+  // reader expects "2 kB": the number was grouped by nothing at all. fmtBytes
+  // is what the run list and the session rail already print for the same
+  // number, so the graph now agrees with them at the runtime locale.
+  for (const bytes of [0, 512, 2048, 1048576, 12582912]) {
+    const unit = bytes >= 1048576 ? "megabyte" : bytes >= 1024 ? "kilobyte" : "byte";
+    const value = bytes >= 1048576 ? bytes / 1048576 : bytes >= 1024 ? bytes / 1024 : bytes;
+    const want = new Intl.NumberFormat(undefined, { style: "unit", unit, unitDisplay: "short", maximumFractionDigits: bytes >= 1048576 ? 1 : 0 }).format(value);
+    assert.equal(metricsFor({ kind: "tool", label: "read_file", result_bytes: bytes, duration_ms: 5 }), want + " · " + fmtMs(5));
+  }
 });
 
 test("the spoken summary does not call a verdict a tool call", function () {

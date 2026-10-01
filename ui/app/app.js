@@ -46,6 +46,10 @@ var fmtAgo = utilFmtAgo;
 var plural = utilPlural;
 var fmtCost = utilFmtCost;
 var fmtUsd = utilFmtUsd;
+/* One literal per noun, so three "msg" call sites stay one string. */
+var MSGS = { one: "msg", other: "msgs" };
+var PROMPT_TOKENS = { one: "prompt token", other: "prompt tokens" };
+var COMPLETION_TOKENS = { one: "completion token", other: "completion tokens" };
 var providerCache = [];
 var runLabel = function (r) { return runLabelMod(r, clip); };
 var modelLabel = function (provider, model) { return modelLabelMod(provider, model, providerCache); };
@@ -522,7 +526,7 @@ function railRowFor(s, current) {
   var rawTitle = (s.title || "").replace(/\s+/g, " ").trim();
   var title = summarizeTitle(s.title || "");
   var archivedMark = s.archived ? " · archived" : "";
-  var meta = plural(s.messages, { one: "msg", other: "msgs" }) + archivedMark +
+  var meta = plural(s.messages, MSGS) + archivedMark +
     (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
   var open = s.id === current;
 
@@ -673,7 +677,7 @@ function renderSessionTitle() {
   }
   var full = (meta.title || "").replace(/\s+/g, " ").trim() || "Untitled conversation";
   el.sessionTitle.textContent = full;
-  var bits = [full, plural(meta.messages, { one: "msg", other: "msgs" })];
+  var bits = [full, plural(meta.messages, MSGS)];
   if (typeof meta.bytes === "number" && meta.bytes > 0) bits.push(fmtBytes(meta.bytes));
   el.sessionTitle.title = bits.join("  ·  ");
   renderContextMeter();
@@ -2014,7 +2018,7 @@ function renderStats(turn, stats, task) {
   }
   if (stats.reasoning_effort) parts.push("effort " + stats.reasoning_effort);
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
-    parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
+    parts.push(plural(stats.prompt_tokens, PROMPT_TOKENS) + " + " + plural(stats.completion_tokens, COMPLETION_TOKENS));
   }
   if (typeof stats.ms === "number") parts.push(fmtMs(stats.ms));
   if (typeof stats.cost === "number" && stats.cost > 0) parts.push(fmtUsd(stats.cost, 4));
@@ -2122,7 +2126,7 @@ function renderStats(turn, stats, task) {
       relevant.forEach(function(s){
         var chip = document.createElement("button");
         chip.type = "button"; chip.className = BRANCH_CHIP_CLASS;
-        chip.textContent = utilClip(s.title || s.id, 60) + " · " + plural(s.messages || 0, { one: "msg", other: "msgs" });
+        chip.textContent = utilClip(s.title || s.id, 60) + " · " + plural(s.messages || 0, MSGS);
         chip.title = "Switch to " + (s.title || s.id);
         if (s.id === sessionId) chip.setAttribute("data-current", "true");
         chip.addEventListener("click", function(){ switchSession(s.id); });

@@ -237,7 +237,7 @@ clanker.registerView({
         var bits = [];
         bits.push(api.fmt.plural(list.length, { one: "member", other: "members" }));
 
-        if (state.pending.length) { bits.push(state.pending.length + " pending"); }
+        if (state.pending.length) { bits.push(api.fmt.plural(state.pending.length, { one: "pending", other: "pending" })); }
 
         if (state.busy) { bits.push(state.busy); }
 
