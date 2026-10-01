@@ -9,7 +9,7 @@ import { goalFields, goalPinnedColumn, goalSortKey, goalStatusLabel, goalWorktre
 import { runLabel } from "./labels.js";
 import { setRailTabIcon, icon } from "./icons.js";
 import {
-  clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
+  capBytes, clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
   fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
   providerUnusableReason, searchFoldFind, searchFold, showLoading, themeToken, wireRefresh
 } from "./utils.js";
@@ -198,8 +198,10 @@ export function pluginApi(spec) {
     // (`core/stream.js`): split a body into whole lines, pump one into a
     // container, and read whether the live bus is currently up.
     stream: { lines: makeLineSplitter, pump: pumpInto, ok: liveOk },
-    // Text shaping shared with the transcript rows.
-    text: { clip, escape: escapeHtml },
+    // Text shaping shared with the transcript rows. `clip` cuts on grapheme
+    // clusters, for text the browser lays out; `capBytes` cuts in bytes, for a
+    // value the host length-caps in bytes. Different limits, different cuts.
+    text: { clip, capBytes, escape: escapeHtml },
     // Page-level DOM helpers (`core/vendor.js`) and the theme's colour
     // helpers, so a view painting a peer or a themed chart reads the same
     // tokens the page does instead of hardcoding a palette.

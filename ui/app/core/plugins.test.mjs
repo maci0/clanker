@@ -338,7 +338,7 @@ function loadHost(page, extras) {
     goalSortKey: () => 0, goalFields: () => [], goalStatusLabel: () => "",
     goalWorktreeTitle: () => "", goalPinnedColumn: () => "",
     runLabel: (r) => String(r && r.id || ""),
-    clip: (s) => String(s), escapeHtml: (s) => String(s),
+    clip: (s) => String(s), capBytes: (s) => String(s), escapeHtml: (s) => String(s),
     cssColorAlpha: () => "", cssColorMix: () => "", peerColor: () => "",
     themeToken: (n) => String(n), providerUnusableReason: () => "",
     fmtMs: () => "", fmtPct: () => "", fmtUsd: () => "", fmtDeadline: () => "",

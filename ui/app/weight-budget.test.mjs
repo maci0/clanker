@@ -253,6 +253,13 @@ test("eager JS stays inside its weight budget", function () {
      one number format the counts everywhere. Neither added a request, and the
      gz grew by 39 bytes over the 162K line, so the wire cost of both is
      noise. */
+  // Raised to 163 for core/utils.js's `capBytes`, which cuts a board card
+  // title in bytes because the guest enforces that limit in bytes
+  // (cards.max_title_len, counted with `.len` in Zig). The call site it
+  // replaced, `slice(0, 512)`, counts UTF-16 units, so it met the limit for
+  // ASCII only: a 300-character objective of two-byte letters is 600 bytes,
+  // passed the cut whole, and was refused by the guest anyway, pinning the
+  // goal mirror as "requested" forever (~0.4K gz).
   assert.ok(eagerJsGz <= 163, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 163K`);
 });
 

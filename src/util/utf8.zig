@@ -14,6 +14,10 @@
 //! The web UI folds through `searchFold` (`ui/app/core/utils.js`); the host
 //! folds through here, so a query finds the same rows on both sides of the
 //! wire instead of only in the browser.
+//!
+//! `canonicalEqual` is the identity question those two are not: whether two
+//! spellings name the same text. See its own comment for why an identity
+//! comparison, not a search fold, is what a stored name needs.
 
 const std = @import("std");
 
@@ -352,6 +356,303 @@ fn swallowMarks(s: []const u8, start: usize) usize {
         i += len;
     }
     return i;
+}
+
+// Canonical equivalence: whether two spellings name the same text.
+//
+// "café.md" typed into a form arrives composed (U+00E9); the same filename
+// read back off APFS arrives decomposed (`e` + U+0301), because HFS+
+// normalizes what it stores. Byte equality calls those two documents, so an
+// upsert keyed on the name appends a second copy of one file, both copies
+// answer search, and the prune pass deletes whichever one it did not see in a
+// listing — the name coming back with a new id every cycle.
+//
+// NFC is the general answer and a table this codebase has no other use for.
+// An identity check needs a narrower one: does the composed spelling and the
+// decomposed spelling of the same word answer "yes"? That is one question per
+// (base, mark) pair, answered by the table below without rewriting either
+// string, so nothing here allocates and an identity comparison costs what
+// `mem.eql` costs.
+//
+// Deliberately not `fold`, which answers a different question. Fold is a
+// search convenience and lossy by design: it drops every mark, so "cafe",
+// "café" and "café" are one query. A name identifying a stored document is
+// not a search box, and folding there would merge two files an operator can
+// see. `fold_marks` is shared with it below because the marks a canonical
+// decomposition can use are the marks fold already recognizes.
+//
+// ponytail: Latin-1 Supplement and Latin Extended-A, the blocks a Latin-script
+// filename actually carries, generated from the Python `unicodedata` module's
+// decompositions and kept only where an NFC round trip confirms the pair
+// really does compose (UAX #15 excludes several Latin pairs on class
+// grounds, e.g. U+0138 which has no NFC form). A decomposed letter outside
+// them still matches itself exactly, so nothing outside these blocks is
+// affected; widening this is a table edit. The Unicode data file to generate
+// the next blocks from is not in the tree.
+const canonical_pairs = [_][3]u21{
+    .{ 0x00C0, 0x0041, 0x0300 }, // À
+    .{ 0x00C1, 0x0041, 0x0301 }, // Á
+    .{ 0x00C2, 0x0041, 0x0302 }, // Â
+    .{ 0x00C3, 0x0041, 0x0303 }, // Ã
+    .{ 0x00C4, 0x0041, 0x0308 }, // Ä
+    .{ 0x00C5, 0x0041, 0x030A }, // Å
+    .{ 0x00C7, 0x0043, 0x0327 }, // Ç
+    .{ 0x00C8, 0x0045, 0x0300 }, // È
+    .{ 0x00C9, 0x0045, 0x0301 }, // É
+    .{ 0x00CA, 0x0045, 0x0302 }, // Ê
+    .{ 0x00CB, 0x0045, 0x0308 }, // Ë
+    .{ 0x00CC, 0x0049, 0x0300 }, // Ì
+    .{ 0x00CD, 0x0049, 0x0301 }, // Í
+    .{ 0x00CE, 0x0049, 0x0302 }, // Î
+    .{ 0x00CF, 0x0049, 0x0308 }, // Ï
+    .{ 0x00D1, 0x004E, 0x0303 }, // Ñ
+    .{ 0x00D2, 0x004F, 0x0300 }, // Ò
+    .{ 0x00D3, 0x004F, 0x0301 }, // Ó
+    .{ 0x00D4, 0x004F, 0x0302 }, // Ô
+    .{ 0x00D5, 0x004F, 0x0303 }, // Õ
+    .{ 0x00D6, 0x004F, 0x0308 }, // Ö
+    .{ 0x00D9, 0x0055, 0x0300 }, // Ù
+    .{ 0x00DA, 0x0055, 0x0301 }, // Ú
+    .{ 0x00DB, 0x0055, 0x0302 }, // Û
+    .{ 0x00DC, 0x0055, 0x0308 }, // Ü
+    .{ 0x00DD, 0x0059, 0x0301 }, // Ý
+    .{ 0x00E0, 0x0061, 0x0300 }, // à
+    .{ 0x00E1, 0x0061, 0x0301 }, // á
+    .{ 0x00E2, 0x0061, 0x0302 }, // â
+    .{ 0x00E3, 0x0061, 0x0303 }, // ã
+    .{ 0x00E4, 0x0061, 0x0308 }, // ä
+    .{ 0x00E5, 0x0061, 0x030A }, // å
+    .{ 0x00E7, 0x0063, 0x0327 }, // ç
+    .{ 0x00E8, 0x0065, 0x0300 }, // è
+    .{ 0x00E9, 0x0065, 0x0301 }, // é
+    .{ 0x00EA, 0x0065, 0x0302 }, // ê
+    .{ 0x00EB, 0x0065, 0x0308 }, // ë
+    .{ 0x00EC, 0x0069, 0x0300 }, // ì
+    .{ 0x00ED, 0x0069, 0x0301 }, // í
+    .{ 0x00EE, 0x0069, 0x0302 }, // î
+    .{ 0x00EF, 0x0069, 0x0308 }, // ï
+    .{ 0x00F1, 0x006E, 0x0303 }, // ñ
+    .{ 0x00F2, 0x006F, 0x0300 }, // ò
+    .{ 0x00F3, 0x006F, 0x0301 }, // ó
+    .{ 0x00F4, 0x006F, 0x0302 }, // ô
+    .{ 0x00F5, 0x006F, 0x0303 }, // õ
+    .{ 0x00F6, 0x006F, 0x0308 }, // ö
+    .{ 0x00F9, 0x0075, 0x0300 }, // ù
+    .{ 0x00FA, 0x0075, 0x0301 }, // ú
+    .{ 0x00FB, 0x0075, 0x0302 }, // û
+    .{ 0x00FC, 0x0075, 0x0308 }, // ü
+    .{ 0x00FD, 0x0079, 0x0301 }, // ý
+    .{ 0x00FF, 0x0079, 0x0308 }, // ÿ
+    .{ 0x0100, 0x0041, 0x0304 }, // Ā
+    .{ 0x0101, 0x0061, 0x0304 }, // ā
+    .{ 0x0102, 0x0041, 0x0306 }, // Ă
+    .{ 0x0103, 0x0061, 0x0306 }, // ă
+    .{ 0x0104, 0x0041, 0x0328 }, // Ą
+    .{ 0x0105, 0x0061, 0x0328 }, // ą
+    .{ 0x0106, 0x0043, 0x0301 }, // Ć
+    .{ 0x0107, 0x0063, 0x0301 }, // ć
+    .{ 0x0108, 0x0043, 0x0302 }, // Ĉ
+    .{ 0x0109, 0x0063, 0x0302 }, // ĉ
+    .{ 0x010A, 0x0043, 0x0307 }, // Ċ
+    .{ 0x010B, 0x0063, 0x0307 }, // ċ
+    .{ 0x010C, 0x0043, 0x030C }, // Č
+    .{ 0x010D, 0x0063, 0x030C }, // č
+    .{ 0x010E, 0x0044, 0x030C }, // Ď
+    .{ 0x010F, 0x0064, 0x030C }, // ď
+    .{ 0x0112, 0x0045, 0x0304 }, // Ē
+    .{ 0x0113, 0x0065, 0x0304 }, // ē
+    .{ 0x0114, 0x0045, 0x0306 }, // Ĕ
+    .{ 0x0115, 0x0065, 0x0306 }, // ĕ
+    .{ 0x0116, 0x0045, 0x0307 }, // Ė
+    .{ 0x0117, 0x0065, 0x0307 }, // ė
+    .{ 0x0118, 0x0045, 0x0328 }, // Ę
+    .{ 0x0119, 0x0065, 0x0328 }, // ę
+    .{ 0x011A, 0x0045, 0x030C }, // Ě
+    .{ 0x011B, 0x0065, 0x030C }, // ě
+    .{ 0x011C, 0x0047, 0x0302 }, // Ĝ
+    .{ 0x011D, 0x0067, 0x0302 }, // ĝ
+    .{ 0x011E, 0x0047, 0x0306 }, // Ğ
+    .{ 0x011F, 0x0067, 0x0306 }, // ğ
+    .{ 0x0120, 0x0047, 0x0307 }, // Ġ
+    .{ 0x0121, 0x0067, 0x0307 }, // ġ
+    .{ 0x0122, 0x0047, 0x0327 }, // Ģ
+    .{ 0x0123, 0x0067, 0x0327 }, // ģ
+    .{ 0x0124, 0x0048, 0x0302 }, // Ĥ
+    .{ 0x0125, 0x0068, 0x0302 }, // ĥ
+    .{ 0x0128, 0x0049, 0x0303 }, // Ĩ
+    .{ 0x0129, 0x0069, 0x0303 }, // ĩ
+    .{ 0x012A, 0x0049, 0x0304 }, // Ī
+    .{ 0x012B, 0x0069, 0x0304 }, // ī
+    .{ 0x012C, 0x0049, 0x0306 }, // Ĭ
+    .{ 0x012D, 0x0069, 0x0306 }, // ĭ
+    .{ 0x012E, 0x0049, 0x0328 }, // Į
+    .{ 0x012F, 0x0069, 0x0328 }, // į
+    .{ 0x0130, 0x0049, 0x0307 }, // İ
+    .{ 0x0134, 0x004A, 0x0302 }, // Ĵ
+    .{ 0x0135, 0x006A, 0x0302 }, // ĵ
+    .{ 0x0136, 0x004B, 0x0327 }, // Ķ
+    .{ 0x0137, 0x006B, 0x0327 }, // ķ
+    .{ 0x0139, 0x004C, 0x0301 }, // Ĺ
+    .{ 0x013A, 0x006C, 0x0301 }, // ĺ
+    .{ 0x013B, 0x004C, 0x0327 }, // Ļ
+    .{ 0x013C, 0x006C, 0x0327 }, // ļ
+    .{ 0x013D, 0x004C, 0x030C }, // Ľ
+    .{ 0x013E, 0x006C, 0x030C }, // ľ
+    .{ 0x0143, 0x004E, 0x0301 }, // Ń
+    .{ 0x0144, 0x006E, 0x0301 }, // ń
+    .{ 0x0145, 0x004E, 0x0327 }, // Ņ
+    .{ 0x0146, 0x006E, 0x0327 }, // ņ
+    .{ 0x0147, 0x004E, 0x030C }, // Ň
+    .{ 0x0148, 0x006E, 0x030C }, // ň
+    .{ 0x014C, 0x004F, 0x0304 }, // Ō
+    .{ 0x014D, 0x006F, 0x0304 }, // ō
+    .{ 0x014E, 0x004F, 0x0306 }, // Ŏ
+    .{ 0x014F, 0x006F, 0x0306 }, // ŏ
+    .{ 0x0150, 0x004F, 0x030B }, // Ő
+    .{ 0x0151, 0x006F, 0x030B }, // ő
+    .{ 0x0154, 0x0052, 0x0301 }, // Ŕ
+    .{ 0x0155, 0x0072, 0x0301 }, // ŕ
+    .{ 0x0156, 0x0052, 0x0327 }, // Ŗ
+    .{ 0x0157, 0x0072, 0x0327 }, // ŗ
+    .{ 0x0158, 0x0052, 0x030C }, // Ř
+    .{ 0x0159, 0x0072, 0x030C }, // ř
+    .{ 0x015A, 0x0053, 0x0301 }, // Ś
+    .{ 0x015B, 0x0073, 0x0301 }, // ś
+    .{ 0x015C, 0x0053, 0x0302 }, // Ŝ
+    .{ 0x015D, 0x0073, 0x0302 }, // ŝ
+    .{ 0x015E, 0x0053, 0x0327 }, // Ş
+    .{ 0x015F, 0x0073, 0x0327 }, // ş
+    .{ 0x0160, 0x0053, 0x030C }, // Š
+    .{ 0x0161, 0x0073, 0x030C }, // š
+    .{ 0x0162, 0x0054, 0x0327 }, // Ţ
+    .{ 0x0163, 0x0074, 0x0327 }, // ţ
+    .{ 0x0164, 0x0054, 0x030C }, // Ť
+    .{ 0x0165, 0x0074, 0x030C }, // ť
+    .{ 0x0168, 0x0055, 0x0303 }, // Ũ
+    .{ 0x0169, 0x0075, 0x0303 }, // ũ
+    .{ 0x016A, 0x0055, 0x0304 }, // Ū
+    .{ 0x016B, 0x0075, 0x0304 }, // ū
+    .{ 0x016C, 0x0055, 0x0306 }, // Ŭ
+    .{ 0x016D, 0x0075, 0x0306 }, // ŭ
+    .{ 0x016E, 0x0055, 0x030A }, // Ů
+    .{ 0x016F, 0x0075, 0x030A }, // ů
+    .{ 0x0170, 0x0055, 0x030B }, // Ű
+    .{ 0x0171, 0x0075, 0x030B }, // ű
+    .{ 0x0172, 0x0055, 0x0328 }, // Ų
+    .{ 0x0173, 0x0075, 0x0328 }, // ų
+    .{ 0x0174, 0x0057, 0x0302 }, // Ŵ
+    .{ 0x0175, 0x0077, 0x0302 }, // ŵ
+    .{ 0x0176, 0x0059, 0x0302 }, // Ŷ
+    .{ 0x0177, 0x0079, 0x0302 }, // ŷ
+    .{ 0x0178, 0x0059, 0x0308 }, // Ÿ
+    .{ 0x0179, 0x005A, 0x0301 }, // Ź
+    .{ 0x017A, 0x007A, 0x0301 }, // ź
+    .{ 0x017B, 0x005A, 0x0307 }, // Ż
+    .{ 0x017C, 0x007A, 0x0307 }, // ż
+    .{ 0x017D, 0x005A, 0x030C }, // Ž
+    .{ 0x017E, 0x007A, 0x030C }, // ž
+};
+
+/// The precomposed codepoint for `base` followed by `mark`, or null when that
+/// pair has no canonical composition (which is most pairs, and every ASCII
+/// one).
+fn compose(base: u21, mark: u21) ?u21 {
+    for (canonical_pairs) |p| {
+        if (p[1] == base and p[2] == mark) return p[0];
+    }
+    return null;
+}
+
+/// One decoded UTF-8 sequence. `Bad` stands for a byte that is not valid UTF-8,
+/// which carries no codepoint: such input compares by bytes, as it always did,
+/// rather than being silently rewritten into a replacement character.
+const Bad: u21 = std.math.maxInt(u21);
+
+fn nextCp(s: []const u8, i: usize) struct { cp: u21, len: usize } {
+    if (i >= s.len) return .{ .cp = 0, .len = 0 };
+    const len = std.unicode.utf8ByteSequenceLength(s[i]) catch return .{ .cp = Bad, .len = 1 };
+    if (i + len > s.len or !std.unicode.utf8ValidateSlice(s[i .. i + len])) return .{ .cp = Bad, .len = 1 };
+    return .{ .cp = std.unicode.utf8Decode(s[i .. i + len]) catch Bad, .len = len };
+}
+
+const Cp = struct { cp: u21, len: usize };
+
+/// `nextCp(s, i)` with the combining mark following it composed in. `len == 0`
+/// when there is no mark that composes, so the caller keeps what it has.
+fn composedCp(s: []const u8, i: usize) Cp {
+    const cur = nextCp(s, i);
+    if (cur.cp == Bad) return .{ .cp = 0, .len = 0 };
+    const mark = nextCp(s, i + cur.len);
+    if (mark.len == 0 or mark.cp == Bad) return .{ .cp = 0, .len = 0 };
+    if (!inRanges(mark.cp, &fold_marks)) return .{ .cp = 0, .len = 0 };
+    const composed = compose(cur.cp, mark.cp) orelse return .{ .cp = 0, .len = 0 };
+    return .{ .cp = composed, .len = cur.len + mark.len };
+}
+
+fn hasHighByte(s: []const u8) bool {
+    for (s) |c| {
+        if (c >= 0x80) return true;
+    }
+    return false;
+}
+
+/// Whether `a` and `b` name the same text under canonical equivalence: a word's
+/// composed and decomposed spellings are one string, not two.
+///
+/// Both sides are walked in step and each base is composed with the mark that
+/// follows it, so `é` and `e` + U+0301 compare equal without either being
+/// rewritten. Only a base plus *one* mark composes here, which is what a
+/// filename carries; the two sequences a reader sees as the same grapheme
+/// (`e` + U+0301 + U+0323, or a stacked mark) fall out of the same walk, since
+/// the marks that do not compose are compared as themselves on both sides.
+///
+/// `mem.eql` first, and an early false for two pure-ASCII operands: a
+/// composed/decomposed pair never contains a byte above 0x7F, so ASCII — which
+/// is what almost every stored name is — costs exactly what it always cost.
+pub fn canonicalEqual(a: []const u8, b: []const u8) bool {
+    if (std.mem.eql(u8, a, b)) return true;
+    if (!hasHighByte(a) and !hasHighByte(b)) return false;
+
+    var i: usize = 0;
+    var j: usize = 0;
+    while (true) {
+        const ca = nextCp(a, i);
+        const cb = nextCp(b, j);
+        if (ca.len == 0 or cb.len == 0) return ca.len == cb.len;
+        if (ca.cp == Bad or cb.cp == Bad) {
+            // Invalid bytes carry no codepoint, so the shared `Bad` marker must
+            // not be what decides it: compare the bytes those offsets hold, so
+            // `a\xffb` and `a\xfeb` stay two different strings rather than
+            // every malformed byte collapsing into one.
+            if (ca.cp != cb.cp) return false;
+            if (!std.mem.eql(u8, a[i .. i + ca.len], b[j .. j + cb.len])) return false;
+            i += ca.len;
+            j += cb.len;
+            continue;
+        }
+        if (ca.cp == cb.cp) {
+            i += ca.len;
+            j += cb.len;
+            continue;
+        }
+        // The base on one side takes the mark on the other and becomes the
+        // letter the other side already holds. Each comparison is against the
+        // *uncomposed* codepoint of the opposite side, so the composed pair is
+        // measured against the letter it stands for rather than against itself.
+        const ac = composedCp(a, i);
+        if (ac.len != 0 and ac.cp == cb.cp) {
+            i += ac.len;
+            j += cb.len;
+            continue;
+        }
+        const bc = composedCp(b, j);
+        if (bc.len != 0 and bc.cp == ca.cp) {
+            i += ca.len;
+            j += bc.len;
+            continue;
+        }
+        return false;
+    }
 }
 
 test "cap never splits a codepoint" {
@@ -723,4 +1024,51 @@ test "fuzz: a fold hit is a window of the haystack a plain match would also acce
         }
     };
     try std.testing.fuzz({}, Ctx.one, .{ .corpus = &fold_fuzz_corpus });
+}
+
+test "canonicalEqual answers yes for the two spellings of one word" {
+    // "café.md" composed, then the same name as a filesystem reports it.
+    try std.testing.expect(canonicalEqual("caf\xc3\xa9.md", "cafe\xcc\x81.md"));
+    try std.testing.expect(canonicalEqual("cafe\xcc\x81.md", "caf\xc3\xa9.md"));
+    // Czech, and the Turkish dotted capital I, across the two blocks. Note
+    // what is *not* here: "Ł" (U+0141) and "ğ" have no canonical
+    // decomposition at all — they are one codepoint in every form — so
+    // asserting their decomposed spelling exists would be asserting a table
+    // entry Unicode does not have.
+    try std.testing.expect(canonicalEqual("\xc4\x8d\x65\xc5\xa1", "\x63\xcc\x8c\x65\x73\xcc\x8c"));
+    try std.testing.expect(canonicalEqual("\xc4\xb0", "I\xcc\x87"));
+    try std.testing.expect(canonicalEqual("\xc5\x9f", "s\xcc\xa7"));
+    // Nor "ﬁ" the other way: it is a *compatibility* decomposition, and NFKC
+    // is deliberately not applied here (it would merge "ﬁle.md" into
+    // "file.md" as a different document).
+    try std.testing.expect(!canonicalEqual("\xef\xac\x81le.md", "file.md"));
+    // A mark with no precomposed form still matches itself, byte for byte.
+    try std.testing.expect(canonicalEqual("\xe1\x84\x80", "\xe1\x84\x80"));
+}
+
+test "canonicalEqual is identity, not fold: different words stay different" {
+    // The distinction from `fold`, and the reason this is not `fold`: fold
+    // drops every mark, so these three are one search query. A name that
+    // identifies a stored document must not merge them.
+    try std.testing.expect(!canonicalEqual("cafe.md", "caf\xc3\xa9.md"));
+    try std.testing.expect(!canonicalEqual("caf\xc3\xa9.md", "cafe.md"));
+    // Acute on e is not cedilla on c, and a letter is not a mark.
+    try std.testing.expect(!canonicalEqual("cafe\xcc\x81.md", "cafe\xcc\x88.md"));
+    try std.testing.expect(!canonicalEqual("cafe\xcc\x81.md", "cafx\xcc\x81.md"));
+    try std.testing.expect(!canonicalEqual("cafe\xcc\x81.md", "cafe\xcc\x81.mdx"));
+    try std.testing.expect(!canonicalEqual("cafe\xcc\x81.md", "cafe\xcc\x81"));
+    // Case is still case: nothing here folds.
+    try std.testing.expect(!canonicalEqual("caf\xc3\xa9.md", "Caf\xc3\xa9.md"));
+}
+
+test "canonicalEqual leaves ASCII alone and survives invalid bytes" {
+    try std.testing.expect(canonicalEqual("notes.md", "notes.md"));
+    try std.testing.expect(!canonicalEqual("notes.md", "notes.txt"));
+    try std.testing.expect(!canonicalEqual("", "a"));
+    // Invalid UTF-8 carries no codepoint, so it compares by byte rather than
+    // becoming a replacement character that could equal anything.
+    try std.testing.expect(canonicalEqual("a\xffb", "a\xffb"));
+    try std.testing.expect(!canonicalEqual("a\xffb", "a\xfeb"));
+    // A truncated sequence at the end is not a shorter name for the same one.
+    try std.testing.expect(!canonicalEqual("caf\xc3", "cafe"));
 }

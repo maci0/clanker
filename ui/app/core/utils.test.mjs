@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs, sessionMatchesFilter, searchFold, searchFoldFind, selectHasValue, calendarDaysAgo } from "./utils.js";
+import { clip, capBytes, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs, sessionMatchesFilter, searchFold, searchFoldFind, selectHasValue, calendarDaysAgo } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -349,4 +349,31 @@ test("calendarDaysAgo counts local days, not 24-hour blocks", function () {
   assert.equal(calendarDaysAgo(evening, justAfter), 1);
   assert.equal(calendarDaysAgo(justAfter, evening), -1);
   assert.equal(calendarDaysAgo(evening, evening), 0);
+});
+
+// capBytes is for a value whose limit is enforced by the *host* in bytes, so
+// the cut has to be in the unit the host counts. The case that needs it: a 300
+// character objective of two-byte letters is 600 bytes, so the 512-unit slice
+// this replaces left all 300 units in place and the guest refused the write.
+test("capBytes cuts a value the host enforces in bytes, whatever the script", function () {
+  const accents = "é".repeat(600);
+  assert.equal(accents.length, 600, "the input really is over the unit cap");
+  assert.ok(new TextEncoder().encode(accents).length > 512, "and over the byte cap too");
+  assert.ok(new TextEncoder().encode(capBytes(accents, 512)).length <= 512);
+
+  // ASCII is the case both units agree on, and it must not change.
+  assert.equal(capBytes("a".repeat(600), 512), "a".repeat(512));
+  assert.equal(capBytes("short", 512), "short");
+});
+
+test("capBytes never leaves half a multi-byte sequence behind", function () {
+  // Every prefix length of a two-byte and a four-byte letter, so no cut can
+  // land between a lead byte and its continuation.
+  for (const letter of ["é", "\u{1F600}"]) {
+    for (let max = 0; max <= 8; max++) {
+      const out = capBytes(letter.repeat(4), max);
+      assert.ok(new TextEncoder().encode(out).length <= max, `max=${max}`);
+      assert.ok(!out.includes("\uFFFD"), `max=${max} left a replacement character`);
+    }
+  }
 });

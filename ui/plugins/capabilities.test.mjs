@@ -132,7 +132,7 @@ const EXPOSED = {
   fmtDeadline: "fmt.deadline", fmtUnit: "fmt.unit", plural: "fmt.plural",
   searchFold: "fmt.fold", runLabel: "fmt.runLabel",
   providerUnusableReason: "fmt.providerReason",
-  clip: "text.clip", escapeHtml: "text.escape", searchFoldFind: "foldFind",
+  clip: "text.clip", capBytes: "text.capBytes", escapeHtml: "text.escape", searchFoldFind: "foldFind",
   peerColor: "color.peer", themeToken: "color.token",
   cssColorAlpha: "color.alpha", cssColorMix: "color.mix",
   // core/overlay.js, core/stream.js, core/icons.js

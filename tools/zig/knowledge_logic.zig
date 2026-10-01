@@ -19,6 +19,7 @@
 //! lost the document outright, and a retry of the pair raced the prune.
 
 const std = @import("std");
+const utf8 = @import("utf8");
 
 pub const Doc = struct {
     id: []const u8 = "",
@@ -47,9 +48,15 @@ pub const Collection = struct {
 /// The document `name` already has in this collection, or null when the name
 /// is new. First match wins: a collection written before this rule can hold
 /// more than one, and the oldest is the one an update should land on.
+///
+/// Compared under canonical equivalence rather than by bytes, because a name
+/// reaches this module in two spellings of one word: a filename read back off
+/// APFS is decomposed, the same filename typed into the POST or spelled by a
+/// model is composed, and byte equality would call them two documents and let
+/// the upsert below append a second copy. See `utf8.canonicalEqual`.
 pub fn findByName(docs: []const Doc, name: []const u8) ?usize {
     for (docs, 0..) |d, i| {
-        if (std.mem.eql(u8, d.name, name)) return i;
+        if (utf8.canonicalEqual(d.name, name)) return i;
     }
     return null;
 }
@@ -138,4 +145,29 @@ test "an add_doc reply is read as unindexed only when it says so" {
     // A refusal carries neither field, and a substring match must not find
     // the word in an error message the guest chose.
     try testing.expect(!replyIsUnindexed("{\"ok\":false,\"error\":\"indexed:false is not a valid name\"}"));
+}
+
+// A name is text, and text has two spellings. A filename that reached APFS is
+// stored decomposed (HFS+ normalizes what it holds and macOS reports the NFD
+// form), while the same filename typed into `POST /api/knowledge/<id>/docs`, or
+// spelled by a model, arrives composed. Byte equality calls them two documents,
+// so the upsert appends a second copy — the one outcome this module exists to
+// prevent — and both copies then answer `search` and get injected into every
+// later run. Prune reads one as the orphan and deletes it, and the name comes
+// back with a new id each time.
+test "a decomposed name finds the composed spelling already in the collection" {
+    const docs = [_]Doc{
+        docOf("a", "cafe\xcc\x81.md", "decomposed"),
+        docOf("b", "other.md", "x"),
+    };
+    // "café.md" as NFC, then as the NFD a filesystem reports.
+    try testing.expectEqual(@as(?usize, 0), findByName(&docs, "caf\xc3\xa9.md"));
+    try testing.expectEqual(@as(?usize, 0), findByName(&docs, "cafe\xcc\x81.md"));
+
+    // And this is not a general "ignores marks" match: a different letter, a
+    // different mark, or no mark at all is still a different document.
+    try testing.expectEqual(@as(?usize, null), findByName(&docs, "cafx\xcc\x81.md"));
+    try testing.expectEqual(@as(?usize, null), findByName(&docs, "cafe\xcc\x88.md"));
+    try testing.expectEqual(@as(?usize, null), findByName(&docs, "cafe.md"));
+    try testing.expectEqual(@as(?usize, 1), findByName(&docs, "other.md"));
 }

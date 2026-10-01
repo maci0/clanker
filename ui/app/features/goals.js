@@ -12,7 +12,7 @@
 // derives from it — cardOfGoal below is the one place the link is read, and
 // the title fallback there is what adopts cards created before the field
 // existed.
-import { readJson } from "../core/utils.js";
+import { readJson, capBytes } from "../core/utils.js";
 
 /* The goal cards and their run panels, as Tailwind utilities over the cabinet
    tokens (ui/app/tailwind.src.css). The status colours were four descendant
@@ -210,16 +210,15 @@ function mirrorGoalsToBoard(goals) {
       if (goalMirrorRequested[g.id]) { return; }
 
       goalMirrorRequested[g.id] = true;
-      // A board card title is capped at 512 characters but a goal objective
-      // is not, so an over-long objective used to make the mirror fail with
-      // "title must be 1-512 characters" and pin this goal as "requested"
-      // forever. Truncate the *display* title for the card; the full
-      // objective stays on the goal and is one click away on the Goals view.
-      // The durable card<->goal link is the card's `goal` field, so a shorter
-      // title does not orphan it.
-      var title = g.objective;
-
-      if (title.length > 512) { title = title.slice(0, 512); }
+      // A board card title is capped at 512 *bytes* (`cards.max_title_len`)
+      // but a goal objective is not, so an over-long objective made the mirror
+      // fail with "title must be 1-512 characters" and pinned this goal as
+      // "requested" forever. Truncate the *display* title; the full objective
+      // stays on the goal, and the durable card<->goal link is the card's
+      // `goal` field, so a shorter title does not orphan it. `capBytes` cuts in
+      // bytes, which is the unit the host checks; `slice` did not, and so let
+      // through every non-ASCII objective the guest then refused.
+      var title = capBytes(g.objective, 512);
 
       postBoard({
         op: "create",

@@ -59,6 +59,66 @@ export function clip(text, max) {
   return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-]+$/, "") + "\u2026";
 }
 
+/* A cap the *host* enforces in bytes, cut here in bytes. `clip` above is the
+   right cut for a label the browser lays out (grapheme clusters, so a combining
+   mark or a ZWJ sequence stays whole) and the wrong one for a value heading
+   into a guest or a byte-counted validator: `board`'s title cap is 512 *bytes*
+   (`cards.max_title_len`, checked with `.len` in Zig), and a 512-unit slice
+   satisfies it only for ASCII. A 300-character objective of two-byte letters is
+   600 bytes: `slice(0, 512)` leaves all 300 units untouched, the guest refuses
+   the create, and the goal mirror stays pinned to "requested" forever — the
+   exact failure the slice at the call site was added to prevent.
+
+   Bytes, not UTF-16 units: `TextEncoder` measures what the host counts, and it
+   encodes astral text as the 4 bytes the wire carries, so the two agree where
+   `String.length` counts a surrogate pair as 2 and the host counts 4. The cut
+   walks back off the replacement character `decode` leaves where the byte limit
+   split a sequence, so the caller gets a shorter string rather than a visibly
+   corrupted one. */
+export function capBytes(text, max) {
+  var str = String(text);
+  var have_codecs = typeof TextEncoder !== "undefined" && typeof TextDecoder !== "undefined";
+  var encoder = have_codecs ? new TextEncoder() : null;
+
+  if (!encoder) {
+    /* No encoder to measure with, so no way to be right: a code unit is at
+       least one byte and at most three (a surrogate pair is 4 over 2), and
+       this bound understates every one of those. Better a short string the
+       host accepts than a full one it refuses. */
+    if (str.length * 3 <= max) { return str; }
+    return str.slice(0, Math.floor(max / 3));
+  }
+
+  var bytes = encoder.encode(str);
+
+  if (bytes.length <= max) { return str; }
+
+  var end = max;
+
+  /* A byte limit can land between a lead byte and the continuation bytes that
+     finish it. Find that lead byte and drop the partial sequence rather than
+     decoding it, which would leave a U+FFFD where a shorter string belongs.
+     Walking back over continuation bytes reaches it in at most three steps
+     (the longest UTF-8 sequence is four bytes), so the loop cannot run long. */
+  var lead = end - 1;
+
+  while (lead >= 0 && (bytes[lead] & 0xc0) === 0x80 && end - lead < 4) lead -= 1;
+
+  if (lead >= 0 && end - lead < seqLen(bytes[lead])) end = lead;
+
+  return new TextDecoder().decode(bytes.subarray(0, end));
+}
+
+/* How many bytes the UTF-8 sequence starting at this lead byte needs. A byte
+   that is not a valid lead has no sequence, and the caller keeps it as the
+   one-byte unit `encode` produced for it. */
+function seqLen(lead) {
+  if (lead < 0xc2 || lead > 0xf4) { return 1; }
+  if (lead < 0xe0) { return 2; }
+  if (lead < 0xf0) { return 3; }
+  return 4;
+}
+
 export function fuzzyMatch(query, text) {
   if (!query) { return true; }
 

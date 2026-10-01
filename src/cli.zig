@@ -15929,6 +15929,13 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
 /// every file that synced — a file that is present but unreadable, empty, or
 /// past the per-sync cap is still present, and reading "did not sync" as
 /// "deleted" is what turns a failed read into a deleted document.
+///
+/// The name comparison is canonical equivalence, because `folder_names` come
+/// from a directory listing while a stored doc name may have been spelled
+/// composed: on APFS the listing hands back the decomposed form, so a byte
+/// comparison against a document added over HTTP as a composed `café.md` reads the
+/// file as absent and prunes the document that file is still backing. That is
+/// the one outcome here that loses data rather than leaving a stale row.
 fn knowledgeDocIsOrphaned(
     listing_complete: bool,
     doc_name: []const u8,
@@ -15941,7 +15948,7 @@ fn knowledgeDocIsOrphaned(
     } else false;
     if (!looks_synced) return false;
     for (folder_names) |n| {
-        if (std.mem.eql(u8, n, doc_name)) return false;
+        if (utf8.canonicalEqual(n, doc_name)) return false;
     }
     return true;
 }
@@ -15967,6 +15974,21 @@ test "a folder sync prunes only what a whole listing proved gone" {
 
     // An empty folder orphans everything a whole listing did not show.
     try std.testing.expect(knowledgeDocIsOrphaned(true, "gone.md", &exts, &.{}));
+}
+
+test "a folder sync prunes across the two spellings of one filename" {
+    const exts = [_][]const u8{ ".md", ".txt" };
+    // The listing reads the decomposed form off APFS; the document was stored
+    // composed, because that is how it was typed. Byte equality would call the
+    // file absent and delete the document it is still backing.
+    const listed = [_][]const u8{"cafe\xcc\x81.md"};
+    try std.testing.expect(!knowledgeDocIsOrphaned(true, "caf\xc3\xa9.md", &exts, &listed));
+    try std.testing.expect(!knowledgeDocIsOrphaned(true, "cafe\xcc\x81.md", &exts, &listed));
+
+    // It is still an identity check, not a search: a different file in the
+    // folder is not this document, and the document is still prunable.
+    const other = [_][]const u8{"cafe\xcc\x80.md"};
+    try std.testing.expect(knowledgeDocIsOrphaned(true, "caf\xc3\xa9.md", &exts, &other));
 }
 
 fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest: []const u8, target: []const u8, body: []const u8) ?[]const u8 {
