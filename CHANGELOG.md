@@ -23,6 +23,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   nonzero) counting documents stored but missing from the search index. The
   `knowledge` tool's `add_doc` reply now includes `indexed`, plus
   `index_error` when the index write failed.
+- Release publishing: the tag's `release-publish` job now compares the tag with
+  `build.zig.zon`, `package.json` and `CHANGELOG.md` before creating anything,
+  through the new `scripts/release-check.sh manifests vX.Y.Z` mode. The
+  cross-compiled targets carry no runnable binary, so their bytes previously
+  reached the Release with no check of that kind; the mode needs no executable.
+  The job is also re-runnable: where `gh release create` refused a tag that
+  already had a release, it now uploads onto that release with the same bytes.
 
 ### Fixed
 

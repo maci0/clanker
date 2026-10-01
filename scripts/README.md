@@ -264,3 +264,24 @@ and on a `clanker-*` binary that has no sidecar beside it: a matrix leg that
 never uploaded would otherwise leave a release that verified clean and was
 missing a target. macOS has no `sha256sum`, so the script uses `shasum -a 256`
 there; both write the same sidecar format.
+
+## Release contract
+
+`scripts/release-check.sh` refuses a tag, a changelog, a manifest and an
+executable that describe four different releases:
+
+```bash
+./scripts/release-check.sh v0.11.1 zig-out/bin/clanker
+./scripts/release-check.sh manifests v0.11.1
+```
+
+The two-argument form runs everything, including `--version` on the binary. The
+`manifests` form runs the half that needs no executable — tag shape,
+`build.zig.zon`, the secondary `package.json` versions, and the dated
+`CHANGELOG.md` section — and that is the form the tag's `release-publish` job
+uses, because two of the four release targets are cross-compiled and their bytes
+cannot answer `--version` on the runner that built them. Running it in the
+publish job puts the version check on the last step before a release is created,
+which is the cheapest place to notice a mismatch; re-running that job after a
+later failure uploads onto the existing release with the identical bytes
+instead of refusing the tag outright.

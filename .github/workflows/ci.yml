@@ -416,6 +416,17 @@ jobs:
       - name: Verify artifact checksums
         run: ./scripts/release-checksum.sh verify dist
 
+      # The release-wide half of the release contract, run here rather than
+      # only in the matrix: `release-check.sh` needs a runnable binary for its
+      # `--version` half, and two of the four targets are cross-compiled, so
+      # their bytes would reach the Release with nothing having compared this
+      # tag to build.zig.zon. The `manifests` mode is that half without the
+      # binary, and this job — the last one before anything is created — is the
+      # cheapest place to refuse a release describing a version other than its
+      # tag.
+      - name: Verify release contract
+        run: ./scripts/release-check.sh manifests "${GITHUB_REF_NAME}"
+
       # The changelog is the source of release notes: extract the section
       # between this version's heading and the next `## [` heading (whichever
       # comes first, Unreleased or the prior version), so notes never drift
@@ -436,10 +447,24 @@ jobs:
       - name: Generate software bill of materials
         run: python3 scripts/sbom.py -o dist/sbom.cdx.json
 
+      # `gh release create` refuses a tag that already carries a release, so a
+      # re-run of this job after a later step failed (or after the create
+      # itself succeeded and the response never arrived) died permanently and
+      # left the operator deleting the release by hand before the retry could
+      # attach anything. Converge instead: upload onto whatever release the tag
+      # already carries, replacing any file of the same name (`--clobber`), so
+      # a re-run finishes the job rather than starting a manual repair. The
+      # bytes are identical on both paths — same tag, same matrix, checksums
+      # verified above — so overwriting one changes nothing a consumer sees.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists; uploading onto it"
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+          fi

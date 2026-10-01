@@ -69,14 +69,22 @@ Before creating a tag:
    checkout build.
 5. Run `./scripts/release-check.sh vMAJOR.MINOR.PATCH zig-out/bin/clanker`. CI repeats
    this check for every version tag and rejects a tag, changelog, manifest, or
-   binary version mismatch.
+   binary version mismatch. The matrix runs it for each target whose binary the
+   runner can execute; for the cross-compiled ones, and once more for the
+   release as a whole, CI runs `./scripts/release-check.sh manifests
+   vMAJOR.MINOR.PATCH` — the same tag, `build.zig.zon`, `package.json` and
+   `CHANGELOG.md` checks without the `--version` half, which no cross-compiled
+   binary can answer.
 6. Create release notes from the changelog and create the immutable version tag.
    Never move a published tag or replace an artifact for an existing version;
    publish a new patch release instead. The tag's release job builds one binary
    per target with a `.sha256` sidecar and refuses to publish unless every
    sidecar verifies against the merged artifacts
    (`scripts/release-checksum.sh`, see [scripts/README.md](scripts/README.md));
-   both the binaries and the sidecars are attached to the Release.
+   both the binaries and the sidecars are attached to the Release. Re-running
+   the publish job after a failure finishes the release rather than refusing the
+   tag: it uploads onto the release the tag already carries, replacing files of
+   the same name with the identical bytes.
 7. If you generate an SBOM locally rather than letting the tag's
    `release-publish` job do it, export `SOURCE_DATE_EPOCH` first. The
    generated document is byte-identical for a given tag only with it set;
