@@ -2208,6 +2208,17 @@ pub const Config = struct {
                 cfgLog(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
                 return error.VertexProjectMissing;
             }
+        } else if (!hasHttpScheme(p.base_url)) {
+            // Same rule as `[[peers]].url` above, and the same one
+            // `unconfiguredReason` applies, moved to load. A `base_url` with no
+            // scheme (or empty) is not a provider that happens to be down:
+            // `joinBaseAndPath` concatenates it with the wire path, so the
+            // request goes out as a schemeless target and the first sign is an
+            // opaque transport failure on the first chat request. Vertex kinds
+            // are exempt above: their adapter builds the host from
+            // project/location and legitimately carries an empty `base_url`.
+            cfgLog(.error_, "provider '{s}': \"base_url\" must start with http:// or https://", .{name});
+            return error.ProviderBaseUrlSchemeInvalid;
         }
 
         // Models are validated after the top-level "models" table is
@@ -2414,6 +2425,15 @@ pub const Config = struct {
                 cfgLog(.error_, "models[\"{s}/{s}\"]: cost_per_1m_output must be >= 0", .{ provider_name, model_name });
                 return error.ModelCostOutOfRange;
             }
+        }
+        // A model entry overrides its provider's base_url for URL building
+        // (`wireProvider`), so the provider-level scheme check never sees this
+        // string: a bare host here reaches the HTTP client as a schemeless
+        // target and the only sign is a transport failure on the first request
+        // through that model, with nothing naming the line that caused it.
+        if (m.base_url.len > 0 and !hasHttpScheme(m.base_url)) {
+            cfgLog(.error_, "models[\"{s}/{s}\"]: \"base_url\" must start with http:// or https://", .{ provider_name, model_name });
+            return error.ModelBaseUrlSchemeInvalid;
         }
     }
 
@@ -2676,7 +2696,7 @@ pub const Config = struct {
             // connect, and the first sign of it is a failed chat fan-out at
             // run time, long from the line that caused it. Same rule as
             // `unconfiguredReason`'s base_url scheme check, at load instead.
-            if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) {
+            if (!hasHttpScheme(url)) {
                 cfgLog(.error_, "[[peers]] \"{s}\": url must start with http:// or https://, or be the address of an http(s) peer", .{name});
                 return error.PeerUrlSchemeInvalid;
             }
@@ -2725,6 +2745,14 @@ pub const Config = struct {
     /// valid.
     fn isBareHost(host: []const u8) bool {
         return host.len > 0 and std.mem.findAny(u8, host, ":/#@% \t\r\n") == null;
+    }
+
+    /// Whether `url` names an http(s) endpoint. One rule for the two config
+    /// keys that concatenate onto a request path (`providers.<name>.base_url`
+    /// and `[[peers]].url`), so a bare host is refused the same way in both
+    /// places rather than in whichever one remembered the check.
+    fn hasHttpScheme(url: []const u8) bool {
+        return std.mem.startsWith(u8, url, "http://") or std.mem.startsWith(u8, url, "https://");
     }
 
     fn parseNotify(arena: std.mem.Allocator, v: json.Value) !Notify {
@@ -5064,6 +5092,102 @@ test "an unknown provider kind is rejected at load" {
     try std.testing.expect(std.mem.find(u8, ProviderKind.known_names, "openai_compat") != null);
     try std.testing.expect(std.mem.find(u8, ProviderKind.known_names, "claude") != null);
     try std.testing.expect(ProviderKind.fromStr("flux_capacitor") == null);
+}
+
+test "a base_url with no http scheme is refused at load" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    // `joinBaseAndPath` concatenates base_url with the wire path, so a bare
+    // host goes out as "/chat/completions" and the first sign is a transport
+    // failure on the first chat request, far from the line that caused it.
+    // Same rule `[[peers]].url` already refuses at load.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "api.example.test/v1" } }
+        \\models = { "p/m" = { provider = "p" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.ProviderBaseUrlSchemeInvalid,
+        Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"),
+    );
+
+    // An empty base_url is the same mistake with the host deleted, and is
+    // refused the same way: `unconfiguredReason` calls it "base_url is empty"
+    // only when a provider is selected, which is later than the load.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "" } }
+        \\models = { "p/m" = { provider = "p" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.ProviderBaseUrlSchemeInvalid,
+        Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"),
+    );
+
+    // Both schemes load, so the check refuses the typo and not the endpoint.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "http://127.0.0.1:11434/v1" }, q = { base_url = "https://api.example.test" } }
+        \\models = { "p/m" = { provider = "p" }, "q/m" = { provider = "q" } }
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", cfg.providers.get("p").?.base_url);
+    try std.testing.expectEqualStrings("https://api.example.test", cfg.providers.get("q").?.base_url);
+
+    // A model entry overrides its provider base_url for URL building, so the
+    // provider-level check never sees this string. Same refusal here.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://api.example.test" } }
+        \\models = { "p/m" = { provider = "p", base_url = "api.example.test/v2" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.ModelBaseUrlSchemeInvalid,
+        Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"),
+    );
+
+    // The override still works when it names a scheme.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://api.example.test" } }
+        \\models = { "p/m" = { provider = "p", base_url = "https://eu.example.test/v2" } }
+        ,
+    });
+    const routed = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqualStrings(
+        "https://eu.example.test/v2",
+        routed.providers.get("p").?.wireProvider().base_url,
+    );
+
+    // Vertex builds its host from project/location, so an empty base_url is
+    // correct there and must keep loading.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "v"
+        \\providers = { v = { kind = "vertex", base_url = "", project = "p", location = "us-east5" } }
+        \\models = { "v/m" = { provider = "v" } }
+        ,
+    });
+    const vertex = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqualStrings("", vertex.providers.get("v").?.base_url);
 }
 
 test "a single model needs no default_model" {
