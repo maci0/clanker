@@ -18045,7 +18045,6 @@ fn allowListFor(path: []const u8) ?[]const u8 {
         .{ .path = "/api/config/table/remove", .allow = "POST", .exact = true },
         .{ .path = "/api/config/status", .allow = "GET", .exact = true },
         .{ .path = "/api/config/raw", .allow = "GET, POST", .exact = true },
-        .{ .path = "/api/config", .allow = "GET", .exact = false },
         .{ .path = "/api/plugins/config", .allow = "POST", .exact = true },
         .{ .path = "/api/plugins", .allow = "GET, POST", .exact = true },
         .{ .path = "/api/providers/models", .allow = "GET", .exact = false },
@@ -18136,6 +18135,49 @@ test "allowListFor names the verbs a known path takes, and nothing else" {
     try std.testing.expect(allowListFor("/api/nope") == null);
     try std.testing.expect(allowListFor("/api/statuses") == null);
     try std.testing.expect(allowListFor("/api/providersfoo") == null);
+}
+
+test "every path the allow table names is a route that actually answers" {
+    // A row for a path nothing serves is worse than a missing row: a missing
+    // one leaves the bare 404 the path deserves, while a present one tells a
+    // client its verb is wrong on a URL that does not exist, and sends it
+    // looking for a route that was never written. `/api/config` sat in the
+    // table with "GET" and no GET handler anywhere; the rows below are the
+    // evidence each remaining one is real.
+    const routed = [_][]const u8{
+        "/api/status",          "/api/metrics",          "/api/peers",
+        "/api/runs",            "/api/mesh/map",         "/api/mesh/status",
+        "/api/mesh/pending",    "/api/janitor",          "/api/files",
+        "/api/logs",            "/api/events",           "/api/stats",
+        "/api/mcp/servers",     "/api/workflows",        "/api/goals",
+        "/api/skills",          "/api/board",            "/api/feedback",
+        "/api/providers",       "/api/providers/models", "/api/catalog",
+        "/api/catalog/refresh", "/api/config/status",    "/api/config/raw",
+        "/api/config/model",    "/api/config/model/set", "/api/config/model/remove",
+        "/api/config/default",  "/api/config/table/set", "/api/config/table/remove",
+        "/api/plugins",         "/api/plugins/config",   "/api/webui/plugins",
+        "/api/chat/rooms",      "/api/chat/pins",        "/api/chat/messages",
+        "/api/chat/message",    "/api/chat/send",        "/api/chat/subscribe",
+        "/api/chat/react",      "/api/chat/edit",        "/api/chat/delete",
+        "/api/chat/pin",        "/api/chat/topic",       "/api/mesh/join",
+        "/api/mesh/leave",      "/api/knowledge",        "/api/prompts",
+        "/api/arena",           "/api/schedule",         "/api/compare",
+        "/api/workspaces",      "/api/sessions",         "/api/live",
+        "/api/notify",          "/api/run",              "/api/steer",
+        "/api/ask",             "/api/a2a/message",      "/.well-known/agent.json",
+        "/health/live",         "/health/ready",
+    };
+    for (routed) |path| {
+        try std.testing.expect(allowListFor(path) != null);
+    }
+    // The config editor's own path names no route at all, so it keeps the 404
+    // rather than a 405 pointing at a GET handler that does not exist.
+    try std.testing.expect(allowListFor("/api/config") == null);
+    // The five record stores answer out of `recordStoreForPath`, so the table
+    // covers them without a row each.
+    for ([_][]const u8{ "/api/reports", "/api/research", "/api/rfc", "/api/adr", "/api/prd" }) |path| {
+        try std.testing.expectEqualStrings("GET, POST", allowListFor(path).?);
+    }
 }
 
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy

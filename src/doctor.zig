@@ -630,6 +630,24 @@ fn checkNetworkExposure(
     }
 }
 
+/// What a provider's `base_url` tells doctor. An empty one is a legitimate
+/// "use the provider default" for the two Vertex kinds, which build their
+/// endpoint from `location`; every other kind also has a default, but its
+/// entry is expected to carry the URL, so doctor still says so (as a warning
+/// for a non-default entry). `llm_registry.unconfiguredReason` is the canonical
+/// availability gate and exempts the same Vertex pair, so the two must not
+/// disagree about what counts as configured.
+const BaseUrlVerdict = enum { ok, default_url, lacks_scheme, empty };
+
+fn baseUrlVerdict(p: *const config.Provider) BaseUrlVerdict {
+    if (p.base_url.len > 0) {
+        const has_scheme = std.mem.startsWith(u8, p.base_url, "http://") or
+            std.mem.startsWith(u8, p.base_url, "https://");
+        return if (has_scheme) .ok else .lacks_scheme;
+    }
+    return if (llm_registry.forKind(p.kind).auth.needs_project_location) .default_url else .empty;
+}
+
 /// Every check doctor runs, so `setup` can end with the same report rather
 /// than a second, drifting copy of it.
 fn runChecks(
@@ -697,13 +715,25 @@ fn runChecks(
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
         const label = if (is_default) try std.fmt.allocPrint(arena, "{s} (default)", .{p.name}) else p.name;
         // A base_url without a scheme produces an opaque runtime connection
-        // failure; surface the typo at startup instead.
-        if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://")) {
-            rep.line(
+        // failure; surface the typo at startup instead. An *empty* base_url is
+        // not that typo: the two Vertex kinds build their endpoint from
+        // `location`, so `base_url = ""` is the shipped way to say "use the
+        // provider default", and `llm_registry.unconfiguredReason` exempts
+        // exactly that pair. Without the same exemption doctor failed the
+        // operator's own valid configuration for the default provider.
+        switch (baseUrlVerdict(p)) {
+            .ok => {},
+            .default_url => rep.line(.ok, label, try std.fmt.allocPrint(
+                arena,
+                "base_url is empty; the {s} endpoint is built from location '{s}'",
+                .{ p.name, p.location },
+            )),
+            .lacks_scheme => rep.line(
                 if (is_default) .fail else .warn,
                 label,
                 try std.fmt.allocPrint(arena, "{s} lacks http(s):// scheme", .{p.base_url}),
-            );
+            ),
+            .empty => rep.line(if (is_default) .fail else .warn, label, "base_url is empty"),
         }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
@@ -1526,4 +1556,32 @@ test "the backup env file is the one the units read, not the XDG one" {
     var bare = std.process.Environ.Map.init(std.testing.allocator);
     defer bare.deinit();
     try std.testing.expect(backupEnvPath(arena, &bare) == null);
+}
+
+test "doctor reads an empty Vertex base_url as the provider default, not a typo" {
+    // Both Vertex kinds build their endpoint from `location`, so an empty
+    // `base_url` is the shipped way to say "use the provider default" -- and
+    // the shipped config.toml carries exactly that on both entries.
+    // `unconfiguredReason` exempts it too, so failing it here reported a valid
+    // configuration as broken and took the whole doctor exit code with it.
+    for ([_]config.ProviderKind{ .vertex, .vertex_anthropic }) |kind| {
+        var p = config.Provider{ .name = "probe", .kind = kind, .base_url = "" };
+        try std.testing.expectEqual(BaseUrlVerdict.default_url, baseUrlVerdict(&p));
+
+        // A real Vertex endpoint is still what an explicit URL must look like.
+        p.base_url = "https://us-central1-aiplatform.googleapis.com";
+        try std.testing.expectEqual(BaseUrlVerdict.ok, baseUrlVerdict(&p));
+
+        // And a scheme-less one is the typo the check exists for, on either kind.
+        p.base_url = "us-central1-aiplatform.googleapis.com";
+        try std.testing.expectEqual(BaseUrlVerdict.lacks_scheme, baseUrlVerdict(&p));
+    }
+
+    // A provider whose default lives in the registry still has an entry that
+    // is expected to carry its URL, so an empty one is reported, not ok.
+    var other = config.Provider{ .name = "probe", .kind = .openai_compat, .base_url = "" };
+    try std.testing.expectEqual(BaseUrlVerdict.empty, baseUrlVerdict(&other));
+
+    other.base_url = "http://127.0.0.1:8080/v1";
+    try std.testing.expectEqual(BaseUrlVerdict.ok, baseUrlVerdict(&other));
 }
