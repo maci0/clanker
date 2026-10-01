@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [Copy fallback selects no input value](copy-input-selection.md) — Current
+
 - [A worktree's linked state entry was replaced by a private copy](worktree-state-link-replaced-by-a-copy.md) — Current
 
 - [A hand-made git worktree has no config.local.toml or .env](hand-made-worktree-has-no-local-config.md) — Current

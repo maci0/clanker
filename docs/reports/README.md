@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Copy fallback selects no input value](bugs/2026-10-01-copy-input-selection.md) — Resolved
+
 - [gate lint/provider-kind steps cannot read a .zig file past 1 MiB](bugs/2026-08-30-gate-lint-and-provider-kind-scan-fail-on-files-over-1-mib.md) — Resolved
 - [If-None-Match ignores weak ETags and `*`, so revalidation behind an ETag-weakening proxy never 304s](bugs/2026-08-29-if-none-match-ignores-weak-etags-and-star.md) — Resolved
 - [lint gate fails StreamTooLong once src/cli.zig crossed 1 MiB](bugs/2026-08-29-lint-gate-streamtoolong-on-cli-zig.md) — Resolved
@@ -407,6 +409,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [Copy fallback selects no input value](investigations/2026-10-01-copy-input-selection.md) — Resolved
+
 - [The release-contract gate does not require a CHANGELOG entry per change](investigations/2026-08-24-release-contract-never-reads-the-diff.md) — Resolved
 
 - [The SIGWINCH flood journey fails in any worktree where apply-patches.sh has not been run](investigations/2026-08-23-pty-resize-journey-fails-in-an-unpatched-worktree.md) — Resolved
