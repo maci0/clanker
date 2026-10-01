@@ -42,6 +42,7 @@ const toml_edit = @import("util/toml_edit.zig");
 const json_util = @import("util/json.zig");
 const spin_mutex = @import("util/spin_mutex.zig");
 const commit_logic = @import("commit_logic");
+const sessions_logic = @import("sessions_logic");
 const preset_mod = @import("preset/preset.zig");
 // tui/transcript.zig's MdStream is still used by cmdRun's own run_md; the
 // rest of tui/* (input, region, statusbar, palette, approval, term) was
@@ -11805,18 +11806,15 @@ fn handleRuns(
     respondCompressible(arena, stream, accepts_gzip, body);
 }
 
-/// Shortest query worth running, in codepoints. One or two characters match
-/// nearly every transcript, so the result would be a list of everything, which
-/// is the same as no result and costs a full read of every session to produce.
-///
-/// Counted in characters, not bytes, because that is the unit the rule is
-/// about and the unit the FTS trigram tokenizer matches in. Counting bytes let
-/// a two-character CJK query (6 bytes) past this guard and into the index,
-/// where a trigram over two codepoints matches nothing.
-const session_search_min_len = 3;
+/// One or two characters match nearly every transcript, so the result would be
+/// a list of everything, which is the same as no result and costs a full read
+/// of every session to produce. The bound and the codepoint count live in the
+/// helper the search surfaces share, so the HTTP guard and the guest's own
+/// cannot drift into disagreeing about what "three characters" means.
+const session_search_min_len = sessions_logic.search_min_len;
 
 fn tooShortToSearch(q: []const u8) bool {
-    return (std.unicode.utf8CountCodepoints(q) catch q.len) < session_search_min_len;
+    return sessions_logic.queryTooShort(q);
 }
 
 /// `GET /api/sessions/search?q=<text>` — every saved conversation with a

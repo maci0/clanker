@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const char_len = @import("char_len");
 const utf8 = @import("utf8");
 
 const learnings_path = "state/learnings.md";
@@ -29,9 +30,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .string => |m| m,
         else => return lib.fail(out, "match must be a string"),
     };
-    // A blank match would delete the whole memory, which is never what anyone
-    // meant to ask for.
-    if (match.len < 4) return lib.fail(out, "match must be at least 4 characters, so it cannot wipe the file by accident");
+    // A blank (or near-blank) match would delete most of the memory, which is
+    // never what anyone meant to ask for. Counted in characters, not bytes:
+    // the value below is then used as a substring against every line, so a
+    // two-character CJK match or a one-character emoji is broadly matching
+    // even though it clears a byte floor of four.
+    if (char_len.shorterThan(match, 4)) return lib.fail(out, "match must be at least 4 characters, so it cannot wipe the file by accident");
 
     var dry_run = false;
     if (parsed.object.get("dry_run")) |d| {

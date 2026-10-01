@@ -4,11 +4,11 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_cache", "gh_format", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "knowledge_logic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "num", "patch_logic", "plugin_config_logic", "prompt_quote", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
+const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "char_len", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_cache", "gh_format", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "knowledge_logic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "num", "patch_logic", "plugin_config_logic", "prompt_quote", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
 
 /// The `tools/zig` helpers the host links directly, so the CLI and the guest
 /// that shares a file run the same source rather than two copies of it.
-const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "schedule_logic", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic", "goal_store" };
+const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "schedule_logic", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint", "knowledge_logic", "goal_store", "sessions_logic" };
 
 /// `base` plus one module per linked helper. Unlike the wasm guests and the
 /// `host_tested_helpers` test modules below, these get no named-module import
@@ -21,6 +21,7 @@ fn linkedHelperImports(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     base: []const std.Build.Module.Import,
+    char_len_mod: *std.Build.Module,
 ) []const std.Build.Module.Import {
     const imports = b.allocator.alloc(std.Build.Module.Import, base.len + linked_helpers.len) catch @panic("OOM");
     @memcpy(imports[0..base.len], base);
@@ -43,6 +44,10 @@ fn linkedHelperImports(
             if (std.mem.eql(u8, dep.name, "schedule_cron")) slot.module.addImport("schedule_cron", dep.module);
         }
     }
+    // Same rule for `char_len`: `sessions_logic` shares a file with the host
+    // CLI and enforces the search minimum in it, so the count behind that
+    // minimum must be the one the guest and the tests use.
+    for (imports[base.len..]) |*slot| slot.module.addImport("char_len", char_len_mod);
     return imports;
 }
 
@@ -220,6 +225,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Same file the wasm guests and the host test modules get, so an "at least
+    // N characters" floor is counted the same way wherever it is enforced.
+    // Declared before the first `linkedHelperImports` call, which needs it.
+    const helper_char_len_mod = b.createModule(.{
+        .root_source_file = b.path("tools/zig/char_len.zig"),
+        .target = exe_target,
+        .optimize = optimize,
+    });
+
     // ui/vendor.zig: embeds ui/vendor/* (vendored third-party JS served by the
     // host HTTP server). Separate module so @embedFile resolves within ui/.
     const ui_vendor_mod = b.createModule(.{
@@ -274,7 +288,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "vaxis", .module = vaxis_mod },
                 .{ .name = "toml", .module = toml_mod },
                 .{ .name = "vendor", .module = ui_vendor_mod },
-            }),
+            }, helper_char_len_mod),
         }),
     });
     b.installArtifact(exe);
@@ -361,7 +375,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "toml", .module = toml_test_mod },
             .{ .name = "vendor", .module = ui_vendor_test_mod },
             .{ .name = "sqlite3_h", .module = sqlite_h_test.createModule() },
-        }),
+        }, helper_char_len_mod),
     });
     // The committed config.toml, for the config.zig test that checks it still
     // documents every key the loader accepts. Test-only on purpose: the
@@ -630,6 +644,9 @@ pub fn build(b: *std.Build) void {
                 // Same shape: the fuzz-corpus seed encoding, so a helper's
                 // corpus reaches its harness intact.
                 .{ .name = "fuzz_corpus", .module = helper_fuzz_corpus_mod },
+                // Same shape: the codepoint count every "at least N
+                // characters" guard is written against.
+                .{ .name = "char_len", .module = helper_char_len_mod },
             },
         });
         if (std.mem.eql(u8, stem, "schedule_cron")) helper_schedule_cron_mod = mod;
@@ -750,6 +767,14 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The character count behind every "at least N characters" floor a guest
+    // states, so `sessions` and `note_forget` cannot disagree about whether a
+    // floor counts bytes or codepoints.
+    const tool_char_len_mod = b.createModule(.{
+        .root_source_file = b.path("tools/zig/char_len.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
     // The Smith encoding a fuzz corpus seed needs, the same file the host test
     // modules get, so a helper's corpus means the same thing in both.
     const tool_fuzz_corpus_mod = b.createModule(.{
@@ -812,6 +837,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "session_id", .module = tool_session_id_mod },
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                     .{ .name = "num", .module = tool_num_mod },
+                    .{ .name = "char_len", .module = tool_char_len_mod },
                     .{ .name = "fuzz_corpus", .module = tool_fuzz_corpus_mod },
                     .{ .name = "schedule_cron", .module = tool_schedule_cron_mod },
                 },

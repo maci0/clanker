@@ -6,6 +6,7 @@
 //! hit shape.
 
 const std = @import("std");
+const char_len = @import("char_len");
 const utf8 = @import("utf8");
 
 pub const Listing = struct {
@@ -94,6 +95,19 @@ pub fn sortOldestFirst(items: []Listing) void {
 /// Shortest query the search surfaces will run. One or two characters match
 /// nearly every transcript, which is the same as matching none.
 pub const search_min_len: usize = 3;
+
+/// Whether `q` is shorter than `search_min_len` characters, and so not worth
+/// running. Counted in codepoints, not bytes, because that is the unit the
+/// rule is about and the unit the FTS trigram tokenizer matches in
+/// (`session_fts.candidates` refuses under three the same way, so its answer
+/// is a null that drops the query onto the linear scan over every session).
+/// A byte count let a one-character CJK query (three bytes) past the guest's
+/// guard and into a full read of the archive; the HTTP guard and this one
+/// share the rule so the two surfaces cannot disagree about it.
+pub fn queryTooShort(q: []const u8) bool {
+    return char_len.shorterThan(q, search_min_len);
+}
+
 /// Cap on conversations returned for one query. A search surface is for
 /// finding the conversation, not paging the archive.
 pub const search_limit: usize = 50;
@@ -304,6 +318,20 @@ test "writeJson matches the picker contract" {
     try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
     try std.testing.expectEqualStrings("s1", first.object.get("id").?.string);
     try std.testing.expect(!first.object.get("archived").?.bool);
+}
+
+test "the short-query guard counts characters, so a one-character CJK query is refused" {
+    // Three bytes, one character: a byte count let this past the guard and
+    // into a linear scan of every saved conversation.
+    try std.testing.expect(queryTooShort("\u{65e5}"));
+    try std.testing.expect(queryTooShort("\u{65e5}\u{672c}"));
+    try std.testing.expect(queryTooShort("ab"));
+    try std.testing.expect(queryTooShort(""));
+    try std.testing.expect(!queryTooShort("abc"));
+    try std.testing.expect(!queryTooShort("\u{65e5}\u{672c}\u{8a9e}"));
+    // Invalid UTF-8 falls back to its byte count rather than refusing every
+    // query a bad paste can produce.
+    try std.testing.expect(!queryTooShort("\xff\xfe\xfd"));
 }
 
 test "sortNewestFirst puts the latest update first" {

@@ -51,7 +51,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk if (trimmed.len == 0) null else trimmed;
     };
     if (q) |query| {
-        if (query.len < logic.search_min_len) return lib.fail(out, "query must be at least 3 characters");
+        if (logic.queryTooShort(query)) return lib.fail(out, "query must be at least 3 characters");
         return searchSessions(out, query);
     }
     const as_json = if (lib.optStr(req, "format")) |fmt| std.mem.eql(u8, fmt, "json") else false;
