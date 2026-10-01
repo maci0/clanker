@@ -111,6 +111,22 @@ fn compactDuration(buf: []u8, ms: u64) []const u8 {
     return std.fmt.bufPrint(buf, "{d}m{d:0>2}s", .{ ms / 60_000, (ms % 60_000) / 1000 }) catch "?";
 }
 
+/// Mean of `total` milliseconds over `samples`, rounded to the nearest
+/// millisecond.
+///
+/// Integer division was two defects at once. `total / samples` with a `u64`
+/// total and a `u32` divisor divides in `u32`, so a session whose summed
+/// time-to-first-token passed 2^32 ms (49.7 days of LLM time in one process)
+/// wrapped to a mean near zero. And truncating rather than rounding reports a
+/// mean up to a full millisecond below the truth, so this strip and the web
+/// composer's `fmtMs(ttftTotal / ttftSamples)` disagree on the same
+/// conversation. Rounding halves upward, so the two agree to the millisecond.
+fn meanMs(total: u64, samples: u32) u64 {
+    if (samples == 0) return 0;
+    const n: u64 = @intCast(samples);
+    return (total +| n / 2) / n;
+}
+
 /// The separator between stats segments: the same middot the REPL status bar
 /// already puts between its own fields.
 const dot = " \xc2\xb7 ";
@@ -178,7 +194,7 @@ fn writeSession(w: *std.Io.Writer, s: SessionStats) !void {
     });
     var rate_started = false;
     if (s.ttft_samples > 0) {
-        try w.print(" | TTFT avg {s}", .{compactDuration(&a, s.ttft_ms_total / s.ttft_samples)});
+        try w.print(" | TTFT avg {s}", .{compactDuration(&a, meanMs(s.ttft_ms_total, s.ttft_samples))});
         rate_started = true;
     } else if (s.live_ttft_ms) |ttft| {
         try w.print(" | TTFT {s}", .{compactDuration(&a, ttft)});
@@ -487,4 +503,21 @@ test "formatSummaryNotice names what the agent loop said it swallowed, or not at
     const uncounted = try formatSummaryNotice(std.testing.allocator, 0);
     defer std.testing.allocator.free(uncounted);
     try std.testing.expectEqualStrings("[context compacted: earlier messages replaced by a summary to fit the model window]", uncounted);
+}
+
+test "the TTFT mean rounds and does not narrow its u64 total to u32" {
+    // 1700 over 3 is 566.67 ms: truncation printed 566, the web composer's
+    // `fmtMs(1700 / 3)` prints 566.667, and the two strips disagreed.
+    try std.testing.expectEqual(@as(u64, 567), meanMs(1700, 3));
+    try std.testing.expectEqual(@as(u64, 500), meanMs(1500, 3));
+    try std.testing.expectEqual(@as(u64, 3000), meanMs(3000, 1));
+    // A remainder past the halfway point rounds up rather than down.
+    try std.testing.expectEqual(@as(u64, 0), meanMs(1, 3));
+    try std.testing.expectEqual(@as(u64, 1), meanMs(2, 3));
+    try std.testing.expectEqual(@as(u64, 0), meanMs(0, 0));
+
+    // A total past 2^32 used to divide in u32 and wrap to a mean near zero:
+    // (2^32 + 60000) / 3 is about 1431675765 ms, not 20000.
+    const past_u32 = @as(u64, 1) << 32;
+    try std.testing.expectEqual(@as(u64, 1431675765), meanMs(past_u32 + 60_000, 3));
 }
