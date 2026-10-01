@@ -1,10 +1,11 @@
 // Goal workflow — ES module, no bundler.
 // Goals are the board's durable cards. This module owns goal creation,
 // per-goal streamed runs, and the goal<->board reconciliation. The board
-// side of that glue lives in ./board.js; the pure helpers (sorting, field
-// listing, the status->column mapping) stay in ../core/goals.js. bindGoals()
-// wires the DOM and the app-level callbacks (view switching, the active
-// session id).
+// side of that glue lives in ./board.js, and reaches this module one way:
+// through bindGoals(deps), not through a mutual import (see the seam below
+// `el`). The pure helpers (sorting, field listing, the status->column
+// mapping) stay in ../core/goals.js. bindGoals() wires the DOM and the
+// app-level callbacks (view switching, the active session id).
 //
 // The goal->card link is durable: a mirror card carries its goal's id in its
 // own `goal` field (folded into the board like any other edit), so the link
@@ -49,9 +50,55 @@ import { T, bind, UI, state, uiConfirm, uiPrompt, showLoadError, requireText } f
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
 import { icon } from "../core/icons.js";
 import { makeLineSplitter, pumpInto } from "../core/stream.js";
-import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 
 var el = null;
+
+/* The board seam — the card list, its writer and its loader — arrives as
+   `deps.board` in bindGoals(deps), the board module's own namespace, rather
+   than as a static `import ... from "./board.js"`: board.js needs this module's
+   goal glue in return, and two ESM modules importing each other resolve in an
+   order neither side can read, so which module's top-level state was
+   initialised first stopped being a property of the code. One direction plus a
+   bind-time hand-off is checkable; the cycle was not.
+
+   It is resolved on demand, not read at first use, because `loadGoals` is
+   reachable before the Kanban view was ever opened (the status bar's goal chip
+   calls it), and a static import answered even then. `needBoard()` is the same
+   edge with the previous availability: a dynamic import of the same module
+   still yields one module instance, so a later bind hands over that same one. */
+var _board = null;
+var _boardPromise = null;
+
+function needBoard() {
+  if (_board) { return Promise.resolve(_board); }
+  if (!_boardPromise) {
+    _boardPromise = import("./board.js").then(function (m) {
+      _board = m;
+
+      return m;
+    }, function (err) {
+      _boardPromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
+
+  return _boardPromise;
+}
+
+/* The live card list. `_board` is the board module's namespace and the list
+   is its `board` export, so this is `_board.board.cards` — the same object the
+   board module renders from, not a copy. */
+function boardCards() {
+  return (_board && _board.board && _board.board.cards) || [];
+}
+
+function postBoard(payload, status) {
+  if (!_board) {
+    throw new Error("board module not loaded; the goal->board mirror awaits needBoard()");
+  }
+
+  return _board.postBoard(payload, status);
+}
 
 var _showView = null;
 
@@ -94,7 +141,7 @@ export function isGoalRunning(gid) {
    the link; the title fallback adopts cards from before the field existed
    (and only unlinked ones, so a same-titled card of another goal is safe). */
 function cardOfGoal(g) {
-  var cardsArr = board.cards || [];
+  var cardsArr = boardCards();
 
   for (var i = 0; i < cardsArr.length; i++) {
     if (cardsArr[i].goal === g.id) { return cardsArr[i]; }
@@ -242,13 +289,15 @@ function mirrorGoalsToBoard(goals) {
     });
   };
 
-  if (boardIsLoaded()) {
-    work();
+  return needBoard().then(function (b) {
+    if (b.boardIsLoaded()) {
+      work();
 
-    return Promise.resolve();
-  }
+      return null;
+    }
 
-  return loadBoard().then(work);
+    return b.loadBoard().then(work);
+  });
 }
 
 function goalCard(g) {
@@ -791,9 +840,11 @@ export function postGoal(payload, status) {
       // A deleted goal's card stays (it is still work someone wrote down),
       // but stops claiming to mirror the goal.
       if (payload && payload.remove && payload.id) {
-        for (var ci = 0; ci < (board.cards || []).length; ci++) {
-          if (board.cards[ci].goal === payload.id) {
-            postBoard({ op: "update", id: board.cards[ci].id, goal: "", goal_sync: false }, null);
+        var cards = boardCards();
+
+        for (var ci = 0; ci < cards.length; ci++) {
+          if (cards[ci].goal === payload.id) {
+            postBoard({ op: "update", id: cards[ci].id, goal: "", goal_sync: false }, null);
             break;
           }
         }
@@ -858,21 +909,19 @@ export function mirrorCardForObjective(objective) {
   return null;
 }
 
-/* The goal a board card mirrors, or null: the card's own `goal` field, with
-   a title match for cards that predate it. Used by board.js's board->goal
-   sync when a card is moved. */
-export function goalIdForCard(cardId) {
-  var c = null;
+/* The goal a board card mirrors, or null: the card's own `goal` field, with a
+   title match for cards that predate it. Used by board.js's board->goal sync
+   when a card is moved, which already holds the card it just moved. Takes the
+   card rather than a card id so the lookup does not read the board's card list
+   through the goals->board seam above: the caller that owns the card is also
+   the one that owns `board.cards`, and resolving an id to the card here would
+   make board.js's synchronous move handler depend on that seam being bound. */
+export function goalIdForCard(card) {
+  if (!card) { return null; }
 
-  for (var i = 0; i < (board.cards || []).length; i++) {
-    if (board.cards[i].id === cardId) { c = board.cards[i]; break; }
-  }
+  if (card.goal) { return card.goal; }
 
-  if (!c) { return null; }
-
-  if (c.goal) { return c.goal; }
-
-  return bestGoalIdFor(c.title);
+  return bestGoalIdFor(card.title);
 }
 
 /* The board's "Re-sync from goals" action: enforce every goal's pinned
@@ -908,12 +957,15 @@ export function syncCardsFromGoals() {
 /* Wires the view to the DOM and the app: `deps.el` is app.js's element map,
    `deps.showView` switches views, `deps.getSessionId` reads the conversation
    the chat composer is on (a goal run joins that session), `deps.switchSession`
-   opens a conversation by id (used to jump into a remote run's transcript). */
+   opens a conversation by id (used to jump into a remote run's transcript).
+   `deps.board` is the board module (see the seam above). app.js binds the
+   board first, so the board module is loaded by the time this runs. */
 export function bindGoals(deps) {
   el = deps.el;
   _showView = deps.showView;
   _getSessionId = deps.getSessionId;
   _switchSession = deps.switchSession;
+  _board = deps.board;
 
   bind(el.goals, goalState, function (goals) {
     if (!goals.length) {

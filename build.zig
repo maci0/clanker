@@ -507,6 +507,12 @@ pub fn build(b: *std.Build) void {
     const board_card_js_test = b.addSystemCommand(&.{ "bun", "test" });
     board_card_js_test.addFileArg(b.path("ui/app/features/board-card.test.mjs"));
     test_step.dependOn(&board_card_js_test.step);
+    // The board and goals views hand each other over at bind time instead of
+    // importing each other; this suite walks ui/'s import graph and fails on
+    // any cycle, so a mutual import cannot come back unnoticed.
+    const board_goals_cycle_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    board_goals_cycle_js_test.addFileArg(b.path("ui/app/features/board-goals-cycle.test.mjs"));
+    test_step.dependOn(&board_goals_cycle_js_test.step);
     const harden_js_test = b.addSystemCommand(&.{ "bun", "test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);

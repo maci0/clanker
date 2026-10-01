@@ -4455,13 +4455,13 @@ var viewLoaders = {
   // the board's first open; the wiring binds once for the life of the page.
   kanban () {
     return loadBoardModule().then(function (m) {
-      bindOnce("kanban", function () {
-        m.bindBoard({ el, setTabCount, openRun, getKnownPeers () { return knownPeers; } });
-      });
-      return m.loadBoardRooms().then(function () {
-        return loadGoalsModule().then(function (gm) {
+      return loadGoalsModule().then(function (gm) {
+        bindOnce("kanban", function () {
+          m.bindBoard({ el, setTabCount, openRun, getKnownPeers () { return knownPeers; }, goals: gm });
+        });
+        return m.loadBoardRooms().then(function () {
           bindOnce("goals", function () {
-            gm.bindGoals({ el, showView, getSessionId () { return sessionId; }, switchSession });
+            gm.bindGoals({ el, showView, getSessionId () { return sessionId; }, switchSession, board: m });
           });
           return gm.loadGoals();
         });

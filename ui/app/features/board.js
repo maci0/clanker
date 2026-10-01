@@ -14,7 +14,14 @@ import { reducedMotion } from "../core/vendor.js";
    the press did nothing at all. `requireText` (core/ui.js) is that refusal, and
    it lives there so every form on the page makes it, not only the board's. */
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
-import { goalState, postGoal, goalIdForCard, mirrorCardForObjective, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
+
+/* The goal-side glue arrives as `deps.goals` in bindBoard(deps), the goals
+   module's own namespace, rather than as an `import ... from "./goals.js"`:
+   goals.js needs this module's card list and writer in return, and two ESM
+   modules importing each other resolve in an order neither side can read.
+   Every use below sits in a callback or in bindBoard itself, so nothing
+   reads it before app.js binds (it loads the goals module first). */
+var _goals = null;
 
 var el = null;
 var _setTabCount = null;
@@ -215,10 +222,18 @@ export function postBoard(payload, status) {
       // Archive is retained history, and pulling it back into planning
       // reactivates it. Done -> Review is the visible re-evaluation action.
       if (!skipGoalSync && forCurrentRoom && payload.op === "move") {
-        var gid = goalIdForCard(payload.id);
+        // This module owns `board.cards`, so it resolves the moved card itself
+        // and hands it over: the goal lookup is synchronous and a board action
+        // must not wait on the goals module's own view of the list.
+        var movedCard = null;
+        var cardsNow = board.cards || [];
+        for (var mi = 0; mi < cardsNow.length; mi++) {
+          if (cardsNow[mi].id === payload.id) { movedCard = cardsNow[mi]; break; }
+        }
+        var gid = _goals.goalIdForCard(movedCard);
         var goal = null;
         if (gid) {
-          var gl = goalState.val || [];
+          var gl = _goals.goalState.val || [];
           for (var gi = 0; gi < gl.length; gi++) {
             if (gl[gi].id === gid) { goal = gl[gi]; break; }
           }
@@ -226,14 +241,14 @@ export function postBoard(payload, status) {
         if (goal) {
           var cur = goal.status || "active";
           if (payload.column === doneColumn() && cur !== "done") {
-            postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
+            _goals.postGoal({ id: gid, status: "done" }, "Goal marked done from the board.");
           } else if (payload.column === "review" && cur !== "review") {
-            postGoal({ id: gid, status: "review" }, "Goal moved to review from the board.");
+            _goals.postGoal({ id: gid, status: "review" }, "Goal moved to review from the board.");
           } else if (payload.column === "archive" && cur !== "archived") {
-            postGoal({ id: gid, status: "archived" }, "Goal archived and retained for future learning.");
+            _goals.postGoal({ id: gid, status: "archived" }, "Goal archived and retained for future learning.");
           } else if (payload.column !== doneColumn() && payload.column !== "review" && payload.column !== "archive" &&
                      (cur === "done" || cur === "review" || cur === "blocked" || cur === "archived" || cur === "abandoned")) {
-            postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
+            _goals.postGoal({ id: gid, status: "active" }, "Goal reactivated from the board.");
           }
         }
       }
@@ -479,14 +494,14 @@ function boardColumn(col, s) {
     }
     closeQuickAdd();
     el.boardStatus.textContent = "Creating goal card…";
-    postGoal({ objective: t }, "Goal card saved. It has not started.").then(function (d) {
+    _goals.postGoal({ objective: t }, "Goal card saved. It has not started.").then(function (d) {
       if (!d) {
         el.boardStatus.textContent = "Could not create the goal card.";
         return;
       }
       // The goal mirror files a new card in the lane the goal's state asks
       // for, so a card added under Doing or Archive used to appear in Ready.
-      var card = mirrorCardForObjective(t);
+      var card = _goals.mirrorCardForObjective(t);
       if (card && col.id && card.column !== col.id) {
         postBoard({ op: "move", id: card.id, column: col.id, goal_sync: false }, null);
       }
@@ -899,7 +914,7 @@ function cardNode(c) {
     sw.className = CARD_BADGE_CLASS;
     sw.appendChild(icon("rocket", 14));
     sw.title = "Goal: Start work (opens a run)";
-    if (isGoalRunning(c.goal)) {
+    if (_goals.isGoalRunning(c.goal)) {
       sw.dataset.goalRun = "true";
       sw.title = "Goal run in progress";
     }
@@ -1861,8 +1876,8 @@ function showCardDetail(id) {
   var goalIters = input("card-f-goal-iters", "number", "", "steps (default)");
   goalIters.min = "1"; goalIters.step = "1";
   goalIters.title = "Optional per-run step limit. Leave blank to use this goal's saved default, then the configured default (usually 50).";
-  var gid = goalIdForCard(c.id);
-  var gl = goalState.val || [];
+  var gid = _goals.goalIdForCard(c);
+  var gl = _goals.goalState.val || [];
   for (var gi = 0; gi < gl.length; gi++) {
     if (gl[gi].id === gid && gl[gi].max_iterations) {
       goalIters.placeholder = "\u2264 " + gl[gi].max_iterations + " steps";
@@ -1872,7 +1887,7 @@ function showCardDetail(id) {
   asGoal.addEventListener("click", function () {
     delete cardDrafts[c.id];
     var n = parseInt(goalIters.value, 10);
-    workCardAsGoal(c, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
+    _goals.workCardAsGoal(c, { maxIterations: Number.isFinite(n) && n > 0 ? n : null });
   });
   goalRow.appendChild(goalIters);
   goalRow.appendChild(asGoal);
@@ -2268,13 +2283,15 @@ export function cardModalKeyHandler(e) {
 
 /* Wires the view to the DOM and the app: `deps.el` is app.js's element map,
    `deps.setTabCount` badges the Board tab, `deps.openRun` jumps to a recorded
-   run's graph, and `deps.getKnownPeers` reads the current peer roster for the
-   quick-add @ mention hint. */
+   run's graph, `deps.getKnownPeers` reads the current peer roster for the
+   quick-add @ mention hint, and `deps.goals` is the goals module (see the
+   seam above). */
 export function bindBoard(deps) {
   el = deps.el;
   _setTabCount = deps.setTabCount;
   _openRun = deps.openRun;
   _getKnownPeers = deps.getKnownPeers;
+  _goals = deps.goals;
   var headerIcon = document.getElementById("board-header-icon");
   if (headerIcon && !headerIcon.firstChild) headerIcon.appendChild(icon("grid", 20));
 
@@ -2329,9 +2346,9 @@ export function bindBoard(deps) {
   // goal->card mapping.
   el.boardResyncGoals.addEventListener("click", function () {
     el.boardResyncGoals.disabled = true;
-    loadGoals()
+    _goals.loadGoals()
       .then(function () {
-        var moved = syncCardsFromGoals();
+        var moved = _goals.syncCardsFromGoals();
         el.boardStatus.textContent = moved
           ? ("Moved " + plural(moved, { one: "card", other: "cards" }) + " to match their goals.")
           : "Every card already matches its goal.";
