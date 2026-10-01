@@ -167,6 +167,28 @@ test("an inventory line is a count or an empty list, never an error or a result"
   expect(other.map((line) => isInventoryStatus(line))).toEqual(other.map(() => false));
 });
 
+test("an inventory line stays inventory when the count is formatted for another locale", () => {
+  /* The numbers here are the ones Intl emits, not the ones a locale's author
+     typed: "1,204" is the US grouping, but a German listing renders the same
+     count with a full stop, French with U+202F, and Arabic-Indic locales with
+     digits this file does not contain. A predicate matching only ASCII digits
+     and commas let every one of them through to the toast mirror, so each list
+     load announced its own row count. */
+  const inventory = [
+    "1.204 Runs.", // de-DE grouping separator
+    "1\u202f204 \u00e9l\u00e9ments.", // fr-FR narrow no-break space
+    "\u0661\u0662\u0660\u0664 \u0639\u0646\u0627\u0635\u0631.", // ar-EG Arabic-Indic digits
+    "1\u066c204 \u0639\u0646\u0627\u0635\u0631.", // ar-EG with the U+066C group separator
+    "7 F\u00e4higkeiten.", // de-DE, accented letters
+    "21 plik\u00f3w.", // pl plural "many" form
+    "7 \u30b9\u30ad\u30fc\u30e0\u3002", // ja, ideographic full stop as terminator
+  ];
+
+  expect(inventory.map((line) => isInventoryStatus(line))).toEqual(inventory.map(() => true));
+  // The negation still has to refuse: an error, a result, and an empty line.
+  expect(["Could not load tools: 500", "Saved prompt.", "Copied 3 lines", ""].map(isInventoryStatus)).toEqual([false, false, false, false]);
+});
+
 test("each folding rail group draws its caret", async () => {
   /* The caret is `.rail-fold > summary.rail-group::after`; the rail port dropped both classes, so Watch and Set up read as bare labels. */
   const [css, html] = await Promise.all([read("tailwind.src.css"), read("index.html")]),

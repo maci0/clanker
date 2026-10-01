@@ -626,7 +626,13 @@ export function wireRefresh(button, load) {
   });
 }
 
+/* Unicode properties, not ASCII: these counts come from Intl (shell.test.ts).
+   GROUP_SEP is the CLDR digit-group set; \p{M} a decomposed spelling. */
+const GROUP_SEP = ",.\\u00a0\\u202f\\u2009\\u2019\\u066c ";
+const INVENTORY_STATUS_RE =
+  new RegExp("^(?:\\p{Nd}+(?:[" + GROUP_SEP + "]*\\p{Nd}+)*|No)\\s[\\p{L}\\p{M}\\s-]{1,40}?(?:\\syet)?[.\\u3002\\uff0e]$", "u");
+
 /* A view's inventory line ("7 skills.", "No prompts.", "43 items.") restates
    the list the view is already showing, so the status-to-toast mirror skips
    it; errors and the results of an operator's action still toast. */
-export const isInventoryStatus = (text) => /^(?:\d[\d,]*|No)\s[\w\s-]{1,40}?(?:\syet)?\.$/u.test(String(text).trim());
+export const isInventoryStatus = (text) => INVENTORY_STATUS_RE.test(String(text).trim());

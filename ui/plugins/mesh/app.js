@@ -198,7 +198,7 @@ clanker.registerView({
 
       if (p.name && p.name !== id) { row.appendChild(api.el("span", "meta", p.name)); }
 
-      row.appendChild(api.el("span", "meta", pendingAge(p) + "s"));
+      row.appendChild(api.el("span", "meta", api.fmt.unit(pendingAge(p), "second", 0)));
       var admit = api.el("button", "primary", "Admit");
       admit.type = "button";
       admit.disabled = !!state.busy;

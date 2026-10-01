@@ -236,8 +236,17 @@ test("eager JS stays inside its weight budget", function () {
      select-to-copy hand-off every other copy button here offers (~0.3K gz).
      Neither is reachable by a chat-only visit that never opens the search box
      or shares a link, and both would cost a new asset kind and a served
-     module to defer, which is a larger cost than the bytes. */
-  assert.ok(eagerJsGz <= 161, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 161K`);
+     module to defer, which is a larger cost than the bytes. Raised to 162 for
+     two locale fixes, neither of which any byte of the served body carries:
+     `webui_strip.zig` strips first-party comments before a response is
+     written, so the cost is disk weight only. core/utils.js's inventory-status
+     predicate matched ASCII digits and commas while the counts on the other
+     side of that test come from Intl, so a German ("1.204"), French (U+202F)
+     or Arabic-Indic listing toasted its own row count on every load.
+     lib/markdown.js's citation class truncated a non-ASCII path to its ASCII
+     tail ("dokumentation/Übersicht.zig:12" matched as "bersicht.zig:12"), so
+     the chip opened the wrong file in the callgraph (~0.2K gz). */
+  assert.ok(eagerJsGz <= 162, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 162K`);
 });
 
 test("first paint stays inside its weight budget", function () {

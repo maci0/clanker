@@ -4,7 +4,10 @@ import { loadHljs, loadMermaid, copyText } from "../core/vendor.js";
 import { isSafeLinkUrl, splitRow, prettyJsonIfPossible } from "../core/utils.js";
 
 export var INLINE_RE = /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(~~[^~\n]+~~)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]+\]\([^)\s]+\))|(https?:\/\/[^\s<>()]+)/;
-export var CITATION_RE = /[a-zA-Z0-9_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/g;
+/* A citation path is any filename on disk; \p{M} keeps a decomposed one
+   (markdown.test.mjs). The ASCII class it replaced truncated the chip to
+   "bersicht.zig:12", so data-ref opened the wrong file in the callgraph. */
+export var CITATION_RE = /[\p{L}\p{N}\p{M}_.\-\/]+\.(?:zig|ts|js|py|rs|go|md|json|toml|css|html|sh|yaml|yml):\d+(?::\d+)?/gu;
 export var RUN_RE = /\[subagent run:\s*(?:sub|run)-\d+\]|\b(?:sub|run)-\d+\b(?!\.\w)/g;
 function runIdOf(m) {
   var mm = /(sub|run)-\d+/.exec(m);
