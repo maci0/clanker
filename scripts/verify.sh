@@ -12,16 +12,32 @@
 # knowledge.
 #
 # Usage: scripts/verify.sh
-#   Requires: zig, python3. Bun only for oxlint, the JavaScript-toolchain
-#   audits, and the AssemblyScript rebuild-and-diff (CI runs those steps
-#   regardless; the script mirrors the pre-commit hook's soft-skip for
-#   tools that are not installed).
+#   Requires: zig, python3, shellcheck, ruff, bun. Every tool CI's verify job
+#   uses is one this script now needs: a missing one used to print a
+#   "skipping" line, leave status at 0, and end in
+#   "verify: all CI-equivalent checks passed", so a machine without shellcheck
+#   or ruff read as a green run the whole way to a red CI job. CI installs
+#   each of them; install them here too, or set
+#   CLANKER_VERIFY_ALLOW_SKIP=1 to accept a partial run knowingly (the summary
+#   still names every check that did not run).
 #   Runs from the repository root; pass the path if invoked elsewhere.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 status=0
+skipped=0
+skipped_list=""
 step() { printf '\n== %s ==\n' "$*"; }
+
+# A check this script could not run is not a passing check: CI runs every one
+# of them, so a soft skip turns "my machine lacks ruff" into an after-push
+# failure. Record the name, keep going so one missing tool does not hide the
+# rest, and let the summary decide the exit status.
+skip() {
+    printf 'verify: SKIPPED: %s (CI runs it)\n' "$1" >&2
+    skipped=$((skipped + 1))
+    skipped_list="${skipped_list}${skipped_list:+, }$1"
+}
 
 step "shellcheck (CI: Check shell scripts)"
 if command -v shellcheck >/dev/null 2>&1; then
@@ -29,7 +45,7 @@ if command -v shellcheck >/dev/null 2>&1; then
         git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 shellcheck || status=1
     fi
 else
-    echo "shellcheck not installed; skipping (CI will run it)"
+    skip "shellcheck is not installed"
 fi
 
 if command -v bun >/dev/null 2>&1; then
@@ -46,7 +62,7 @@ if command -v bun >/dev/null 2>&1; then
     (cd tools/ts && ./verify.sh) || status=1
     ./ui/app/verify-css.sh || status=1
 else
-    echo "bun not installed; skipping JavaScript lint, type check, tools/ts and Tailwind CSS verification (CI will run them)"
+    skip "bun is not installed (JavaScript lint, type check, tools/ts and Tailwind CSS)"
 fi
 
 step "SBOM generation (CI: Check SBOM generation)"
@@ -61,7 +77,7 @@ if command -v python3 >/dev/null 2>&1; then
     python3 scripts/sbom.py -o "$sbom_scratch/sbom.cdx.json" || status=1
     rm -f "$sbom_scratch/sbom.cdx.json"
 else
-    echo "python3 not installed; skipping SBOM check (CI will run it)"
+    skip "python3 is not installed (SBOM check)"
 fi
 
 # The backup and restore-drill scripts are the only thing standing between
@@ -74,7 +90,7 @@ if command -v python3 >/dev/null 2>&1; then
     python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup \
         scripts.test_install_state_backup || status=1
 else
-    echo "python3 not installed; skipping state backup drills (CI will run them)"
+    skip "python3 is not installed (state backup drills)"
 fi
 
 step "Python lint (CI: Lint Python)"
@@ -86,7 +102,7 @@ if command -v ruff >/dev/null 2>&1; then
         git ls-files -z '*.py' | xargs -0 ruff check || status=1
     fi
 else
-    echo "ruff not installed; skipping Python lint (CI will run it)"
+    skip "ruff is not installed"
 fi
 
 step "dependency patches (patches/*.patch)"
@@ -112,10 +128,29 @@ zig build || status=1
 step "end-to-end tests (CI: Run end-to-end tests)"
 zig build e2e || status=1
 
+if [ "$skipped" -ne 0 ]; then
+    echo >&2
+    echo "verify: $skipped check(s) did not run: $skipped_list" >&2
+    if [ "${CLANKER_VERIFY_ALLOW_SKIP:-0}" != "1" ]; then
+        # Not a failure of the tree, a failure to have verified it. The
+        # checks that did run are still reported above, and the way to accept
+        # a partial run is named rather than discovered by wondering which of
+        # the lines above to believe.
+        echo "verify: refusing to call this CI-equivalent. Install the tools named" >&2
+        echo "verify: above, or set CLANKER_VERIFY_ALLOW_SKIP=1 to accept a" >&2
+        echo "verify: partial run knowingly (CI will still run the rest)." >&2
+        status=1
+    fi
+fi
+
 if [ "$status" -ne 0 ]; then
     echo >&2
-    echo "verify: one or more CI-equivalent checks failed" >&2
+    echo "verify: one or more CI-equivalent checks did not pass" >&2
     exit 1
 fi
 echo
-echo "verify: all CI-equivalent checks passed"
+if [ "$skipped" -ne 0 ]; then
+    echo "verify: every check that ran passed; $skipped did not run ($skipped_list)"
+else
+    echo "verify: all CI-equivalent checks passed"
+fi

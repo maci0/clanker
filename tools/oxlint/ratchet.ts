@@ -63,16 +63,48 @@ const At = z.object({ span: z.object({ line: z.number() }) }),
     return { fell, rose };
   },
   lint = async (): Promise<Array<z.infer<typeof Finding>>> => {
-    /* Oxlint has no in-process API, so the pinned binary runs as a child. */
-    const child = Bun.spawn(["bunx", "oxlint", "--report-unused-disable-directives-severity=error", "-f", "json"], {
+    /*
+     * Oxlint has no in-process API, so it runs as a child. The binary is the
+     * one package.json pins, resolved out of node_modules rather than through
+     * `bunx`: on a checkout with no node_modules `bunx` silently fetches
+     * whatever oxlint the registry serves that day, and the ratchet would
+     * then compare this tree's findings against tools/oxlint/baseline.json
+     * using a linter this project never chose. The pre-commit hook already
+     * gates on the same path existing.
+     */
+    const bin = new URL("../../node_modules/.bin/oxlint", import.meta.url).pathname;
+
+    if (!(await Bun.file(bin).exists())) {
+      throw new Error("lint: node_modules/.bin/oxlint is missing; run `bun install --frozen-lockfile`");
+    }
+
+    const child = Bun.spawn([bin, "--report-unused-disable-directives-severity=error", "-f", "json"], {
         stderr: "inherit",
         stdout: "pipe",
       }),
-      text = await new Response(child.stdout).text();
+      text = await new Response(child.stdout).text(),
+      code = await child.exited;
 
-    await child.exited;
+    // A non-zero oxlint can still have written its report — findings are how
+    // the ratchet learns about drift — so exit status alone is not a reason to
+    // discard `text`. What must never happen is parsing it: oxlint's own
+    // plain-text failure ("Failed to parse oxlint configuration file", a
+    // panic) is not JSON, and JSON.parse turned that into
+    // `SyntaxError: JSON Parse error: Unexpected identifier "Failed"` on top
+    // of a stack frame, which named neither the cause nor the remedy while
+    // burying the message oxlint had already written to stderr. The status
+    // plus the first line of the body is the diagnosis; the usual cause is
+    // the preset dependency (@rikalabs/oxlint-standards arrives through a
+    // patchedDependencies entry that fails the install outright when it
+    // stops applying), which the message above already covers.
+    try {
+      return Report.parse(JSON.parse(text)).diagnostics;
+    } catch {
+      console.error(`lint: oxlint exited ${code} without a JSON report; its message was:`);
+      console.error(text.split("\n").find((l) => l.trim().length > 0) ?? "(no output)");
 
-    return Report.parse(JSON.parse(text)).diagnostics;
+      throw new Error("lint: oxlint produced no JSON report (see above; run `bun install --frozen-lockfile`)");
+    }
   },
   load = async (): Promise<Counts> => {
     const counts: Counts = new Map(),

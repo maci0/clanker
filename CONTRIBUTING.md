@@ -18,7 +18,8 @@ refuses to compile against an unpatched tree), then `zig build`,
 `zig build tools` and `bun install --frozen-lockfile` (the last one only
 feeds the JavaScript half of the loop: `bun run lint`, `bun run css:build` and
 the pre-commit hook's JS check resolve packages out of `node_modules`, and
-without it each fails with a bare "Cannot find package"). The order is the
+`bun run lint` refuses outright rather than letting `bunx` fetch an unpinned
+oxlint from the registry). The order is the
 whole trap: `--fetch=all` extracts without compiling, and the patch script
 cannot patch a tree that is not on disk yet. It prints the remaining steps
 when it finishes: `zig build test`,
@@ -32,8 +33,10 @@ git config core.hooksPath .githooks
 Requirements are Zig 0.16.x (pinned in `build.zig.zon`, enforced by
 `build.zig`), Git, Bash, and patch. Tests also need Bun for the JS suites
 and Python 3 for the process fixtures. Full verification additionally needs
-shellcheck and ruff; `scripts/verify.sh` installs the declared JS dependencies
-locally. Ruff is pinned too, in `ruff.toml` as `required-version`, so a
+shellcheck and ruff; `scripts/verify.sh` installs the declared JS
+dependencies locally and refuses to exit 0 while any of those five is
+missing, so a machine without one of them reads as "not verified" rather than
+as green. Ruff is pinned too, in `ruff.toml` as `required-version`, so a
 different release on PATH refuses to run rather than checking a rule set CI
 never ran.
 
@@ -57,8 +60,8 @@ Three speeds, slowest last:
 - One JS suite: `bun test ui/app/core/scroll.test.mjs` (or whichever
   `.test.mjs` you changed).
 - Every JS suite, without the Zig half: `bun test ui` (bun walks the
-  directory itself; it covers `ui/app` and the nine `ui/plugins` suites the
-  test step also runs).
+  directory itself; it covers `ui/app` and every suite under `ui/plugins/`,
+  which the `js-suite-coverage` gate keeps registered in the test step).
 - The e2e journeys (`zig build e2e`) spawn the real `clanker repl` on a pty,
   so they need the dependency patches applied: run `scripts/apply-patches.sh`
   once after `zig build --fetch=all` (idempotent; `scripts/verify.sh` does it
@@ -66,7 +69,11 @@ Three speeds, slowest last:
 - Before pushing: `scripts/verify.sh` mirrors everything CI's verify job
   runs (shellcheck, oxlint, ruff, SBOM generation,
   AssemblyScript rebuild-and-diff, `clanker gate`, e2e), so a red CI run is
-  not the first place you hear about it.
+  never the first place you hear about it. Every tool CI uses is one it
+  needs: a missing one prints `verify: SKIPPED` and the script exits 1 rather
+  than calling the run CI-equivalent. Install the tool named, or set
+  `CLANKER_VERIFY_ALLOW_SKIP=1` to accept a partial run knowingly — the
+  summary then names every check that did not run.
 
 ## What must pass
 

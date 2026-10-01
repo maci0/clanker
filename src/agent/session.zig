@@ -1257,11 +1257,14 @@ test "an import id is fixed width, so byte order inside a second is time order" 
             return std.mem.lessThan(u8, x.id, y.id);
         }
     }.f;
-    try std.testing.expect(!lt(
-        .{},
-        .{ .id = late, .updated = 1_787_000_000 },
-        .{ .id = early, .updated = 1_787_000_000 },
-    ));
+    // `std.testing.expect` is variadic and takes trailing format arguments, so
+    // an anonymous struct literal handed straight to it is parsed as one of
+    // those rather than as a value: `.{ .id = late }` here was a compile
+    // error, not a `SessionMeta`. Assigning through a typed local keeps the
+    // literal in a value position, where the same `lt` call reads normally.
+    const newer = SessionMeta{ .id = late, .updated = 1_787_000_000 };
+    const older = SessionMeta{ .id = early, .updated = 1_787_000_000 };
+    try std.testing.expect(!lt({}, newer, older));
     // A whole second later still sorts after, whichever way the digits land.
     const next = try importSessionId(a, 1_787_000_001_000_001_000);
     defer a.free(next);

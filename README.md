@@ -120,7 +120,8 @@ The edit loop has three speeds, slowest last:
 `zig build fmt-fix` rewrites the formatting `quick-check` reports. For a
 JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs`,
 or sweep them all with `bun test ui` (bun walks the directory itself; that is
-`ui/app` plus the nine `ui/plugins` suites).
+`ui/app` plus every suite under `ui/plugins/`, which the `js-suite-coverage`
+gate keeps registered in `zig build test`).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
 but CI also runs the end-to-end pty journeys (`zig build e2e`), shellcheck,
