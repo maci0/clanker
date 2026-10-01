@@ -366,12 +366,14 @@ const kill_term_grace_ns: i96 = 2 * std.time.ns_per_s;
 
 /// SIGTERM, then SIGKILL after `kill_term_grace_ns`, then reap. `Child.kill`
 /// signals SIGTERM and blocks in an uncancelable `wait4` with no ceiling.
+/// Also the release for the `ck_exec`/hook/python-cell children the sandbox
+/// host spawns, whose defers call this rather than their own copy.
 ///
 /// The pid is only signalled while the waiter has not stored `done`: the flag
 /// is set after the reap, so `done` unset still means the pid names this
 /// child (the same guard `waitChildBelow` uses). `cancel` joins the waiter, so
 /// nothing is left touching `child` (caller stack) once this returns.
-fn killChildBounded(io: std.Io, child: *std.process.Child) void {
+pub fn killChildBounded(io: std.Io, child: *std.process.Child) void {
     // Residual posix: signal delivery has no std.Io equivalent.
     std.posix.kill(child.id orelse return, std.posix.SIG.TERM) catch {};
     var done: std.Io.Event = .unset;

@@ -201,13 +201,10 @@ trap 'cleanup_scratch; exit 129' HUP
 # it is input, and an arithmetic expansion on a non-numeric string is not an
 # assignment error under `set -e`, so an unvalidated bound does not fail the
 # drill either -- it skips the sweep, which is the one outcome the sweep exists
-# to prevent. Warn and fall back to the default; `0` skips the sweep outright,
-# as CLANKER_BACKUP_RETENTION_DAYS=0 keeps every snapshot.
+# to prevent. Warn and fall back to the default.
 drill_stale_hours=${CLANKER_VERIFY_SCRATCH_STALE_HOURS:-48}
 case "$drill_stale_hours" in
-    0)
-        ;;
-    *[!0-9]*|'')
+    ''|*[!0-9]*)
         printf 'warning: CLANKER_VERIFY_SCRATCH_STALE_HOURS=%s is not an hour count; using the default\n' \
             "$drill_stale_hours" >&2
         drill_stale_hours=48

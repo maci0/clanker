@@ -190,12 +190,7 @@ pub fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?
         // whitespace flattening and credential mask every other provider
         // applies here (openai.zig, gemini.zig, anthropic.zig) — uncapped, a
         // hostile endpoint picks both what clanker prints and how much of it.
-        if (err_detail) |d| {
-            d.* = if (string(e.object, "message")) |m|
-                redact.forCaller(arena, m) catch redact.forCaller(arena, @errorName(error.ApiError)) catch @errorName(error.ApiError)
-            else
-                "no error message";
-        }
+        if (err_detail) |d| d.* = if (string(e.object, "message")) |m| try redact.forCaller(arena, m) else "no message";
         return error.ApiError;
     };
     var text: std.ArrayList(u8) = .empty;
