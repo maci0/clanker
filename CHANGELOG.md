@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-02
+
 ### Security
 
 - `POST /api/a2a/message`: the reply cache no longer replays one task's agent
@@ -13,6 +15,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   answered with that request's stored output. Replay now requires the id and
   the task text to agree, and a string id is no longer the same key as the
   integer with the same spelling.
+
+### Added
+
+- Agent hook & graph UI: report mid-turn compaction through an Agent hook and
+  surface all graph nodes.
 
 ### Changed
 
@@ -60,6 +67,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `proxy_token_env` as `[OK]` under the environment variable every service
   file sets. Each line now names the layer it read; a `--host` flag is still
   invisible to doctor.
+
+- Commit subjects & alarms: cap commit messages on codepoint boundaries to avoid
+  splitting multi-byte UTF-8 characters, and deduplicate reminders under canonical
+  Unicode equivalence.
 
 ## [0.11.1] - 2026-09-29
 
