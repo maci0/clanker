@@ -318,3 +318,118 @@ test("app.css positions the actions against the list item that holds them", func
   assert.ok(!/\.card:hover \.card-quick-actions/.test(css));
   assert.ok(!/card-quick-edit-btn/.test(css), "the dead pencil's rules are gone too");
 });
+
+// The card-detail header is the only affordance for renaming a card, so a
+// click listener alone left the one rename path in the panel pointer-only. Its
+// two siblings in that header already carry the role and the key handler that
+// make them buttons.
+//
+// cardDetailInner as a whole is too entangled to lift (it builds the whole
+// panel), but this wiring block is self-contained: three statements over
+// `headerTitle`, `c` and the prompt. The harness runs it verbatim in a vm over
+// stubs and presses real keys, so what is asserted is the shipped handler's
+// behaviour rather than its text.
+test("the card-detail header renames from the keyboard, not the pointer alone", function () {
+  const marker = "// ---- Inline title editing (click header to rename) ----";
+  const from = js.indexOf(marker);
+  const to = js.indexOf("  // ---- Save button in main column ----", from);
+  assert.ok(from >= 0 && to > from, "the header rename is still one wiring block");
+
+  const box = { prompted: [], posted: [], attrs: {}, prevented: 0 };
+  const listeners = { click: null, keydown: null };
+  const headerTitle = {
+    style: {}, title: "", tabIndex: undefined,
+    attrs: box.attrs,
+    setAttribute (name, value) { box.attrs[name] = value; },
+    addEventListener (name, fn) { listeners[name] = fn; }
+  };
+  const c = { id: "c1", title: "Old title" };
+
+  // The prompt answers what was typed, and the post records what the panel
+  // would have sent. Both are the shipped callees' contracts, not the ones the
+  // header invents.
+  const prelude = `
+    function uiPrompt(label, initial) {
+      box.prompted.push(label);
+      return Promise.resolve("New title");
+    }
+    function postBoard(body) { box.posted.push(body); }
+  `;
+  const epilogue = `
+    globalThis.__attrs = headerTitle;
+    globalThis.__click = function () { listeners.click({ target: headerTitle }); };
+    globalThis.__key = function (key) {
+      var prevented = false;
+      listeners.keydown({
+        key: key,
+        target: headerTitle,
+        preventDefault: function () { prevented = true; box.prevented += 1; }
+      });
+      return prevented;
+    };
+    globalThis.__tabIndex = function () { return headerTitle.tabIndex; };
+  `;
+
+  const context = vm.createContext({ box, headerTitle, c, listeners, Promise, Object });
+  vm.runInContext(prelude + js.slice(from, to) + epilogue, context);
+
+  // The element announces as a button and is in the tab order, so Tab lands on
+  // it at all.
+  assert.equal(box.attrs.role, "button", "it announces as a button");
+  assert.equal(context.__tabIndex(), 0, "and is in the tab order");
+
+  // Enter opens the prompt. It is async, so the post lands on a microtask.
+  const prevented = context.__key("Enter");
+  assert.equal(prevented, true, "Enter is claimed from the page's own handler");
+  assert.deepEqual(box.prompted, ["Card title"], "Enter opens the rename prompt");
+
+  // deepStrictEqual would compare the vm realm's Object.prototype here, so
+  // the fields are compared directly.
+  return Promise.resolve().then(function () {
+    assert.equal(box.posted.length, 1, "one rename is posted");
+    assert.equal(box.posted[0].op, "update");
+    assert.equal(box.posted[0].id, "c1");
+    assert.equal(box.posted[0].title, "New title");
+    assert.equal(box.prevented, 1);
+  });
+});
+
+test("Space opens the same prompt, and Enter inside a child does not", function () {
+  const marker = "// ---- Inline title editing (click header to rename) ----";
+  const from = js.indexOf(marker);
+  const to = js.indexOf("  // ---- Save button in main column ----", from);
+
+  const box = { prompted: [], posted: [], attrs: {}, prevented: 0 };
+  const listeners = { click: null, keydown: null };
+  const headerTitle = {
+    style: {}, title: "", tabIndex: undefined,
+    setAttribute (name, value) { box.attrs[name] = value; },
+    addEventListener (name, fn) { listeners[name] = fn; }
+  };
+  const c = { id: "c1", title: "Old title" };
+  const prelude = `
+    function uiPrompt(label) { box.prompted.push(label); return Promise.resolve("New title"); }
+    function postBoard(body) { box.posted.push(body); }
+  `;
+  const epilogue = `
+    globalThis.__key = function (key, target) {
+      var prevented = false;
+      listeners.keydown({ key: key, target: target || headerTitle, preventDefault: function () { prevented = true; box.prevented += 1; } });
+      return prevented;
+    };
+  `;
+  const context = vm.createContext({ box, headerTitle, c, listeners, Promise, Object });
+  vm.runInContext(prelude + js.slice(from, to) + epilogue, context);
+
+  assert.equal(context.__key(" "), true, "Space is claimed too");
+  assert.deepEqual(box.prompted, ["Card title"]);
+
+  // A key pressed on a child of the header is not a rename: the guard is the
+  // same one the click carries, so a nested control keeps its own keys.
+  assert.equal(context.__key("Enter", { tagName: "SPAN" }), false, "not claimed for a child");
+  assert.deepEqual(box.prompted, ["Card title"], "and it opened no second prompt");
+
+  // An unrelated key is left alone.
+  assert.equal(context.__key("a"), false);
+  assert.deepEqual(box.prompted, ["Card title"]);
+});

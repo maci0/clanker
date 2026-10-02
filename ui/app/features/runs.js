@@ -76,7 +76,7 @@ var CRUMBS_CLASS = "mb-2 flex flex-wrap gap-1 [scrollbar-width:thin]";
 var CRUMB_BTN_CLASS = "secondary text-sm aria-[current=true]:border-accent aria-[current=true]:bg-accent aria-[current=true]:text-on-accent";
 var KIND_BAR_CLASS = "mb-2 flex flex-wrap gap-1";
 var KIND_BTN_CLASS = "secondary aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-on-accent";
-var MINIMAP_CLASS = "absolute bottom-2 right-2 h-[90px] w-[148px] cursor-pointer overflow-hidden rounded-plate border border-border bg-surface shadow-[var(--lift)] hover:border-accent";
+var MINIMAP_CLASS = "absolute bottom-2 right-2 h-[90px] w-[148px] cursor-pointer overflow-hidden rounded-plate border border-border bg-surface shadow-[var(--lift)] hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 var MINIMAP_LABEL_CLASS = "pointer-events-none absolute left-1 top-0.5 font-sans text-2xs text-fg-muted";
 var MINIMAP_VIEWPORT_CLASS = "pointer-events-auto absolute cursor-grab rounded-plate border-[1.5px] border-accent bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] active:cursor-grabbing";
 var MINIMAP_CANVAS_CLASS = "pointer-events-none absolute inset-0 h-full w-full";
@@ -747,8 +747,14 @@ function drawRun(g) {
 
   var minimap = document.createElement("div");
   minimap.className = MINIMAP_CLASS; minimap.hidden = true;
-  minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap: click to jump, drag viewport to pan");
-  minimap.title = "Click to jump · drag viewport to pan";
+  /* The minimap's two pointer gestures (click to jump, drag to pan) had no
+     keyboard spelling, so a keyboard user reached the graph only through its
+     own zoom, fit and search controls. It is a tab stop, and the arrow keys
+     run the same two gestures. */
+  minimap.setAttribute("role", "navigation");
+  minimap.setAttribute("aria-label", "Minimap: click to jump, drag viewport to pan, arrow keys to pan, Home to centre");
+  minimap.setAttribute("tabindex", "0");
+  minimap.title = "Click to jump · drag viewport to pan · arrow keys pan";
   var mmLabel = document.createElement("span"); mmLabel.className = MINIMAP_LABEL_CLASS; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
   var mmCanvas = document.createElement("canvas"); mmCanvas.className = MINIMAP_CANVAS_CLASS; mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
   var mmViewport = document.createElement("div"); mmViewport.className = MINIMAP_VIEWPORT_CLASS;
@@ -856,11 +862,10 @@ function drawRun(g) {
     });
   }
   canvas.addEventListener("scroll", scheduleMinimap, { passive: true });
-  minimap.addEventListener("click", function(e){
-    if (e.target === mmViewport) return;
-    var rect = minimap.getBoundingClientRect();
-    var px = (e.clientX - rect.left) / rect.width;
-    var py = (e.clientY - rect.top) / rect.height;
+  /* Jump to the node nearest a minimap fraction, or scroll there when the
+     pointer missed one. Shared by the pointer and the keyboard so the two
+     gestures cannot drift apart. */
+  function minimapJump(px, py){
     var cx = px * mmSW, cy = py * mmSH;
     var best = null, bestD = Infinity;
     mmNodes.forEach(function(n){
@@ -870,6 +875,31 @@ function drawRun(g) {
     if (best && bestD < 60) { best.focus(); best.click(); best.scrollIntoView({block:"center", inline:"center"}); return; }
     canvas.scrollLeft = px * (mmSW - canvas.clientWidth);
     canvas.scrollTop = py * (mmSH - canvas.clientHeight);
+  }
+  minimap.addEventListener("click", function(e){
+    if (e.target === mmViewport) return;
+    var rect = minimap.getBoundingClientRect();
+    minimapJump((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+  });
+  /* Arrow keys pan the viewport, the same drag the pointer does, and Home
+     centres it. The step is a fraction of the visible size, so the speed does
+     not depend on how large the graph is. */
+  minimap.addEventListener("keydown", function(e){
+    var step = 0.15;
+    var dx = 0, dy = 0;
+    if (e.key === "ArrowLeft") dx = -step;
+    else if (e.key === "ArrowRight") dx = step;
+    else if (e.key === "ArrowUp") dy = -step;
+    else if (e.key === "ArrowDown") dy = step;
+    else if (e.key === "Home") {
+      e.preventDefault();
+      canvas.scrollLeft = (mmSW - canvas.clientWidth) / 2;
+      canvas.scrollTop = (mmSH - canvas.clientHeight) / 2;
+      return;
+    } else return;
+    e.preventDefault();
+    canvas.scrollLeft += dx * canvas.clientWidth;
+    canvas.scrollTop += dy * canvas.clientHeight;
   });
   // drag viewport to pan
   (function(){

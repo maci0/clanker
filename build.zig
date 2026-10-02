@@ -576,6 +576,11 @@ pub fn build(b: *std.Build) void {
     const arena_js_test = b.addSystemCommand(&.{ "bun", "test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);
+    // The run graph's shell: the minimap's pointer gestures have a keyboard
+    // spelling, and both share one jump implementation.
+    const runs_graph_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    runs_graph_js_test.addFileArg(b.path("ui/app/features/runs-graph.test.mjs"));
+    test_step.dependOn(&runs_graph_js_test.step);
     // The Skills panel renders its cards into the container; the shipped
     // loadSkills is driven over the DOM stub.
     const skills_js_test = b.addSystemCommand(&.{ "bun", "test" });

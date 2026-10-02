@@ -1811,15 +1811,30 @@ function showCardDetail(id) {
   // on change, so there is nothing for a save button to carry.
 
   // ---- Inline title editing (click header to rename) ----
+  /* The header itself is the only affordance, so a click listener alone left
+     the one rename path in the detail panel pointer-only while its siblings
+     (the "in <column>" chip, the description block) already carry the role and
+     the key handler that make them buttons. */
   headerTitle.style.cursor = "pointer";
   headerTitle.title = "Click to rename";
-  headerTitle.addEventListener("click", function(e) {
-    if (e.target !== headerTitle) return;
+  headerTitle.setAttribute("role", "button");
+  headerTitle.tabIndex = 0;
+  function openTitleEdit() {
     uiPrompt("Card title", c.title, { maxlength: 500 }).then(function (newTitle) {
       if (newTitle && newTitle.trim() && newTitle.trim() !== c.title) {
         postBoard({ op: "update", id: c.id, title: newTitle.trim() }, "Title updated.");
       }
     });
+  }
+  headerTitle.addEventListener("click", function(e) {
+    if (e.target !== headerTitle) return;
+    openTitleEdit();
+  });
+  headerTitle.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    if (e.target !== headerTitle) return;
+    e.preventDefault();
+    openTitleEdit();
   });
 
   // ---- Save button in main column ----
