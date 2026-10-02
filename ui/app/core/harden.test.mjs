@@ -642,6 +642,11 @@ test("rooms copy uses the shared copy feedback helper", function () {
 test("failed list loads keep a visible retry in the panel", function () {
   assert.match(uiSrc, /export function showLoadError/);
   assert.match(uiSrc, /btn\.textContent = "Try again"/);
+  // The empty half of the same shape: a panel that loaded and has nothing
+  // in it says so with `.run-empty`, the one empty style the page already
+  // has, rather than an inline colour that renders unlike every sibling.
+  assert.match(uiSrc, /export function showEmptyState/);
+  assert.match(uiSrc, /p\.className = "run-empty"/);
   const schedule = readFileSync(join(here, "../../plugins/schedule/app.js"), "utf8");
   const prompts = readFileSync(join(here, "../features/prompts.js"), "utf8");
   const knowledge = readFileSync(join(here, "../features/knowledge.js"), "utf8");
@@ -670,6 +675,16 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(compare, /showError\(list, msg, load\)/);
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
   assert.match(app, /showLoadError\(el\.usage/);
+  // The pinned-messages panel is the one list in app.js that answered a
+  // failed load with a bare sentence, so closing and reopening the panel was
+  // the only recovery a reader could find. The retry names the room, so it
+  // re-runs this channel's load rather than the last one.
+  assert.match(app, /showLoadError\(el\.chatPinsList, "Could not load pins: " \+ err\.message, loadChatPins\.bind\(null, room\)\)/);
+  // The history lookup resolves ids the pinned rows render from. It is a
+  // second, optional request: its failure used to fall into the panel's own
+  // catch and replace rows already drawn with an error. Now it degrades.
+  assert.match(app, /\.catch\(function \(\) \{ return \{ messages: \[\] \}; \}\)/);
+  assert.match(app, /showEmptyState\(el\.chatPinsList,/);
   assert.match(system, /showLoadError\(list, msg, load\)/);
   assert.match(system, /function syncMcpTransportFields/);
   assert.match(system, /stdio needs a command to spawn/);

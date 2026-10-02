@@ -604,6 +604,12 @@ pub fn build(b: *std.Build) void {
     const palette_js_test = b.addSystemCommand(&.{ "bun", "test" });
     palette_js_test.addFileArg(b.path("ui/app/core/palette.test.mjs"));
     test_step.dependOn(&palette_js_test.step);
+    // The two list states a panel reports: "loaded, and there is nothing" and
+    // "could not load, here is why, try again". A call site hand-rolling
+    // either one is how they drifted apart, so both are tested where they live.
+    const ui_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    ui_js_test.addFileArg(b.path("ui/app/core/ui.test.mjs"));
+    test_step.dependOn(&ui_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

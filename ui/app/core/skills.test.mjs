@@ -44,7 +44,7 @@ function shippedLoadSkills(elements, fetchImpl) {
     function (x) { return x; },
     function () { return "1 KB"; },
     function (n, forms) { return n + " " + (forms[new Intl.PluralRules().select(n)] || forms.other); },
-    function () { elements.loadErrorShown = true; }
+    function (el, msg) { elements.loadErrorShown = true; elements.loadErrorMsg = msg; }
   );
 }
 
@@ -87,4 +87,23 @@ test("an empty skills list still renders its empty state", async function () {
   assert.equal(els.loadErrorShown, undefined);
   assert.match(els.skills.textContent, /No skills on file/);
   assert.equal(els["skills-status"].textContent, "No skills.");
+});
+
+test("a failed load names the reason, so the reader knows which problem it is", async function () {
+  const d = globalThis.document;
+  const els = { skills: d.createElement("div"), "skills-status": d.createElement("p") };
+
+  const loadSkills = shippedLoadSkills(els, function () {
+    return Promise.reject(new Error("host unreachable"));
+  });
+
+  await loadSkills();
+  assert.equal(els.loadErrorShown, true, "a rejected fetch must reach the load-error branch");
+  // The reason travels with the sentence. "Could not load skills." alone
+  // reads the same whether the skills module is switched off or the server is
+  // not answering, and those need different things from the reader.
+  assert.match(els.loadErrorMsg, /Could not load skills: host unreachable/);
+  // The status line mirrors the panel rather than saying a shorter second
+  // sentence, so the two never disagree about what went wrong.
+  assert.equal(els["skills-status"].textContent, els.loadErrorMsg);
 });

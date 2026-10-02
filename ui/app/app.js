@@ -1,5 +1,5 @@
 import { isInventoryStatus, readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
-import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, requireText } from "./core/ui.js";
+import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, chip as CHIP_CLASS, state as uiState, add as uiAdd, uiConfirm, uiPrompt, showLoadError, showEmptyState, requireText } from "./core/ui.js";
 import { setRailTabIcon, icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
 import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle as bindThemeToggleMod } from "./core/theme.js";
@@ -3852,10 +3852,7 @@ function loadChatPins(room) {
       var ids = data.pins || [];
       el.chatPinsList.textContent = "";
       if (!ids.length) {
-        var empty = document.createElement("p");
-        empty.style.color = "var(--fg-muted)";
-        empty.textContent = "No pinned messages in this channel.";
-        el.chatPinsList.appendChild(empty);
+        showEmptyState(el.chatPinsList, "No pins here yet. Pin one from a message menu.");
         return;
       }
       // Pins are ids; resolve against the currently loaded log first (cheap,
@@ -3895,9 +3892,10 @@ function loadChatPins(room) {
             row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
             el.chatPinsList.appendChild(row);
           });
-        });
+        })
+        .catch(function () { return { messages: [] }; });
     })
-    .catch(function () { el.chatPinsList.textContent = "Could not load pins."; });
+    .catch(function (err) { showLoadError(el.chatPinsList, "Could not load pins: " + err.message, loadChatPins.bind(null, room)); });
 }
 if (el.chatPinToggle) el.chatPinToggle.addEventListener("click", function () {
   var open = el.chatPinsPanel.hidden;

@@ -510,8 +510,10 @@ function loadSkills() {
       });
       if (status) status.textContent = utilPlural(list.length, { one: "skill.", other: "skills." });
     })
-    .catch(function () {
-      var msg = "Could not load skills.";
+    .catch(function (err) {
+      // Names the reason, as the workflows list above does: a skills module
+      // switched off and a server not answering are different problems.
+      var msg = "Could not load skills: " + ((err && err.message) || "could not reach the server.");
       if (status) status.textContent = msg;
       showLoadError(box, msg, loadSkills);
     });

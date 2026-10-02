@@ -146,6 +146,20 @@ export function toast(msg, kind) {
   return node;
 }
 
+/* The empty half of showLoadError: a panel that loaded and has nothing in it
+   says so in the same shape, and says what to do about it. */
+export function showEmptyState(container, message) {
+  if (!container) return null;
+  container.hidden = false;
+  container.removeAttribute("hidden");
+  container.textContent = "";
+  var p = document.createElement("p");
+  p.className = "run-empty";
+  p.textContent = message;
+  container.appendChild(p);
+  return p;
+}
+
 /* A required field holding only spaces passes the browser's `required`, so a
    handler that only checks for an empty value returns silently: the form does
    nothing and says nothing. This is the one refusal every text field makes,
