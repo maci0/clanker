@@ -8,8 +8,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const atomic_write = @import("util/atomic_write.zig");
-const http_client = @import("util/http_client.zig");
+const atomic_write = @import("../util/atomic_write.zig");
+const http_client = @import("../util/http_client.zig");
 
 const version = @import("build_options").version;
 

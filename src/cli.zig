@@ -78,7 +78,7 @@ const goal_store = @import("goal_store");
 const oauth_command = @import("llm/oauth_command.zig");
 const oauth_registry = @import("llm/oauth_plugins/registry.zig");
 const doctor_mod = @import("doctor.zig");
-const update_mod = @import("update.zig");
+const update_mod = @import("cli/update.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
 const atomic_write = @import("util/atomic_write.zig");
@@ -186,7 +186,7 @@ pub const Command = enum {
     doctor,
     /// `update [--check] [--repo owner/name]`: compare this build with the
     /// latest GitHub release. Without `--check`, replace this executable only
-    /// after the asset matches its `.sha256` sidecar. `src/update.zig`.
+    /// after the asset matches its `.sha256` sidecar. `src/cli/update.zig`.
     update,
     setup,
     prune,
