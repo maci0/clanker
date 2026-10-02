@@ -248,11 +248,6 @@ fn peersOf(cfg: *const config_mod.Config, arena: std.mem.Allocator) []const Peer
     return out.toOwnedSlice(arena) catch &.{};
 }
 
-fn sessionDbPathZ(arena: std.mem.Allocator, id: []const u8) ![:0]const u8 {
-    const rel = try std.fmt.allocPrint(arena, "state/sessions/{s}.db", .{id});
-    return arena.dupeZ(u8, rel);
-}
-
 fn replicaPathZ(arena: std.mem.Allocator, owner: []const u8, id: []const u8) ![:0]const u8 {
     const rel = try std.fmt.allocPrint(arena, "state/mesh/{s}/sessions/{s}.db", .{ owner, id });
     return arena.dupeZ(u8, rel);
@@ -293,7 +288,7 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
     const peers = peersOf(cfg, arena);
     if (peers.len == 0) return;
     const owner = ownerId(cfg);
-    var store = session_events.Store.open(arena, sessionDbPathZ(arena, session_id) catch |err| {
+    var store = session_events.Store.open(arena, session_mod.dbPathZ(arena, "state/sessions", session_id) catch |err| {
         fanoutFailed("build local store path", owner, "-", session_id, err);
         return;
     }) catch |err| {

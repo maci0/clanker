@@ -13989,7 +13989,7 @@ fn handleSessionEvents(
         return;
     }
     const after = std.fmt.parseInt(i64, queryParam(arena, target, "after") orelse "0", 10) catch 0;
-    const path = dbPathZ(arena, id) catch {
+    const path = session.dbPathZ(arena, "state/sessions", id) catch {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
         return;
     };
@@ -14094,12 +14094,6 @@ const AppendRequest = struct {
     /// a stream that no longer exists.
     erase: bool = false,
 };
-
-/// The sentinel-terminated path to a session's database.
-fn dbPathZ(arena: std.mem.Allocator, id: []const u8) ![:0]const u8 {
-    const rel = try std.fmt.allocPrint(arena, "state/sessions/{s}.db", .{id});
-    return arena.dupeZ(u8, rel);
-}
 
 fn handleSessions(
     io: std.Io,

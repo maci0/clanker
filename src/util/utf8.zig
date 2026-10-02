@@ -975,27 +975,6 @@ test "fuzz: a fold hit is a window of the haystack a plain match would also acce
             return (b & 0xC0) == 0x80;
         }
 
-        /// True when the codepoint starting at `at` folds to nothing, i.e. it
-        /// is one of the combining marks `fold` drops. A separate table walk
-        /// rather than a call into `fold`, so the assertion checks the answer
-        /// instead of restating the implementation with it.
-        fn isFoldingMark(s: []const u8, at: usize) bool {
-            const len = std.unicode.utf8ByteSequenceLength(s[at]) catch return false;
-            if (at + len > s.len) return false;
-            if (!std.unicode.utf8ValidateSlice(s[at .. at + len])) return false;
-            const cp = std.unicode.utf8Decode(s[at .. at + len]) catch return false;
-            for ([_][2]u21{
-                .{ 0x0300, 0x036F },
-                .{ 0x1AB0, 0x1AFF },
-                .{ 0x1DC0, 0x1DFF },
-                .{ 0x20D0, 0x20F0 },
-                .{ 0xFE20, 0xFE2F },
-            }) |r| {
-                if (cp >= r[0] and cp <= r[1]) return true;
-            }
-            return false;
-        }
-
         /// Dropping the first codepoint of the window must stop it answering
         /// the query. A window that still matches without its first letter
         /// started early, so a caller highlighting it marks a character the

@@ -34,6 +34,20 @@ pub const Session = struct {
 /// format is gone).
 pub const db_suffix = ".db";
 
+/// The path of a session's database. Exported because two callers outside
+/// this file name one: the CLI's session routes and the mesh transcript pull
+/// both build the path by hand, and a second spelling of where a session
+/// lives is a file nothing opens.
+pub fn dbPath(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+}
+
+/// The same path sentinel-terminated, for the stores whose open takes a
+/// `[:0]const u8`.
+pub fn dbPathZ(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ![:0]const u8 {
+    return arena.dupeZ(u8, try dbPath(arena, sessions_dir, id));
+}
+
 /// The transcript projection's table. The CHECKs are the same invariants
 /// `types.Role` and the boolean columns already carry, enforced where a foreign
 /// writer (the mesh transcript pull) writes rows nobody validated. A role the
@@ -98,7 +112,7 @@ pub const added_message_columns = [_][:0]const u8{
 /// sentinel-terminated in the arena.
 fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !sqlite.Connection {
     var conn: sqlite.Connection = .{};
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    const path = try dbPath(arena, sessions_dir, id);
     const pathz = try arena.dupeZ(u8, path);
     try conn.open(pathz);
     for (schema_parts) |ddl| {
@@ -130,7 +144,7 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
 /// returned FileNotFound here by construction; SQLite's open-with-create
 /// lost that behavior in the port.
 fn openExistingDb(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !sqlite.Connection {
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    const path = try dbPath(arena, sessions_dir, id);
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.FileNotFound;
     return openDb(arena, sessions_dir, id);
 }
@@ -445,7 +459,7 @@ fn decodeToolCalls(arena: std.mem.Allocator, raw: []const u8) ![]const StoredToo
 pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !Session {
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    const path = try dbPath(arena, sessions_dir, id);
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.FileNotFound;
     var conn = try openDb(arena, sessions_dir, id);
     defer conn.close();
@@ -500,7 +514,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 /// than by session.
 pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !void {
     if (!validSessionId(id)) return error.InvalidSessionId;
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    const path = try dbPath(arena, sessions_dir, id);
     try std.Io.Dir.cwd().deleteFile(io, path);
     // The journal/WAL sidecars of the deleted database are garbage once the
     // main file is gone; a fresh session reusing the id must not inherit them.
@@ -794,7 +808,7 @@ fn sessionMetaFromDb(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const
     // deleted while its index rows survived (the index write is fail-open)
     // would otherwise have a fresh titleless `<id>.db` minted for it on every
     // search, littering state/sessions with conversations that do not exist.
-    const path = std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix }) catch return null;
+    const path = dbPath(arena, sessions_dir, id) catch return null;
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return null;
     var conn = openDb(arena, sessions_dir, id) catch return null;
     defer conn.close();
@@ -1481,7 +1495,7 @@ test "a steered message round-trips as the user's own words plus the flag" {
 /// sequence across a later save; a rewrite renumbers from 1, so this is what
 /// tells the two apart from the outside.
 fn storedSeqs(arena: std.mem.Allocator, dir: []const u8, id: []const u8) ![]i64 {
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ dir, id, db_suffix });
+    const path = try dbPath(arena, dir, id);
     const pathz = try arena.dupeZ(u8, path);
     var conn: sqlite.Connection = .{};
     try conn.open(pathz);
