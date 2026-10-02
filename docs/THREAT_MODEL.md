@@ -1,6 +1,6 @@
 # clanker Threat Model
 
-Last reviewed: 2026-10-01. Every file:line reference below is re-resolved against the tree by
+Last reviewed: 2026-10-03. Every file:line reference below is re-resolved against the tree by
 `scripts/check-threat-model.py`, which exits non-zero on any reference whose cited line does not
 carry the symbol the reference names:
 
@@ -41,31 +41,32 @@ Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: no
 | # | Risk | Impact | Likelihood | Notes |
 |---|------|--------|------------|-------|
 | R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8405`, `src/cli.zig:8430`). Raw config reads disclose file contents (`src/cli.zig:12292`); validated writes change the operator's policy (`src/cli.zig:12323`). `/api/run` can select a native backend (`src/cli.zig:17306-17311`, dispatched `src/cli.zig:17706`, `src/cli.zig:17706`), and `POST /api/a2a/message` (`src/cli.zig:8744`) is a second agent-invoking route that is on in a stock install (`modules.a2a` defaults true, `src/config.zig:1092`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7. The same absence governs the local IPC surfaces (T9). The docs state the absence plainly (`docs/README.md:1623`, `README.md:248`). |
-| R2 | **Proxy credential spending.** Proxy authentication is optional; a `proxy_token_env` naming an unset variable skips authentication entirely (`src/cli.zig:8441-8446`, standalone `src/proxy_main.zig:311-316`). The standalone proxy runs no Host/Origin guard: `src/proxy_main.zig` contains no `unexpectedHost` or `crossOriginRequest` call. | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:7965-7971`, `src/proxy_main.zig:131-132`). |
+| R2 | **Proxy credential spending.** Proxy authentication is optional; a `proxy_token_env` naming an unset variable skips authentication entirely (`src/cli.zig:8482-8487`, standalone `src/proxy_main.zig:311-316`). The standalone proxy runs no Host/Origin guard: `src/proxy_main.zig` contains no `unexpectedHost` or `crossOriginRequest` call. | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:8003`-`:8010`, `src/proxy_main.zig:131-132`). |
 | R3 | **Prompt injection through LLM responses.** Provider output is untrusted input to the agent loop; retrieved documents, memory hits, and tool results are untrusted text the model is told never to execute (`src/agent/system_prompt.zig:697`). Containment is the sandbox, not the prompt. | High (tool misuse within sandbox policy) | Certain (inherent to an agent harness) | The sandbox is the trust boundary that makes this survivable; see M5. |
-| R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:124`; `admit` `src/peers/mesh.zig:133`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`Mesh.listen_host`/`listen_port` `src/config.zig:972-973`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
+| R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:124`; `admit` `src/peers/mesh.zig:133`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`Mesh.listen_host`/`listen_port` `src/config.zig:990-991`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
 | R5 | **Sandbox escape via symlinks was a real class** (ADR 0017); `safeJoinSecure` now refuses symlinked components on granted paths (`src/sandbox/host.zig`, path policy). Anything that broadens the sandbox (kernel, docker, exec allowlist, `agent.sandbox_follow_symlinks`) re-opens it. | High | Low (fixed, recurring class) | See [history](#threats-the-history-already-demonstrates-recurring-classes). |
-| R6 | **DoS: connection limit 64** (`max_connection_threads`, `src/cli.zig:8097`, enforced `:8139`; proxy surface keeps a web UI reserve `:8145`; `/health/ready` reports `saturated` in `readinessBody` `src/cli.zig:9858-9872`), request bodies capped at `max_body_bytes` + 64 KiB slack (`src/cli.zig:8391-8394`), images capped 4 MB × 4 (`src/cli.zig:10193`, count `:10193-10194`). Saturation refusals reset their own per-request state, book under `errors_total`, and log with a fresh request id (`respondSaturated`, `src/cli.zig:8197`), then FIN-then-drain so the 503 survives the close (`drainThenClose`, `src/cli.zig:8223`). The proxy's upstream deadlines default to 300 s first byte / 60 s idle (`src/serve/proxy.zig:30-31`, wiring `:426-427`, knobs `src/config.zig:1034-1038`). The mesh join handshake holds its own bounded thread pool (`max_inbound_conns`, `src/serve/mesh_net.zig:38`, enforced `:630`). Still no inbound per-route rate limit (`src/llm/rate_limit.zig` limits *outbound* provider requests, not callers), so any local process can hold all 64 slots. | Medium | Medium | Loopback-only default keeps this local. |
-| R7 | **Unauthenticated internal-infrastructure recon: `GET /api/mcp/servers` returns every configured `[mcp_servers.*]` command and URL** (`src/cli.zig:8596`, handler `:12506`), and each stanza names a program that would run outside the WASM sandbox once `modules.mcp_client` is on (`src/config.zig:1087`, `:1248`). No authentication on the route. Lower impact than R1 because it exposes configuration rather than acting on it, but it is the one read-only route that names the operator's internal hosts | Low | Medium | Reads configuration only, but unauthenticated and loopback-default, like every other route. |
+| R6 | **DoS: connection limit 64** (`max_connection_threads`, `src/cli.zig:8138`, enforced `:8139`; proxy surface keeps a web UI reserve `:8186`; `/health/ready` reports `saturated` in `readinessBody` `src/cli.zig:9858-9872`), request bodies capped at `max_body_bytes` + 64 KiB slack (`src/cli.zig:8432-8435`), images capped 4 MB × 4 (`src/cli.zig:10305`, count `:10305-10306`). Saturation refusals reset their own per-request state, book under `errors_total`, and log with a fresh request id (`respondSaturated`, `src/cli.zig:8238`), then FIN-then-drain so the 503 survives the close (`drainThenClose`, `src/cli.zig:8264`). The proxy's upstream deadlines default to 300 s first byte / 60 s idle (`src/serve/proxy.zig:30-31`, wiring `:426-427`, knobs `src/config.zig:1052-1056`). The mesh join handshake holds its own bounded thread pool (`max_inbound_conns`, `src/serve/mesh_net.zig:38`, enforced `:630`). Still no inbound per-route rate limit (`src/llm/rate_limit.zig` limits *outbound* provider requests, not callers), so any local process can hold all 64 slots. | Medium | Medium | Loopback-only default keeps this local. |
+| R7 | **Unauthenticated internal-infrastructure recon: `GET /api/mcp/servers` returns every configured `[mcp_servers.*]` command and URL** (`src/cli.zig:8637`, handler `:12603`), and each stanza names a program that would run outside the WASM sandbox once `modules.mcp_client` is on (`src/config.zig:1105`, `:1248`). No authentication on the route. Lower impact than R1 because it exposes configuration rather than acting on it, but it is the one read-only route that names the operator's internal hosts | Low | Medium | Reads configuration only, but unauthenticated and loopback-default, like every other route. |
 | R8 | **Extension points that are less bounded than the sandbox they were added beside.** `clanker <name>` Tier 2 execs a PATH binary unsandboxed with inherited stdio (`src/cli.zig:6033-6043`); DAP, hooks and `!cmd` name programs from config (`src/config.zig:769`, `src/hooks/config.zig:10`). Each is gated on an operator-set enabled list rather than a sandbox. Local-only, but the one class where adding a convenience *reduces* the containment the rest of the tree enforces | High | Low | Needs an operator action first (install + enable), which is why likelihood is Low. |
-| R9 | **A native file reader over the workspace, unauthenticated.** `GET /api/files?path=` (`handleFiles`, `src/cli.zig:14354`) lists directories and returns file contents with the server's own authority, not through a sandboxed guest, so the descriptor grants that bound `read_file` do not bound it. Its own bounds hold: `..` is clamped at the root, a symlinked component answers 403 (`src/cli.zig:14416`), the body is capped at `file_preview_cap` (`src/cli.zig:14319`), and dotenv files are hidden and unread through the module `safeJoin` also applies to guests (`secret_dotenv.isSecretDotenvPath`, `src/util/secret_dotenv.zig:49`, applied `src/cli.zig:14402`, `:14402`). What remains is every non-dotenv file in the checkout, to any caller on the port — including one that reaches the agent only by transcript. Same trust as every other route (no authn), so it is not a new boundary; it is the widest *read* the control plane offers. | Medium-High | Medium | Bounded by the root clamp, the no-follow walk and the dotenv refusal. Those three are named above so a later pass can aim a check at them. |
-| R10 | **The chatrooms HTTP writes are a shared, cross-instance control plane with no caller identity, and their ownership check compares the wrong side.** `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` (`handleChatSend` `src/cli.zig:9190` through `handleChatTopic` `src/cli.zig:9379`) each write durable state attributed to `cfg.instance.name`, the *server's* identity: `sendMessageOpts` stamps `.from = cfg.instance.name` (`src/peers/chatrooms.zig:903`) and `editMessage`/`deleteMessage` accept a message when `m.from == from` (`src/peers/chatrooms.zig:706`, `src/peers/chatrooms.zig:739`) with each handler passing that same name (`handleChatEdit` `src/cli.zig:9297`, `handleChatDelete` `src/cli.zig:9336`). So the 403 fires for a *peer-authored* message and never for a second caller of this same instance, and `/api/chat/react` has no ownership check at all - any caller toggles a reaction attributed to this instance (`handleChatReact` `src/cli.zig:9267`). Worse, `send` auto-joins whatever room the body names (the `isSubscribed` guard `src/cli.zig:9210`, `subscribe` `src/peers/chatrooms.zig:1190`), and `receive` (`src/peers/chatrooms.zig:606`) logs any peer-shaped POST into any subscribed room, so the same anonymous caller can make this instance *speak* and *receive* in a fleet-wide room; what a peer's text then reaches is the model prompt (`readNew` `src/peers/chatrooms.zig:1266`, injected `src/agent/loop.zig:982`, `inbox_limit` 5). On by default in a stock install (`modules.chatrooms` `src/config.zig:1118`, `chatrooms.on` `src/config.zig:1067`). The shipped docs claimed "403 when the caller is not the sender" (`docs/README.md:1617`; the 403 row of `docs/api.md:40`); both now read what the code does. | High | Medium | Per-field caps hold (`max_text_len` 4096 `src/peers/chatrooms.zig:53`, `max_emoji_len` 64 `:83`, `max_topic_len` 1024 `:57`, UTF-8 sanitised on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) + atomic rewrite). A fix belongs to authz-review |
-| R11 | **The mesh operator controls sit on the same unauthenticated HTTP surface as everything else.** `POST /api/mesh/pending` admits or denies a queued peer (`resolvePending` `src/serve/mesh_net.zig:878`; `handleMeshPendingPost` `src/cli.zig:16818`) - prompt-mode admission is the only human check the mesh has, and any caller can answer it; `POST /api/mesh/leave` evicts one member or all of them (`leave` `src/serve/mesh_net.zig:833`; `handleMeshLeave` `src/cli.zig:16763`); `POST /api/mesh/join` dials an arbitrary `host:port` straight out of the request body (`parseHostPort` `src/serve/mesh_net.zig:316`; `handleMeshJoin` `src/cli.zig:16728`), an outbound connect on demand from an anonymous caller. `GET /api/mesh/pending` and `GET /api/mesh/status` disclose the queue and the membership. Off by default (`modules.mesh`, `src/config.zig:1128`), which is what keeps this below R10. | High | Low-Medium | Bounded by `join_wait_ns` on the dial and by `max_pending_joins` 8 (`src/config.zig:977`, clamped `src/serve/mesh_net.zig:687`). No caller check anywhere on the path |
-| R12 | **`POST /api/live` is the unauthenticated twin of the gated `ck_publish` channel.** The guest path refuses without `"live_publish": true` and a non-empty `tool_self_name` (`src/sandbox/host.zig:2997`); the HTTP path only checks that `from` is a valid session-id-shaped slug (`validPluginName` `src/cli.zig:13090`) and that `data` is JSON under `event_cap / 2` (`livePublishFromBody` `src/cli.zig:9806`; `handleLivePublish` `src/cli.zig:9820`). Any caller can therefore speak as any plugin to every `GET /api/events` subscriber, which is what the web UI renders from. Not a frame injection: the payload is re-stringified, so the reserved-topic defense `ckPublish` documents (`src/sandbox/host.zig:3008`-`:3014`) still holds - the impersonation is the *slug*, not the topic. | Medium | Medium | Data is bounded and JSON-compacted; only the `plugin` topic is reachable |
-| R13 | **Two routes let an anonymous caller spend the operator's egress and credentials.** `GET /api/providers/models` (`handleProviderModels` `src/cli.zig:12769`) attaches the configured provider's API key as a bearer (`src/cli.zig:12780`) and calls that provider's `/models`; `POST /api/catalog/refresh` (`handleCatalogRefresh` `src/cli.zig:12028`) refetches models.dev and reinstalls the in-process catalog (`installCatalogCacheLocked` `src/cli.zig:12049`). Neither is a sandboxed guest, so no descriptor bounds either. `GET /api/config/status` (`handleConfigStatus` `src/cli.zig:12561`) discloses the last validation error verbatim, which can carry file paths and config fragments. | Medium | Medium | `providers/models` runs under the provider check timeout (`budget_s`, `src/cli.zig:12793`) so one call cannot pin a thread forever; a caller can still repeat it |
-| R14 | **One untrusted-bytes-into-prompt path is not fenced: the chatroom inbox.** Every other place the harness puts third-party bytes in front of the model runs them through `prompt_fence.neutralize`, which rewrites the leading `<` of every harness fence tag so a document cannot close a block the harness drew around it: tool results (`capToolResult` `src/agent/loop.zig:4047`), retrieved knowledge and memory (`prompt_fence.neutralize` `src/cli.zig:17918`), and the Skills/Learnings sections (`neutralizeMarkers` `src/improve/history.zig:715`). The `[chatroom inbox]` block does not (`src/agent/loop.zig:988`): a peer message is UTF-8-capped (`max_chat_inbox_preview_bytes` 300, `src/agent/loop.zig:104`) and the block carries its own untrusted-data instruction, but its bytes reach the prompt verbatim. A peer in a room this instance subscribes to can therefore write a closing fence marker and continue as harness framing. | Medium | Medium | Bounds hold: `inbox_limit` 5 (`src/peers/chatrooms.zig:87`), 300-byte previews, and the block's own instruction (`src/agent/loop.zig:988`). The gap is the missing rewrite, not a missing warning. A fix belongs to sec-review |
+| R9 | **A native file reader over the workspace, unauthenticated.** `GET /api/files?path=` (`handleFiles`, `src/cli.zig:14476`) lists directories and returns file contents with the server's own authority, not through a sandboxed guest, so the descriptor grants that bound `read_file` do not bound it. Its own bounds hold: `..` is clamped at the root, a symlinked component answers 403 (`pathHasSymlinkComponent` refusal, `src/cli.zig:14537`), the body is capped at `file_preview_cap` (`src/cli.zig:14441`, enforced `:14671`), and dotenv files are hidden and unread through the module `safeJoin` also applies to guests (`secret_dotenv.isSecretDotenvPath`, `src/util/secret_dotenv.zig:49`, refused `src/cli.zig:14524`, hidden from the listing `:14610`). An owner-only file is skipped the same way (`isOwnerOnlyFile`, `src/cli.zig:14462`, applied `:14624`). What remains is every other non-dotenv file in the checkout, to any caller on the port — including one that reaches the agent only by transcript. Same trust as every other route (no authn), so it is not a new boundary; it is the widest *read* the control plane offers. | Medium-High | Medium | Bounded by the root clamp, the no-follow walk, the dotenv refusal and the owner-only skip. Those four are named above so a later pass can aim a check at them. |
+| R10 | **The chatrooms HTTP writes are a shared, cross-instance control plane with no caller identity, and their ownership check compares the wrong side.** `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` (`handleChatSend` `src/cli.zig:9302` through `handleChatTopic` `src/cli.zig:9379`) each write durable state attributed to `cfg.instance.name`, the *server's* identity: `sendMessageOpts` stamps `.from = cfg.instance.name` (`src/peers/chatrooms.zig:903`) and `editMessage`/`deleteMessage` accept a message when `m.from == from` (`src/peers/chatrooms.zig:706`, `src/peers/chatrooms.zig:739`) with each handler passing that same name (`handleChatEdit` `src/cli.zig:9297`, `handleChatDelete` `src/cli.zig:9336`). So the 403 fires for a *peer-authored* message and never for a second caller of this same instance, and `/api/chat/react` has no ownership check at all - any caller toggles a reaction attributed to this instance (`handleChatReact` `src/cli.zig:9379`). Worse, `send` auto-joins whatever room the body names (the `isSubscribed` guard `src/cli.zig:9322`, `subscribe` `src/peers/chatrooms.zig:1190`), and `receive` (`src/peers/chatrooms.zig:606`) logs any peer-shaped POST into any subscribed room, so the same anonymous caller can make this instance *speak* and *receive* in a fleet-wide room; what a peer's text then reaches is the model prompt (`readNew` `src/peers/chatrooms.zig:1266`, injected `src/agent/loop.zig:985`, `inbox_limit` 5). On by default in a stock install (`modules.chatrooms` `src/config.zig:1136`, `chatrooms.on` `src/config.zig:1085`). The shipped docs claimed "403 when the caller is not the sender" (`docs/README.md:1617`; the 403 row of `docs/api.md:40`); both now read what the code does. | High | Medium | Per-field caps hold (`max_text_len` 4096 `src/peers/chatrooms.zig:53`, `max_emoji_len` 64 `:83`, `max_topic_len` 1024 `:57`, UTF-8 sanitised on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) + atomic rewrite). A fix belongs to authz-review |
+| R11 | **The mesh operator controls sit on the same unauthenticated HTTP surface as everything else.** `POST /api/mesh/pending` admits or denies a queued peer (`resolvePending` `src/serve/mesh_net.zig:886`; `handleMeshPendingPost` `src/cli.zig:16940`) - prompt-mode admission is the only human check the mesh has, and any caller can answer it; `POST /api/mesh/leave` evicts one member or all of them (`leave` `src/serve/mesh_net.zig:841`; `handleMeshLeave` `src/cli.zig:16885`); `POST /api/mesh/join` dials an arbitrary `host:port` straight out of the request body (`parseHostPort` `src/serve/mesh_net.zig:316`; `handleMeshJoin` `src/cli.zig:16850`), an outbound connect on demand from an anonymous caller. `GET /api/mesh/pending` and `GET /api/mesh/status` disclose the queue and the membership (`handleMeshPendingGet` `src/cli.zig:16912`, `handleMeshStatus` `src/cli.zig:16814`). Off by default (`modules.mesh`, `src/config.zig:1146`), which is what keeps this below R10. | High | Low-Medium | Bounded by `join_wait_ns` on the dial and by `max_pending_joins` 8 (`src/config.zig:995`, clamped `src/serve/mesh_net.zig:695`). No caller check anywhere on the path |
+| R12 | **`POST /api/live` is the unauthenticated twin of the gated `ck_publish` channel.** The guest path refuses without `"live_publish": true` and a non-empty `tool_self_name` (`src/sandbox/host.zig:2997`); the HTTP path only checks that `from` is a valid session-id-shaped slug (`validPluginName` `src/cli.zig:13187`) and that `data` is JSON under `event_cap / 2` (`livePublishFromBody` `src/cli.zig:9918`; `handleLivePublish` `src/cli.zig:9932`). Any caller can therefore speak as any plugin to every `GET /api/events` subscriber, which is what the web UI renders from. Not a frame injection: the payload is re-stringified, so the reserved-topic defense `ckPublish` documents (`src/sandbox/host.zig:3008`-`:3014`) still holds - the impersonation is the *slug*, not the topic. | Medium | Medium | Data is bounded and JSON-compacted; only the `plugin` topic is reachable |
+| R13 | **Two routes let an anonymous caller spend the operator's egress and credentials.** `GET /api/providers/models` (`handleProviderModels` `src/cli.zig:12866`) attaches the configured provider's API key as a bearer (`src/cli.zig:12877`) and calls that provider's `/models`; `POST /api/catalog/refresh` (`handleCatalogRefresh` `src/cli.zig:12125`) refetches models.dev and reinstalls the in-process catalog (`installCatalogCacheLocked` `src/cli.zig:12146`). Neither is a sandboxed guest, so no descriptor bounds either. `GET /api/config/status` (`handleConfigStatus` `src/cli.zig:12658`) discloses the last validation error verbatim, which can carry file paths and config fragments. | Medium | Medium | `providers/models` runs under the provider check timeout (`budget_s`, `src/cli.zig:12890`) so one call cannot pin a thread forever; a caller can still repeat it |
+| R14 | **The chatroom inbox was the one untrusted-bytes-into-prompt path left unfenced; it is fenced now (fixed).** Every place the harness puts third-party bytes in front of the model runs them through `prompt_fence.neutralize`, which rewrites the leading `<` of every harness fence tag so a document cannot close a block the harness drew around it: tool results (`capToolResult` `src/agent/loop.zig:4028`), retrieved knowledge and memory (`prompt_fence.neutralize` `src/cli.zig:5863`, `:17368`), and the Skills/Learnings sections (`neutralizeMarkers` `src/improve/history.zig:715`). The `[chatroom inbox]` block was the exception: a peer message, room name and author name all reach the model, and they reach it as *harness framing*. `buildChatroomInbox` (`src/agent/loop.zig:4049`) now neutralizes all three (`src/agent/loop.zig:4059-4061`) on top of the block's own untrusted-data instruction. Recorded because the class recurs: a new untrusted-bytes path is unfenced by default, and this table said so for two passes before the rewrite shipped. | Low (closed) | Was Medium | The fence rewrite is the control; the bounds under it hold independently: `inbox_limit` 5 (`src/peers/chatrooms.zig:87`), 300-byte previews (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`), and the block's own instruction (`src/agent/loop.zig:4054`) |
 R7-R9 in one line each: the one read-only route that names internal hosts (`/api/mcp/servers`, R7),
 the extension points that escape the sandbox entirely (Tier 2 exec, DAP, hooks, `!cmd`, R8), and
 the native reader no descriptor bounds (`/api/files`, R9). R10-R13 in one line each: the chat
 writes whose owner check compares the server's own name rather than the caller (R10), the mesh
 admission/membership controls on the same unauthenticated port (R11), `POST /api/live` without the
-`live_publish` grant its guest twin requires (R12), the two routes that spend the operator's
-provider credential on request (R13), and the one prompt-injection path whose fence markers are
-not neutralized (R14).
+`live_publish` grant its guest twin requires (R12), and the two routes that spend the operator's
+provider credential on request (R13). R14 is the fixed prompt-fencing gap: the chatroom inbox now
+rewrites fence markers like every other untrusted-bytes path, so it stays in the table as the
+recurrence that motivated the rule, not as a live gap.
 
 Priority order for the next pass: R1/R2 (internet-facing + authentication boundary, covered
-below), then R10 (the shared chat write plane, default-on), then R14 (the one unfenced
-prompt-injection path), then R3 abuse cases, then R4-R6, then R7-R9, then R11-R13.
+below), then R10 (the shared chat write plane, default-on), then R3 abuse cases, then R4-R6, then
+R7-R9, then R11-R13.
 
 ---
 
@@ -75,9 +76,9 @@ prompt-injection path), then R3 abuse cases, then R4-R6, then R7-R9, then R11-R1
 
 | Entry point | Where | Default reach | AuthN/AuthZ |
 |-------------|-------|---------------|-------------|
-| HTTP server (web UI + every `/api/*` route, health, metrics, A2A, `/proxy/v1`) | `clanker serve`: `resolveListen` `src/cli.zig:7847` (default `default_serve_host` `src/cli.zig:7764`), per-connection `serveConnection` `src/cli.zig:8134`; route predicate block (`is_webui`) from `src/cli.zig:8523`, dispatch chain from `src/cli.zig:8628`; route table `docs/README.md:1625` | `127.0.0.1:17921` (`--host` widens; one socket, `docs/README.md:1627`) | **None**; Host allowlist + Origin check only |
-| Proxy listener (dedicated) | `--proxy-port`; serves `/v1/*` and no `/api/*` (`docs/README.md:1627`); standalone binary `src/proxy_main.zig` (default `127.0.0.1:17922`) | loopback | Optional `proxy_token_env` (`src/config.zig:1027`), compared by `proxy.authorize` `src/serve/proxy.zig:57` in constant time over SHA-256 digests (`proxy.authorize`, `src/serve/proxy.zig:57`) |
-| Mesh TCP listener | `src/serve/mesh_net.zig` (`acceptLoop` `src/serve/mesh_net.zig:599`; inbound cap `src/serve/mesh_net.zig:38`, enforced `:630`) | `127.0.0.1:7420` (`src/config.zig:972-973`) | Admission allowlist/prompt/open (`Admission` `src/peers/mesh.zig:124`, `admit` `:133`); JOIN handshake bounded by frame cap + read timeout (`join_wait_ns`, `src/serve/mesh_net.zig:702-711`) |
+| HTTP server (web UI + every `/api/*` route, health, metrics, A2A, `/proxy/v1`) | `clanker serve`: `resolveListen` `src/cli.zig:7888` (default `default_serve_host` `src/cli.zig:7805`), per-connection `serveConnection` `src/cli.zig:8175`; route predicate block (`is_webui`) from `src/cli.zig:8564`, dispatch chain from `src/cli.zig:8669`; route table `docs/README.md:1625` | `127.0.0.1:17921` (`--host` widens; one socket, `docs/README.md:1627`) | **None**; Host allowlist + Origin check only |
+| Proxy listener (dedicated) | `--proxy-port`; serves `/v1/*` and no `/api/*` (`docs/README.md:1627`); standalone binary `src/proxy_main.zig` (default `127.0.0.1:17922`) | loopback | Optional `proxy_token_env` (`src/config.zig:1045`), compared by `proxy.authorize` `src/serve/proxy.zig:57` in constant time over SHA-256 digests (`proxy.authorize`, `src/serve/proxy.zig:57`) |
+| Mesh TCP listener | `src/serve/mesh_net.zig` (`acceptLoop` `src/serve/mesh_net.zig:599`; inbound cap `src/serve/mesh_net.zig:38`, enforced `:630`) | `127.0.0.1:7420` (`src/config.zig:990-991`) | Admission allowlist/prompt/open (`Admission` `src/peers/mesh.zig:124`, `admit` `:133`); JOIN handshake bounded by frame cap + read timeout (`join_wait_ns`, `src/serve/mesh_net.zig:702-711`) |
 | Outbound peer HTTP (`POST /api/chat/message`, notify) | `src/peers/chatrooms.zig` fan-out; `src/peers/command.zig` | none | Peers are *outbound* URLs, never listeners (`docs/README.md:1627`) |
 
 ### Routes the model treats as one boundary (T1)
@@ -89,20 +90,21 @@ pass can split them; each is enumerated under T1's STRIDE rows and T7.
 
 | Route | Handler | What a caller gets |
 |-------|---------|--------------------|
-| `GET /api/config/raw`, `POST /api/config/raw`, `POST /api/config/table/set`, `POST /api/config/table/remove` | `handleConfigRawGet` `src/cli.zig:12324`, `handleConfigRawSet` `src/cli.zig:12355` | Full config file contents unredacted; validated writes to operator policy (T7). The table routes write `config.local.toml` |
+| `GET /api/config/raw`, `POST /api/config/raw`, `POST /api/config/table/set`, `POST /api/config/table/remove` | `handleConfigRawGet` `src/cli.zig:12421`, `handleConfigRawSet` `src/cli.zig:12452` | Full config file contents unredacted; validated writes to operator policy (T7). The table routes write `config.local.toml` |
 | `POST /api/config/model/set`, `/remove`, `/model`, `/default` | route predicates `src/cli.zig:8554-8558` | Provider and default-model policy changes |
-| `GET /api/files?path=` | `handleFiles` `src/cli.zig:14354`, content half `src/cli.zig:14486` | **Native file browser over the workspace**: directory listing plus file contents, capped at `file_preview_cap` `src/cli.zig:14319`. Not a sandboxed guest — it walks the tree with the server's own authority. Its bounds are `..` clamped at the root, a no-follow symlink walk (`src/cli.zig:14613-14624`), and the shared dotenv refusal (`secret_dotenv.isSecretDotenvPath`, `src/util/secret_dotenv.zig:49`, applied `src/cli.zig:14402`, `:14402`), so `.env` is hidden and unread — the parity rule `env_allow` keeps for guests. A symlinked component answers 403 (`src/cli.zig:14416`) |
-| `POST /api/run`, `POST /api/ask`, `POST /api/steer` | `handleRun` `src/cli.zig:17118`, `handleAsk` `src/cli.zig:10552`, `handleSteer` `src/cli.zig:10788` | Agent work, write-confirmation answers, mid-turn steering (T1 elevation, T2) |
-| `POST /api/a2a/message`, `GET /.well-known/agent.json` | `handleA2AMessage` `src/cli.zig:9951`, `handleAgentCard` `src/cli.zig:9879` | A second agent entry point, gated only by `modules.a2a` (default on) |
-| `/api/plugins` (GET, POST), `/api/plugins/config` (POST), `/api/webui/plugins` (GET, POST) | `handlePlugins` `src/cli.zig:15209`, `handleWebuiPlugins` `src/cli.zig:13182` | Enable/disable plugins; `webui_addon` enable/disable, whose enabled list is the whole of T10's control |
-| `/api/goals`, `/api/board`, `/api/knowledge`, `/api/prompts`, `/api/schedule`, `/api/arena`, `/api/compare` (all GET+POST), `GET /api/workflows`, `/api/runs`, `/api/workspaces`, and the five record stores | dispatch `src/cli.zig:8741-8766`, `recordStoreForPath` `src/cli.zig:14809` | Durable workflow-state writes, all through sandboxed guests, none authenticated |
-| `/api/skills` (GET, POST) | `handleSkills` `src/cli.zig:14678`, input mapping `skillsRouteToToolInput` `src/cli.zig:14728` | `POST` toggles a skill's enable flag in `state/skills.json`, which decides what rides the next system prompt (`validSkillName` gate `src/cli.zig:14735`) |
-| `GET /api/sessions`, `/api/sessions/search`, `DELETE /api/sessions/<id>`, `GET /api/logs`, `GET /api/stats`, `GET /api/metrics`, `GET /api/status`, `GET /api/providers`, `GET /api/catalog`, `GET /api/janitor`, `/api/feedback` (GET, POST), `GET /api/mesh/*`, `POST /api/live`, `POST /api/notify`, `GET /api/events` | `handleSessions` `src/cli.zig:14033`, `handleLogs` `src/cli.zig:13757`, and the rest of the dispatch chain | Reads of transcripts, logs and metrics; the SSE stream; peer notifications (T1 disclosure, T3) |
-| `GET /api/mcp/servers` | `handleMcpServers` `src/cli.zig:12506` | R7: the operator's internal command/URL map, env values withheld |
-| `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` | `handleChatSend` `src/cli.zig:9190`, `handleChatSubscribe` `src/cli.zig:9252`, `handleChatReact` `src/cli.zig:9267`, `handleChatEdit` `src/cli.zig:9297`, `handleChatDelete` `src/cli.zig:9336`, `handleChatPin` `src/cli.zig:9363`, `handleChatTopic` `src/cli.zig:9379` | R10: durable writes to the shared room log and metadata on behalf of `cfg.instance.name`. Every handler is an unauthenticated mutation of a store a *fleet* of instances reads, and none of them knows who is calling. Reachable in a stock install: `modules.chatrooms` and `chatrooms.on` are both on by default (`src/config.zig:1118`, `src/config.zig:1067`) |
-| `POST /api/mesh/join`, `/leave`, `POST /api/mesh/pending`, `GET /api/mesh/pending`, `GET /api/mesh/status`, `GET /api/mesh/map` | `handleMeshJoin` `src/cli.zig:16728`, `handleMeshLeave` `src/cli.zig:16763`, `handleMeshPendingPost` `src/cli.zig:16818`, `handleMeshPendingGet` `src/cli.zig:16790`, `handleMeshStatus` `src/cli.zig:16692`, `handleMeshMap` `src/cli.zig:16854` | R4/T3: the operator's mesh membership is mutable by any caller. `join` dials an arbitrary `host:port` the body names (`parseHostPort` `src/serve/mesh_net.zig:316`, `join` `src/serve/mesh_net.zig:719`), `leave` evicts a named member or all of them (`leave` `src/serve/mesh_net.zig:833`), and `pending` POST *approves a peer admission* (`resolvePending` `src/serve/mesh_net.zig:878`) — the one prompt-mode control an operator has, exposed on the same unauthenticated surface. Off by default (`modules.mesh`, `src/config.zig:1128`) |
-| `POST /api/live` | `handleLivePublish` `src/cli.zig:9820`, body parsed by `livePublishFromBody` `src/cli.zig:9806` | Publishes onto the SSE bus under any slug that passes `validPluginName` (`src/cli.zig:13090`). The slug and data shape are checked; the *caller* is not, so any caller can speak as any plugin to every `GET /api/events` subscriber. The guest channel behind it is gated (`ckPublish` refuses without `"live_publish": true` and a non-empty `tool_self_name`); the HTTP route is not |
-| `POST /api/catalog/refresh`, `GET /api/providers/models`, `GET /api/config/status` | `handleCatalogRefresh` `src/cli.zig:12028`; `handleProviderModels` `src/cli.zig:12769`; `handleConfigStatus` `src/cli.zig:12561` | A network fetch and a live upstream call on behalf of the caller: `refresh` replaces `state/models-dev.json` from models.dev and installs the in-process copy (`installCatalogCacheLocked`, called `src/cli.zig:12049`); `providers/models` calls the configured provider's `/models` **carrying its API key** (`src/cli.zig:12780` builds the bearer from `provider.api_key_env`), so any caller can make the operator's credential talk to that provider for as long as the request takes. `config/status` discloses the last validation error verbatim |
+| `GET /api/files?path=` | `handleFiles` `src/cli.zig:14476`, content half `handleFileContent` `src/cli.zig:14665` | **Native file browser over the workspace**: directory listing plus file contents, capped at `file_preview_cap` `src/cli.zig:14441`. Not a sandboxed guest — it walks the tree with the server's own authority. Its bounds are `..` clamped at the root, a no-follow symlink walk (`pathHasSymlinkComponent` refusal, `src/cli.zig:14537`; definition `:14735`), and the shared dotenv refusal (`secret_dotenv.isSecretDotenvPath`, `src/util/secret_dotenv.zig:49`, refused `src/cli.zig:14524`, hidden `:14610`), so `.env` is hidden and unread — the parity rule `env_allow` keeps for guests. An owner-only file never appears in a listing and never opens (`isOwnerOnlyFile`, `src/cli.zig:14462`, applied `:14624`) |
+| `POST /api/run`, `POST /api/ask`, `POST /api/steer` | `handleRun` `src/cli.zig:17240`, `handleAsk` `src/cli.zig:10649`, `handleSteer` `src/cli.zig:10885` | Agent work, write-confirmation answers, mid-turn steering (T1 elevation, T2) |
+| `POST /api/a2a/message`, `GET /.well-known/agent.json` | `handleA2AMessage` `src/cli.zig:10063`, `handleAgentCard` `src/cli.zig:9991` | A second agent entry point, gated only by `modules.a2a` (default on) |
+| `/api/plugins` (GET, POST), `/api/plugins/config` (POST), `/api/webui/plugins` (GET, POST) | `handlePlugins` `src/cli.zig:15331`, `handleWebuiPlugins` `src/cli.zig:13279` | Enable/disable plugins; `webui_addon` enable/disable, whose enabled list is the whole of T10's control |
+| `/api/goals`, `/api/board`, `/api/knowledge`, `/api/prompts`, `/api/schedule`, `/api/arena`, `/api/compare` (all GET+POST), `GET /api/workflows`, `/api/runs`, `/api/workspaces`, and the five record stores | dispatch `src/cli.zig:8782-8807`, `recordStoreForPath` `src/cli.zig:14931` | Durable workflow-state writes, all through sandboxed guests, none authenticated |
+| `/api/skills` (GET, POST) | `handleSkills` `src/cli.zig:14800`, input mapping `skillsRouteToToolInput` `src/cli.zig:14850` | `POST` toggles a skill's enable flag in `state/skills.json`, which decides what rides the next system prompt (`validSkillName` gate, `src/cli.zig:14857`) |
+| `GET /api/sessions`, `/api/sessions/search`, `DELETE /api/sessions/<id>`, `GET /api/logs`, `GET /api/stats`, `GET /api/metrics`, `GET /api/status`, `GET /api/providers`, `GET /api/catalog`, `GET /api/janitor`, `/api/feedback` (GET, POST), `GET /api/mesh/*`, `POST /api/live`, `POST /api/notify`, `GET /api/events` | `handleSessions` `src/cli.zig:14124`, `handleLogs` `src/cli.zig:13854`, and the rest of the dispatch chain | Reads of transcripts, logs and metrics; the SSE stream; peer notifications (T1 disclosure, T3) |
+| `GET /api/mcp/servers` | `handleMcpServers` `src/cli.zig:12603` | R7: the operator's internal command/URL map, env values withheld |
+| `GET /api/peers` | `handlePeers` `src/cli.zig:16789` | Relays the `peers` guest `{"action":"phonebook"}` verdict verbatim, so a caller learns every configured peer's identity and reachability (up/down, "no peers") - an unauthenticated map of the operator's mesh and the hosts behind it. Gated on `modules.peers` (`src/cli.zig:8663`), so it 404s with the module off |
+| `POST /api/chat/send`, `/subscribe`, `/react`, `/edit`, `/delete`, `/pin`, `/topic` | `handleChatSend` `src/cli.zig:9302`, `handleChatSubscribe` `src/cli.zig:9364`, `handleChatReact` `src/cli.zig:9379`, `handleChatEdit` `src/cli.zig:9409`, `handleChatDelete` `src/cli.zig:9448`, `handleChatPin` `src/cli.zig:9363`, `handleChatTopic` `src/cli.zig:9379` | R10: durable writes to the shared room log and metadata on behalf of `cfg.instance.name`. Every handler is an unauthenticated mutation of a store a *fleet* of instances reads, and none of them knows who is calling. Reachable in a stock install: `modules.chatrooms` and `chatrooms.on` are both on by default (`src/config.zig:1136`, `src/config.zig:1085`) |
+| `POST /api/mesh/join`, `/leave`, `POST /api/mesh/pending`, `GET /api/mesh/pending`, `GET /api/mesh/status`, `GET /api/mesh/map` | `handleMeshJoin` `src/cli.zig:16850`, `handleMeshLeave` `src/cli.zig:16885`, `handleMeshPendingPost` `src/cli.zig:16940`, `handleMeshPendingGet` `src/cli.zig:16912`, `handleMeshStatus` `src/cli.zig:16814`, `handleMeshMap` `src/cli.zig:16976` | R4/T3: the operator's mesh membership is mutable by any caller. `join` dials an arbitrary `host:port` the body names (`parseHostPort` `src/serve/mesh_net.zig:316`, `join` `src/serve/mesh_net.zig:727`), `leave` evicts a named member or all of them (`leave` `src/serve/mesh_net.zig:841`), and `pending` POST *approves a peer admission* (`resolvePending` `src/serve/mesh_net.zig:886`) — the one prompt-mode control an operator has, exposed on the same unauthenticated surface. Off by default (`modules.mesh`, `src/config.zig:1146`) |
+| `POST /api/live` | `handleLivePublish` `src/cli.zig:9932`, body parsed by `livePublishFromBody` `src/cli.zig:9918` | Publishes onto the SSE bus under any slug that passes `validPluginName` (`src/cli.zig:13187`). The slug and data shape are checked; the *caller* is not, so any caller can speak as any plugin to every `GET /api/events` subscriber. The guest channel behind it is gated (`ckPublish` refuses without `"live_publish": true` and a non-empty `tool_self_name`); the HTTP route is not |
+| `POST /api/catalog/refresh`, `GET /api/providers/models`, `GET /api/config/status` | `handleCatalogRefresh` `src/cli.zig:12125`; `handleProviderModels` `src/cli.zig:12866`; `handleConfigStatus` `src/cli.zig:12658` | A network fetch and a live upstream call on behalf of the caller: `refresh` replaces `state/models-dev.json` from models.dev and installs the in-process copy (`installCatalogCacheLocked`, called `src/cli.zig:12146`); `providers/models` calls the configured provider's `/models` **carrying its API key** (`src/cli.zig:12877` builds the bearer from `provider.api_key_env`), so any caller can make the operator's credential talk to that provider for as long as the request takes. `config/status` discloses the last validation error verbatim |
 
 ### IPC / local-process surfaces
 
@@ -115,16 +117,16 @@ command"; none carries client authentication. Enumerated as T9.
 | ACP v1 stdio | `src/acp/server.zig` | Same model |
 | DAP (debug adapter) | `src/debug/dap.zig` | Can start/debug subprocesses (`src/agent/subprocess.zig`) |
 | Lifecycle hooks | `src/hooks/runner.zig`, `src/hooks/config.zig` | Configured commands run at lifecycle points: config-trust surface |
-| CLI Tier 2 plugin `clanker <name>` | `cmdPlugin` `src/cli.zig:6048`, Tier 2 spawn `src/cli.zig:6048` | An external `clanker-<name>` binary from PATH or `~/.clanker/plugins/`, exec'd **unsandboxed** with the remaining argv verbatim and stdio inherited. Gated on the same enabled list Tier 1 uses (`resolveTier2`), so being on PATH is not consent (T11) |
-| `clanker auth login` native OAuth flows | `cmdAuth` `src/cli.zig:3025`, per-plugin flows (`loginDevice` .. `loginManual`, `src/llm/oauth_command.zig:43-79`) | Device-code and manual-PKCE logins against Codex/Grok/Claude (`src/llm/oauth_plugins/`); tokens land under `agent.state_dir/oauth/<provider>.json` at `0600` (`src/llm/oauth_store.zig:31`, `:55`). Operator-initiated, but the token store is an asset (T12) |
-| `[mcp_servers.*]` external MCP servers | `McpServer` `src/config.zig:1238-1248`, validated by `parseMcpServer` at load (`src/config.zig:3292`); surfaced unauthenticated by `GET /api/mcp/servers` (`src/cli.zig:8596`, handler `src/cli.zig:12506`) | Each stanza names a `command`/`url` that would run **outside** the WASM sandbox with the same trust as an `exec_allow` line. Off by default (the `modules.mcp_client` toggle `src/config.zig:1087`); the GET route exposes the configured host/command shape to any caller (T13) |
+| CLI Tier 2 plugin `clanker <name>` | `cmdPlugin` `src/cli.zig:6089`, Tier 2 spawn `src/cli.zig:6089` | An external `clanker-<name>` binary from PATH or `~/.clanker/plugins/`, exec'd **unsandboxed** with the remaining argv verbatim and stdio inherited. Gated on the same enabled list Tier 1 uses (`resolveTier2`), so being on PATH is not consent (T11) |
+| `clanker auth login` native OAuth flows | `cmdAuth` `src/cli.zig:3058`, per-plugin flows (`loginDevice` .. `loginManual`, `src/llm/oauth_command.zig:43-79`) | Device-code and manual-PKCE logins against Codex/Grok/Claude (`src/llm/oauth_plugins/`); tokens land under `agent.state_dir/oauth/<provider>.json` at `0600` (`src/llm/oauth_store.zig:31`, `:55`). Operator-initiated, but the token store is an asset (T12) |
+| `[mcp_servers.*]` external MCP servers | `McpServer` `src/config.zig:1256-1266`, validated by `parseMcpServer` at load (`src/config.zig:3319`); surfaced unauthenticated by `GET /api/mcp/servers` (`src/cli.zig:8637`, handler `src/cli.zig:12603`) | Each stanza names a `command`/`url` that would run **outside** the WASM sandbox with the same trust as an `exec_allow` line. Off by default (the `modules.mcp_client` toggle `src/config.zig:1105`); the GET route exposes the configured host/command shape to any caller (T13) |
 | REPL `!cmd` shell escape | `docs/README.md:865` | Deliberate: interactive user shell; `repl_exec_allow` widens only what tool policy already allowed (`docs/README.md:1424`) |
 
 ### Drop-in code the host serves without a signature
 
 | Entry point | Where | Notes |
 |-------------|-------|-------|
-| Web UI plugin assets `GET /webui/plugins/<name>/app.js` and `app.css` | `handleWebuiPluginAsset` `src/cli.zig:13230`, gated on the plugin being enabled (`listedEnabled`, `:13226`) | Served from disk byte-for-byte, and the `app.js` is injected as a plain `<script>` into the operator's page (`loadPluginScript`, `ui/app/core/plugins.js:403-421`), so it runs in the same origin as `/api/*`. Enumerated as T10. |
+| Web UI plugin assets `GET /webui/plugins/<name>/app.js` and `app.css` | `handleWebuiPluginAsset` `src/cli.zig:13327`, gated on the plugin being enabled (`listedEnabled`, `:13355`) | Served from disk byte-for-byte, and the `app.js` is injected as a plain `<script>` into the operator's page (`loadPluginScript`, `ui/app/core/plugins.js:403-421`), so it runs in the same origin as `/api/*`. Enumerated as T10. |
 | MCP server descriptors / peer wires | `tools/manifests/*.tool.json`, `src/peers/mesh.zig` | Declarative, unsigned (T5) |
 
 ### Scheduled / triggered
@@ -151,7 +153,7 @@ command"; none carries client authentication. Enumerated as T9.
 - HTTP request bodies (JSON), headers (`Host`, `Origin`, `Content-Type`), query strings,
   resource ids (`requestPath` strips query first, `src/serve/http.zig:25`).
 - `/api/run` `images` (base64, 4 MB each, at most 4, requires `modules.multimodal`;
-  `src/cli.zig:10193`, `:10193-10194`; `docs/README.md:1675`).
+  `src/cli.zig:10305`, `:10305-10306`; `docs/README.md:1675`).
 - Chatroom messages fanned in from peers (`POST /api/chat/message`, `src/peers/chatrooms.zig`).
 - SSE event stream `GET /api/events`, long-lived, Origin-gated (`src/cli.zig:8618`).
 - Mesh wire frames (length-prefixed, `decodeFrame` against `max_frame`,
@@ -176,24 +178,24 @@ command"; none carries client authentication. Enumerated as T9.
 
 | # | Boundary | Direction | Validation / authn point |
 |---|----------|-----------|--------------------------|
-| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/serve/http.zig:211`, enforced `src/cli.zig:8437`; combined predicate `src/serve/http.zig:188`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/serve/http.zig:188`, enforced `src/cli.zig:8462`) and on the SSE stream (`src/cli.zig:8650`); body capped (`src/cli.zig:8391-8394`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head` set `src/cli.zig:8423`, rewrite `:8503`). Loopback bind is the real control |
-| T2 | **HTTP control plane → agent/tools** | `/api/run` task text (dispatch `src/cli.zig:8782`) → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`tools/manifests/*.tool.json`, honored in `src/sandbox/host.zig`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`) |
+| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/serve/http.zig:211`, enforced `src/cli.zig:8478`; combined predicate `src/serve/http.zig:188`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/serve/http.zig:188`, enforced `src/cli.zig:8503`) and on the SSE stream (`src/cli.zig:8691`); body capped (`src/cli.zig:8432-8435`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head` set `src/cli.zig:8464`, rewrite `:8544`). Loopback bind is the real control |
+| T2 | **HTTP control plane → agent/tools** | `/api/run` task text (dispatch `src/cli.zig:8823`) → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`tools/manifests/*.tool.json`, honored in `src/sandbox/host.zig`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`) |
 | T3 | **Peer/mesh → local state** | `POST /api/chat/message`, mesh CHAT frames → `state/chatrooms.jsonl`, `state/notifications.jsonl` | Chat fan-out via sandboxed `peers` tool (`chat_fanout`, `network_from_config`); mesh admission handshake (`src/serve/mesh_net.zig:528-556`); no wire crypto |
 | T4 | **Provider API → agent loop** | LLM response stream → conversation → next model request | Prompts treat provider output and retrieved text as untrusted (R3); sandbox is the enforcement point. History sent to model is append-only; request-only copies for compaction (`docs/README.md` agent section) |
 | T5 | **Disk state → process** | `state/sessions/<id>.db`, `state/goals.json`, `state/models-dev.json`, `state/board*.json`, `state/plugins.json` + `plugin_config.json` | JSON state parsed with explicit bounds (guests read through `ck_fs_read_range`, not whole-file); sessions are read by tools through the `ck_session` channel rather than as files; `.env` refused by `safeJoin`; symlinked components refused by `safeJoinSecure` (ADR 0017) |
-| T6 | **Secrets → code** | Provider keys via `api_key_env` (provider tables in `src/config.zig`), `[serve]` `proxy_token_env` (`src/config.zig:1027`) compared by `proxy.authorize` `src/serve/proxy.zig:57`, Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy credentials ride only `/v1/*` paths; token comparison is constant-time over SHA-256 digests (`src/serve/proxy.zig:57`) |
+| T6 | **Secrets → code** | Provider keys via `api_key_env` (provider tables in `src/config.zig`), `[serve]` `proxy_token_env` (`src/config.zig:1045`) compared by `proxy.authorize` `src/serve/proxy.zig:57`, Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy credentials ride only `/v1/*` paths; token comparison is constant-time over SHA-256 digests (`src/serve/proxy.zig:57`) |
 | T7 | **HTTP caller → native configuration and backends** | Raw config reads/writes (routes `src/cli.zig:8559-8560`, handlers `:12292` GET and `:12323` POST); backend selection (`src/cli.zig:17306-17311`) and native dispatch (`:17706`, `:17706`) | File-name restriction and config validation protect format, not caller authority. Backend-name validation (`acp_vendor.Name.parse`) selects supported adapters, not a WASM sandbox. No caller authentication precedes these routes (`src/cli.zig:8405-8430`). `GET /api/files` is the other native path: it reads the workspace with the server's authority, bounded by the root clamp, the no-follow walk and the dotenv refusal rather than by a descriptor |
 | T8 | **Local automation → host execution** | System cron `clanker schedule run-due` (`src/schedule/`), the opt-in state-backup units (`scripts/install-state-backup.sh`, `scripts/systemd/clanker-state-backup.timer`), which shell out to `scripts/backup-state.sh` | No caller input crosses a wire: the trust question is *who may write the schedule file or the timer/cron line*. Backup refuses to run when its root would land inside the checkout (`scripts/backup-state.sh:79-83`) |
-| T9 | **Local process → IPC surfaces** | MCP stdio JSON-RPC (`serve` `src/mcp/server.zig:49`); ACP stdio (`serve` `src/acp/server.zig:302`); DAP (`"launch"`/`"attach"` adapter select `src/debug/dap.zig:395`); lifecycle hooks (`run` `src/hooks/runner.zig:16`); REPL `!cmd` (`execUnderPolicy` `src/tui/repl.zig:4296`); `ck_debug` (`src/sandbox/host.zig:2172`) | Trust = whoever can spawn the process or write the config that names its command. Hooks and `!cmd` run through the same exec allowlist as `ck_exec` (`execUnderPolicyInput`, `src/sandbox/host.zig:7004`; `execUnderPolicy`, `src/tui/repl.zig:4300`); DAP `launch`/`attach` picks a *configured* adapter by name and never takes argv from the client (`src/debug/dap.zig:395`); `ck_debug` requires `debug.enabled` (`ckDebugEnabled` refusal `src/sandbox/host.zig:2172`) |
-| T10 | **Third-party drop-in code → operator's browser origin** | `ui/plugins/<name>/app.js` served from disk (`handleWebuiPluginAsset` `src/cli.zig:13230`) and injected as a plain `<script>` into the page that also holds the control plane's `localStorage` session id (`loadPluginScript` `ui/app/core/plugins.js:405`) | The only gate is that the plugin is *enabled* (`listedEnabled` `src/cli.zig:13226`); there is no signature, no separate origin, and no `sandbox` attribute, so plugin code holds every capability the page has: read `/api/config/raw` (T7), read every transcript, and `POST /api/run` with the operator's reachability. Trust = whoever can write `ui/plugins/<name>/app.js`, or whoever gets an operator to enable a plugin they did not write. |
-| T11 | **Host PATH / plugin dir → unsandboxed process** | `clanker <name>` Tier 2 → `std.process.spawn` (`cmdPlugin` `src/cli.zig:6048`, spawn block `resolveTier2` `src/cli.zig:6048`) | Only the enabled list gates it: `resolveTier2` consults the same enabled set Tier 1 does, precisely so a bare `clanker <word>` cannot spawn any `clanker-<word>` on PATH. That is a consent gate, not a sandbox: the child inherits stdio and runs with the operator's full authority, outside every `ck_*` descriptor. Tier 1 (an enabled `cli-plugins/*.json` naming a sandboxed tool) adds no new trust surface. |
-| T12 | **Provider OAuth endpoint → local token store** | `clanker auth login` (`cmdAuth` `src/cli.zig:3025`, flows `loginDevice`/`loginCodexDevice`/`loginManual` `src/llm/oauth_command.zig:43-79`) → `state/oauth/<provider>.json` | Provider-hosted device-code and manual-PKCE flows; no callback listener is opened, the operator pastes the code back. Tokens are written owner-only (`atomic_write.private_file` 0600, `atomic_write.private_file` `src/llm/oauth_store.zig:55`). Nothing here is reachable over HTTP: the trust question is who can read the state directory, and whether a leaked refresh token is distinguishable from the API keys in T6 (they are not, in blast radius). |
-| T13 | **Config → external MCP server (outside the sandbox)** | `[mcp_servers.*]` `command`/`url` (`McpServer` `src/config.zig:1248`) | Off by default: the client bridge that would connect is behind the `modules.mcp_client` toggle, off by default (`src/config.zig:1087`). The stanzas are parsed and validated by `parseMcpServer` at load (`src/config.zig:3292`), so a `stdio` entry with no `command` is refused before anything spawns. The configuration *is* readable without authn today: `GET /api/mcp/servers` (`is_mcp_servers` `src/cli.zig:8596`) returns the configured host/command shape to any caller on the port. |
+| T9 | **Local process → IPC surfaces** | MCP stdio JSON-RPC (`serve` `src/mcp/server.zig:49`); ACP stdio (`serve` `src/acp/server.zig:302`); DAP (`"launch"`/`"attach"` adapter select `src/debug/dap.zig:395`); lifecycle hooks (`run` `src/hooks/runner.zig:16`); REPL `!cmd` (`execUnderPolicy` `src/tui/repl.zig:4326`); `ck_debug` (`src/sandbox/host.zig:2172`) | Trust = whoever can spawn the process or write the config that names its command. Hooks and `!cmd` run through the same exec allowlist as `ck_exec` (`execUnderPolicyInput`, `src/sandbox/host.zig:7004`; `execUnderPolicy`, `src/tui/repl.zig:4330`); DAP `launch`/`attach` picks a *configured* adapter by name and never takes argv from the client (`src/debug/dap.zig:395`); `ck_debug` requires `debug.enabled` (`ckDebugEnabled` refusal `src/sandbox/host.zig:2172`) |
+| T10 | **Third-party drop-in code → operator's browser origin** | `ui/plugins/<name>/app.js` served from disk (`handleWebuiPluginAsset` `src/cli.zig:13327`) and injected as a plain `<script>` into the page that also holds the control plane's `localStorage` session id (`loadPluginScript` `ui/app/core/plugins.js:405`) | The only gate is that the plugin is *enabled* (`listedEnabled` `src/cli.zig:13235`, called at `:13355`); there is no signature, no separate origin, and no `sandbox` attribute, so plugin code holds every capability the page has: read `/api/config/raw` (T7), read every transcript, and `POST /api/run` with the operator's reachability. Trust = whoever can write `ui/plugins/<name>/app.js`, or whoever gets an operator to enable a plugin they did not write. |
+| T11 | **Host PATH / plugin dir → unsandboxed process** | `clanker <name>` Tier 2 → `std.process.spawn` (`cmdPlugin` `src/cli.zig:6089`, spawn block `resolveTier2` `src/cli.zig:6089`) | Only the enabled list gates it: `resolveTier2` consults the same enabled set Tier 1 does, precisely so a bare `clanker <word>` cannot spawn any `clanker-<word>` on PATH. That is a consent gate, not a sandbox: the child inherits stdio and runs with the operator's full authority, outside every `ck_*` descriptor. Tier 1 (an enabled `cli-plugins/*.json` naming a sandboxed tool) adds no new trust surface. |
+| T12 | **Provider OAuth endpoint → local token store** | `clanker auth login` (`cmdAuth` `src/cli.zig:3058`, flows `loginDevice`/`loginCodexDevice`/`loginManual` `src/llm/oauth_command.zig:43-79`) → `state/oauth/<provider>.json` | Provider-hosted device-code and manual-PKCE flows; no callback listener is opened, the operator pastes the code back. Tokens are written owner-only (`atomic_write.private_file` 0600, `atomic_write.private_file` `src/llm/oauth_store.zig:55`). Nothing here is reachable over HTTP: the trust question is who can read the state directory, and whether a leaked refresh token is distinguishable from the API keys in T6 (they are not, in blast radius). |
+| T13 | **Config → external MCP server (outside the sandbox)** | `[mcp_servers.*]` `command`/`url` (`McpServer` `src/config.zig:1266`) | Off by default: the client bridge that would connect is behind the `modules.mcp_client` toggle, off by default (`src/config.zig:1105`). The stanzas are parsed and validated by `parseMcpServer` at load (`src/config.zig:3319`), so a `stdio` entry with no `command` is refused before anything spawns. The configuration *is* readable without authn today: `GET /api/mcp/servers` (`is_mcp_servers` `src/cli.zig:8637`) returns the configured host/command shape to any caller on the port. |
 
 Privilege transitions:
 - HTTP caller → policy author: native config writes validate and persist the config pair
   (`src/cli.zig:12323`), outside guest descriptor enforcement.
-- HTTP caller → native backend process: `runCodingBackendCtx` (`src/cli.zig:4391`) passes
+- HTTP caller → native backend process: `runCodingBackendCtx` (`src/cli.zig:4424`) passes
   configured ACP argv to the driver (`src/acp/driver.zig`); the driver spawns an ACP transport or
   falls back to a headless subprocess. Any backend-specific permission system is separate from
   clanker's WASM policy.
@@ -216,9 +218,9 @@ Privilege transitions:
 
 | Asset | Held where | Blast radius if compromised |
 |-------|-----------|-----------------------------|
-| Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig`; also readable through `GET /api/config/raw` (`handleConfigRawGet` `src/cli.zig:12324`) | Financial (token spend), impersonation of the operator's provider identity |
+| Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig`; also readable through `GET /api/config/raw` (`handleConfigRawGet` `src/cli.zig:12421`) | Financial (token spend), impersonation of the operator's provider identity |
 | Provider credentials, second copy | `<storage_root>/backups/<timestamp>/config/` once the opt-in backup timer is installed (`scripts/backup-state.sh:213-230`) | Same keys, copied off the checkout into an append-only snapshot tree; outlives deleting `config.local.toml`/`.env`, and no rotation sweep reaches it |
-| Native configuration and execution authority | `/api/config/raw` (`handleConfigRawGet`, `src/cli.zig:12324`, `handleConfigRawSet` `src/cli.zig:12355`), `/api/run` backend dispatch (`handleRun` `src/cli.zig:17118`) | Policy tampering and execution as the server's OS user; guest sandbox policy does not constrain these native paths (T7). No implication of OS root privileges. |
+| Native configuration and execution authority | `/api/config/raw` (`handleConfigRawGet`, `src/cli.zig:12421`, `handleConfigRawSet` `src/cli.zig:12452`), `/api/run` backend dispatch (`handleRun` `src/cli.zig:17240`) | Policy tampering and execution as the server's OS user; guest sandbox policy does not constrain these native paths (T7). No implication of OS root privileges. |
 | Conversation transcripts (sessions) | `state/sessions/<id>.db` (WAL SQLite, `src/agent/session.zig:35`; + `state/spills/<session>/`, `state/exports/<id>.html`) | Data disclosure (conversations contain task context, possibly secrets pasted in). With the backup timers installed, twice-hourly snapshot copies of all of it live under `<storage_root>/backups/` (`scripts/backup-state.sh:154-197`) — anyone who can read the storage root reads every conversation, including ones since deleted from `state/` |
 | Source code + git history | working tree, `.git` | Integrity; the improve loop can *self-modify* the repo through gated promotion (`src/improve/engine.zig`) |
 | LLM spend | `state/token_stats.jsonl` (hard cap, `src/stats/tokens.zig:25`; `docs/README.md:471`) | Financial; also an availability signal |
@@ -240,19 +242,19 @@ Privilege transitions:
   (`/api/sessions`), transcripts, knowledge, stats, all unauthenticated (route table
   `docs/README.md:1625`).
 - **DoS**: 64 connection slots (`src/cli.zig:8065`, enforced `:8107`); body cap
-  (`src/cli.zig:8391-8394`); no per-route rate limit; `POST /api/run` holds a slot for the whole run; provider
+  (`src/cli.zig:8432-8435`); no per-route rate limit; `POST /api/run` holds a slot for the whole run; provider
   hangups are bounded only by `agent.request_timeout_ms` / `agent.stream_idle_timeout_ms` (the
   HTTP client itself has no read timeout; defaults `src/config.zig:529`). Saturation 503s reset
   their own threadlocal request state, book under `errors_total`, carry a fresh request id, and
-  log (`respondSaturated`, `src/cli.zig:8197`); readiness reports `"saturated"`
+  log (`respondSaturated`, `src/cli.zig:8238`); readiness reports `"saturated"`
   (`src/cli.zig:9827-9829`). The dedicated proxy surface keeps a web UI reserve (`src/cli.zig:8113`); the proxy's own
   upstream deadlines default to 300 s/60 s (`src/serve/proxy.zig:30-31`).
-- **Elevation**: `/api/ask` (`handleAsk` `src/cli.zig:10552`, dispatched at `src/cli.zig:8778`) answers `confirm` events, so a same-origin
+- **Elevation**: `/api/ask` (`handleAsk` `src/cli.zig:10649`, dispatched at `src/cli.zig:8819`) answers `confirm` events, so a same-origin
   script or local client that can already reach the port can also confirm writes. Three further
   routes reach the agent, the mesh, or the live bus with no authn in front of any of them:
   `POST /api/a2a/message` (`src/cli.zig:8744`) runs the incoming JSON-RPC message through the
   agent model (gated only by `modules.a2a`, on by default, `src/config.zig:1092`; otherwise 404,
-  (`is_a2a` `src/cli.zig:8532`; the run itself is `handleA2AMessage`, `src/cli.zig:9951`),
+  (`is_a2a` `src/cli.zig:8573`; the run itself is `handleA2AMessage`, `src/cli.zig:10063`),
   `POST /api/mesh/join` (`src/cli.zig:8506`) admits a peer into the mesh, and
   `POST /api/live` (`src/cli.zig:8505`) publishes onto the live bus. A caller that reaches the
   port is the operator on all four.
@@ -273,7 +275,9 @@ Privilege transitions:
 
 ### T3 (peer/mesh)
 
-- **Spoofing**: mesh admission by self-asserted name (`matchesSeed`, `src/peers/mesh.zig:150`);
+- **Spoofing**: mesh admission by self-asserted name (`matchesSeed`, `src/peers/mesh.zig:150`),
+  behind an `admit` that refuses only an empty or self `join_id` before it compares names
+  (`src/peers/mesh.zig:133`, `:140`);
   an allowlist is name-matching, not a credential. `open` mode admits anyone
   (`src/peers/mesh.zig:124`).
 - **Tampering**: no integrity on the wire (plain TCP); chat messages are unauthenticated
@@ -283,8 +287,8 @@ Privilege transitions:
 - **DoS**: the JOIN handshake runs under a bounded inbound connection pool
   (`max_inbound_conns = 64`, `src/serve/mesh_net.zig:38`, enforced `:629`) with a
   frame-size cap and read timeout (`join_wait_ns`, `src/serve/mesh_net.zig:702-711`); joined members bounded by `mesh.max_members`
-  (`max_members` 32, `src/peers/mesh.zig:12`, `src/config.zig:976`); pending joins by `max_pending_joins`
-  (8, `src/config.zig:977`, clamped `src/serve/mesh_net.zig:687`).
+  (`max_members` 32, `src/peers/mesh.zig:12`, `src/config.zig:994`); pending joins by `max_pending_joins`
+  (8, `src/config.zig:977`, clamped `src/serve/mesh_net.zig:695`).
 
 ### T4 (provider → agent)
 
@@ -306,7 +310,7 @@ Privilege transitions:
 ### T6 (secrets)
 
 - **Disclosure**: secrets in config files on disk (plaintext keys), and the same files are
-  readable through `GET /api/config/raw` without redaction (`handleConfigRawGet`, `src/cli.zig:12324`); guests can
+  readable through `GET /api/config/raw` without redaction (`handleConfigRawGet`, `src/cli.zig:12421`); guests can
   read only named env vars via `env_allow` + `ck_getenv`; `.env` refused by `safeJoin`; no
   secrets in `env_allow` defaults. Proxy credentials ride only `/v1/*` paths.
 - **Rotation**: not documented (organizational).
@@ -314,10 +318,10 @@ Privilege transitions:
 ### T7 (HTTP → native policy and execution)
 
 - **Information disclosure**: raw config reads return the complete selected file, without
-  credential redaction (`handleConfigRawGet`, `src/cli.zig:12324`). Any inline secrets there share the control
+  credential redaction (`handleConfigRawGet`, `src/cli.zig:12421`). Any inline secrets there share the control
   plane's reachability, regardless of guest environment restrictions.
 - **Tampering / Elevation**: native config writes change operator policy after parsing
-  (`handleConfigRawSet`, `src/cli.zig:12355`); supported backend selection reaches native process spawning
+  (`handleConfigRawSet`, `src/cli.zig:12452`); supported backend selection reaches native process spawning
   (`src/cli.zig:17306-17311`, `:4391`, `src/acp/driver.zig`). Host/Origin checks reduce browser
   abuse but do not establish who may administer policy. Rank: critical impact, high likelihood
   for a reachable hostile client (R1). Missing control: caller authentication and authorization
@@ -346,7 +350,7 @@ Privilege transitions:
   survives deleting the original. Mitigated in part by M18 (owner-only snapshot
   root); unbounded in time, since snapshots are append-only.
 - **Tampering**: `backup-state.sh` derives its root from wherever `state` resolves
-  (`scripts/backup-state.sh:51-52`); a `state` symlink pointed at a hostile directory redirects
+  (`scripts/backup-state.sh:71-72`); a `state` symlink pointed at a hostile directory redirects
   every snapshot. That is an operator-writable decision, not a guest-reachable one.
 - **DoS**: two cron fires an hour over the full state tree; on a large session store that is
   sustained I/O. No quota, and the script is not part of the connection-limit accounting.
@@ -417,15 +421,15 @@ Privilege transitions:
 ### T13 (config → external MCP server)
 
 - **Elevation**: a `stdio` `[mcp_servers.*]` entry names a program that runs outside the WASM
-  sandbox, with the same trust as an `exec_allow` line (`McpServer.command`/`args`, `src/config.zig:1249-1257`). The gate
-  is `modules.mcp_client`, off by default (`src/config.zig:1087`), and the shape is validated
+  sandbox, with the same trust as an `exec_allow` line (`McpServer.command`/`args`, `src/config.zig:1267-1275`). The gate
+  is `modules.mcp_client`, off by default (`src/config.zig:1105`), and the shape is validated
   at load (`src/config.zig:3292`) — but validation is a *shape* check, and the authority the
   command would carry is not bounded by anything.
-- **Information disclosure**: `GET /api/mcp/servers` (`src/cli.zig:8596`) returns the
+- **Information disclosure**: `GET /api/mcp/servers` (`src/cli.zig:8637`) returns the
   configured command and URL to any unauthenticated caller, which maps the operator's
   internal infrastructure (an internal MCP host, a bespoke command) to anyone who can reach
   the port. Same class as the rest of the T1 disclosure rows, higher recon value.
-- **DoS**: a `tool_call_timeout_ms` per server (`src/config.zig:1257`) bounds a call, but
+- **DoS**: a `tool_call_timeout_ms` per server (`src/config.zig:1275`) bounds a call, but
   nothing bounds the count of configured servers or their concurrent processes.
 
 ### T14 (HTTP caller → the fleet-shared chat and mesh control plane)
@@ -437,56 +441,59 @@ different in kind from the T1 rows, which mostly read or configure this one host
 
 - **Spoofing (the one that the shipped docs got wrong)**: `sendMessageOpts` stamps every
   outbound message `.from = cfg.instance.name` (`src/peers/chatrooms.zig:903`), so a message
-  written through `POST /api/chat/send` (`handleChatSend` `src/cli.zig:9190`) is indistinguishable from one the
+  written through `POST /api/chat/send` (`handleChatSend` `src/cli.zig:9302`) is indistinguishable from one the
   agent itself authored, to every reader and every peer it fans out to. `receive`
   (`src/peers/chatrooms.zig:606`) takes the sender from the peer-shaped POST body
-  (`handleChatMessage` `src/cli.zig:8951`), so an inbound message's sender is whatever the body says - the mesh
-  admission check (`admit`, `src/peers/mesh.zig:133`) applies to a JOIN, not to a message on
+  (`handleChatMessage` `src/cli.zig:9049`, sender taken from the body at `:9063`), so an inbound
+  message's sender is whatever the body says - the mesh
+  admission check (`admit`, `src/peers/mesh.zig:133`, which refuses an empty `join_id` at `:140`)
+  applies to a JOIN, not to a message on
   an already-admitted connection.
 - **Elevation / authorization**: `editMessage` and `deleteMessage` are documented as
   sender-only (`editMessage` `src/peers/chatrooms.zig:685`; `deleteMessage` `src/peers/chatrooms.zig:719`).
   Each rejects a non-owner with `error.NotOwner` (`editMessage` `src/peers/chatrooms.zig:706`;
   `deleteMessage` `src/peers/chatrooms.zig:739`), but the comparison is `m.from == from` and both
-  handlers pass `cfg.instance.name` (`handleChatEdit` `src/cli.zig:9297`; `handleChatDelete` `src/cli.zig:9336`).
+  handlers pass `cfg.instance.name` (`handleChatEdit` `src/cli.zig:9409`; `handleChatDelete` `src/cli.zig:9448`).
   So the check means "is this message one *I* sent", not "is this message the caller's": on a
   single-instance install every message the instance sent is editable and deletable by every
   caller, and every peer-authored message is editable by nobody.
-  `toggleReaction` has no owner check at all (`handleChatReact` `src/cli.zig:9267`;
+  `toggleReaction` has no owner check at all (`handleChatReact` `src/cli.zig:9379`;
   `toggleReaction` `src/peers/chatrooms.zig:638`).
-  `setTopic` takes no owner argument (`handleChatTopic` `src/cli.zig:9379`;
+  `setTopic` takes no owner argument (`handleChatTopic` `src/cli.zig:9491`;
   `setTopic` `src/peers/chatrooms.zig:803`), and neither does `togglePin`
-  (`handleChatPin` `src/cli.zig:9363`; `togglePin` `src/peers/chatrooms.zig:820`).
+  (`handleChatPin` `src/cli.zig:9475`; `togglePin` `src/peers/chatrooms.zig:820`).
 - **Tampering / membership**: `POST /api/chat/subscribe` writes the durable subscription set
-  (`subscribe` `src/peers/chatrooms.zig:1190`; `handleChatSubscribe` `src/cli.zig:9252`), and
-  `handleChatSend` auto-joins any room the body names before sending (`src/cli.zig:9210`).
+  (`subscribe` `src/peers/chatrooms.zig:1190`; `handleChatSubscribe` `src/cli.zig:9364`), and
+  `handleChatSend` auto-joins any room the body names before sending (`src/cli.zig:9322`).
   An anonymous caller chooses which rooms this instance now receives into, and that
   subscription set is what `receive` and `readNew` filter on (`isSubscribed`
   `src/peers/chatrooms.zig:260`).
 - **Information disclosure**: `GET /api/chat/messages` serves the room log to any caller
-  (`handleChatMessages` `src/cli.zig:9031`); so do `GET /api/chat/rooms`
-  (`handleChatRooms` `src/cli.zig:9491`) and `GET /api/chat/pins`
-  (`handleChatPins` `src/cli.zig:9401`). A join-then-read gets a room's history, and the
+  (`handleChatMessages` `src/cli.zig:9143`); so do `GET /api/chat/rooms`
+  (`handleChatRooms` `src/cli.zig:9603`) and `GET /api/chat/pins`
+  (`handleChatPins` `src/cli.zig:9513`). A join-then-read gets a room's history, and the
   board room folds Kanban cards and their work log out of the same log (ADR 0001,
   `docs/README.md:501`).
 - **Injection across the boundary**: what `receive` accepts becomes the `[chatroom inbox]`
   user message on the next agent run (`readNew` `src/peers/chatrooms.zig:1266`; injected
-  `src/agent/loop.zig:988`), capped at `inbox_limit` 5 messages
+  `src/agent/loop.zig:987`, built by `buildChatroomInbox` `src/agent/loop.zig:4049`), capped at `inbox_limit` 5 messages
   (`inbox_limit` `src/peers/chatrooms.zig:87`) and `max_chat_inbox_preview_bytes` 300 per
   message (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`). The framing text tells the
-  model the messages are untrusted data (`src/agent/loop.zig:988`), but this inbox path does
-  **not** pass through `prompt_fence.neutralize`, which every other untrusted-bytes-into-prompt
-  path does: tool results (`capToolResult` `src/agent/loop.zig:4047`), knowledge and memory hits
-  (`prompt_fence.neutralize` `src/cli.zig:17918`), and the Skills/Learnings sections
-  (`neutralizeMarkers` `src/improve/history.zig:715`). So a peer that writes a harness fence
-  marker into a chat message reaches the model prompt with the marker intact, where every other
-  untrusted source has it neutralized. Same class as the T1 injection row, with a shorter hop and
-  a fence that is not rewritten. See R14.
+  model the messages are untrusted data (`src/agent/loop.zig:4054`), and the block now also runs
+  through `prompt_fence.neutralize`, which every other untrusted-bytes-into-prompt path does:
+  tool results (`capToolResult` `src/agent/loop.zig:4028`), knowledge and memory hits
+  (`prompt_fence.neutralize` `src/cli.zig:5863`), and the Skills/Learnings sections
+  (`neutralizeMarkers` `src/improve/history.zig:715`). `buildChatroomInbox` neutralizes all three
+  peer-chosen strings - message text, room name, author name (`src/agent/loop.zig:4059-4061`),
+  which is what closes this row: a peer writing a harness fence marker into a chat message now
+  has it rewritten like any other untrusted source. Same class as the T1 injection row, with a
+  shorter hop. See R14.
 - **DoS**: each chat write rewrites the whole shared log under a lock
   (`rewriteLog` `src/peers/chatrooms.zig:628`, lock `acquireChatroomLock`
   `src/peers/chatrooms.zig:435`) with a
-  `max_history`-sized read (`chatrooms.max_history` 500, `src/config.zig:1072`), so a
+  `max_history`-sized read (`chatrooms.max_history` 500, `src/config.zig:1090`), so a
   caller that can fill the retained window pays that cost per write. Bounded, not free.
-- **Repudiation**: a chat mutation logs at `error_` only on failure (`src/cli.zig:9289`);
+- **Repudiation**: a chat mutation logs at `error_` only on failure (`src/cli.zig:9401`);
   a successful write leaves the log line and the message's `from`, which by the above is the
   server's name, not the caller's.
 
@@ -510,10 +517,10 @@ different in kind from the T1 rows, which mostly read or configure this one host
 
 | # | Control | Code reference | Covers |
 |---|---------|----------------|--------|
-| M1 | Loopback bind by default; exactly one socket; `--host` opt-in widening | `default_serve_host` `src/cli.zig:7764`, resolve layers `resolveListen` `src/cli.zig:7847`, binding trust model in `docs/README.md:1621-1625` | R1, R2, R6 (network reach) |
-| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/serve/http.zig:211`, combined with the Origin predicate `crossOriginRequest` `src/serve/http.zig:188`, enforced `src/cli.zig:8437` | R1 (rebinding) |
-| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/serve/http.zig:188`, enforced `src/cli.zig:8462` (`crossOriginRequest` at `:8650`; the HEAD rewrite in `handleConnection` at `:8503`) | R1 (cross-site) |
-| M4 | Optional proxy token, constant-time hashed comparison; warn when unset on non-loopback | `proxy.authorize` `src/serve/proxy.zig:57`; wiring `src/cli.zig:8441-8446` and `src/proxy_main.zig:311-312`; warnings `src/cli.zig:7932-7937`, `src/proxy_main.zig:131-132` | R2 (partial, off by default) |
+| M1 | Loopback bind by default; exactly one socket; `--host` opt-in widening | `default_serve_host` `src/cli.zig:7805`, resolve layers `resolveListen` `src/cli.zig:7888`, binding trust model in `docs/README.md:1621-1625` | R1, R2, R6 (network reach) |
+| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/serve/http.zig:211`, combined with the Origin predicate `crossOriginRequest` `src/serve/http.zig:188`, enforced `src/cli.zig:8478` | R1 (rebinding) |
+| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/serve/http.zig:188`, enforced `src/cli.zig:8503` (`crossOriginRequest` at `:8691`; the HEAD rewrite in `handleConnection` at `:8544`) | R1 (cross-site) |
+| M4 | Optional proxy token, constant-time hashed comparison; warn when unset on non-loopback | `proxy.authorize` `src/serve/proxy.zig:57`; wiring `src/cli.zig:8482-8487` and `src/proxy_main.zig:311-312`; warnings `src/cli.zig:7932-7937`, `src/proxy_main.zig:131-132` | R2 (partial, off by default) |
 | M5 | WASM sandbox: descriptor policy (`fs_prefixes`/`env_allow`/`network_allow`/`exec_allow`), size caps | `tools/manifests/*.tool.json`, `src/sandbox/host.zig` | R3, R5, T2, T3 |
 | M6 | Privileged channels gated by `tool_self_name` (import ≠ grant) | `src/sandbox/host.zig` | T2 elevation |
 | M7 | `safeJoin`/`safeJoinSecure` refuse `.env` and symlinked components; `sandbox_follow_symlinks` opt-in (ADR 0017) | `src/sandbox/host.zig` | R5, T5 |
@@ -521,19 +528,19 @@ different in kind from the T1 rows, which mostly read or configure this one host
 | M9 | CAS write lock (`state/locks/<sha256-of-resolved-target>.lock`, flock, aged sweep) | ADR 0031, `ck_fs_write_if` in `src/sandbox/host.zig` | T2 tampering |
 | M10 | Improve loop gates: build/test/tools/fmt/lint + inert check + worktree isolation before promotion | `src/improve/engine.zig`, `src/improve/inert_check.zig` | self-modification integrity |
 | M11 | Prompt-injection posture: untrusted retrieved text fenced, model told never to execute it | `src/agent/system_prompt.zig:697` | R3 (advisory; sandbox enforces) |
-| M12 | Body caps: `max_body_bytes` + 64 KiB slack (`src/cli.zig:8391-8394`); images 4 MB × 4 (`max_image_bytes` `src/cli.zig:10193`); connection limit (`max_connection_threads` `:8097`, enforced `:8139`, proxy reserve `:8145`); saturation 503 recorded, logged, FIN-then-drain (`respondSaturated` `:8197`, `drainThenClose` `:8223`); proxy upstream deadlines (`default_first_byte_s` `src/serve/proxy.zig:30-31`); mesh join-handshake connection cap (`max_inbound_conns` `src/serve/mesh_net.zig:38`, check `:630`) | see left | R6, T3 DoS |
-| M13 | Mesh admission (allowlist/prompt/open) + loopback default | `src/peers/mesh.zig:124`, `:133`; `src/config.zig:972-973` | R4 (partial, name-match, no credential) |
+| M12 | Body caps: `max_body_bytes` + 64 KiB slack (`src/cli.zig:8432-8435`); images 4 MB × 4 (`max_image_bytes` `src/cli.zig:10305`); connection limit (`max_connection_threads` `:8138`, enforced `:8139`, proxy reserve `:8186`); saturation 503 recorded, logged, FIN-then-drain (`respondSaturated` `:8238`, `drainThenClose` `:8264`); proxy upstream deadlines (`default_first_byte_s` `src/serve/proxy.zig:30-31`); mesh join-handshake connection cap (`max_inbound_conns` `src/serve/mesh_net.zig:38`, check `:630`) | see left | R6, T3 DoS |
+| M13 | Mesh admission (allowlist/prompt/open) + loopback default | `src/peers/mesh.zig:124`, `:133`; `src/config.zig:990-991` | R4 (partial, name-match, no credential) |
 | M14 | Peers are outbound-only; nothing listens for peer traffic | `docs/README.md:1627` | T3 reach |
 | M15 | Guest-visible HTTP response headers are an allowlist, lowercased, value-capped | `exposed_response_headers` `src/sandbox/host.zig:3297`, ADR 0049 | T2 information disclosure |
-| M16 | Hooks and the REPL `!cmd` escape run under the same exec allowlist and deny tokens as `ck_exec`, not through a shell | `execUnderPolicyInput` `src/sandbox/host.zig:7004` wired in `src/hooks/runner.zig:38`; `execUnderPolicy` `src/tui/repl.zig:4296` with the allowlist unioned by `execAllowUnion` from tool manifests plus `agent.repl_exec_allow` (`src/tui/repl.zig:4220-4226`) | T9 elevation |
+| M16 | Hooks and the REPL `!cmd` escape run under the same exec allowlist and deny tokens as `ck_exec`, not through a shell | `execUnderPolicyInput` `src/sandbox/host.zig:7004` wired in `src/hooks/runner.zig:38`; `execUnderPolicy` `src/tui/repl.zig:4326` with the allowlist unioned by `execAllowUnion` from tool manifests plus `agent.repl_exec_allow` (`src/tui/repl.zig:4250-4256`) | T9 elevation |
 | M17 | Backup refuses to run when the snapshot root would land inside the checkout | `scripts/backup-state.sh:79-83` | T8 false-backup (not a confidentiality control) |
 | M18 | Snapshot root is owner-only (`chmod 700` on `$backup_root`, `700` on the `config/` subdir) and each copied file keeps its own mode, so the credential copies are not world-readable | `scripts/backup-state.sh:95`, `:213-230` | T8 credential disclosure (partial: mode, not lifetime or rotation) |
 | M19 | Only an *enabled* plugin's assets are served, so turning one off stops its code reaching the browser | `src/cli.zig:13198`, gate `:13226` | T10 (partial: an on/off switch, not a trust check) |
 | M20 | CLI Tier 2 requires membership in the same enabled list Tier 1 uses, so a bare `clanker <word>` cannot spawn an arbitrary `clanker-<word>` on PATH | `cli_plugins.resolveTier2` `src/cli.zig:6040`, `std.process.spawn` `:6044` | R8/T11 (consent gate only: the child is unsandboxed and inherits stdio) |
 | M21 | OAuth tokens are written owner-only (0600) under `agent.state_dir/oauth/`, and no callback listener is opened — the operator pastes the code back | `atomic_write.private_file` `src/util/atomic_write.zig:15`, applied `src/llm/oauth_store.zig:55`, path `:31`; flows `src/llm/oauth_command.zig:43-79` | T12 confidentiality |
-| M22 | `[mcp_servers.*]` shape is validated at config load, so a `stdio` stanza with no `command` is refused before anything could spawn, and the client bridge that connects stays behind `modules.mcp_client` (off by default) | `parseMcpServer` `src/config.zig:3292`, `McpServer` fields `:1249-1257`, `modules.mcp_client` `src/config.zig:1087` | T13/T11 elevation (partial: shape only, and `GET /api/mcp/servers` still discloses the configuration) |
-| M23 | Chat writes are bounded and serialized at the store: per-field caps (`max_text_len` `src/peers/chatrooms.zig:53`, `max_topic_len` `src/peers/chatrooms.zig:57`, `max_emoji_len` `src/peers/chatrooms.zig:83`), UTF-8 sanitation on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), a per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) and a `max_history`-sized window (`chatrooms.max_history` `src/config.zig:1072`) | see left | R10/R11 (bounds only: none of this is an authorization check) |
-| M24 | The chatroom inbox is bounded before it reaches the model: `inbox_limit` 5 messages (`inbox_limit` `src/peers/chatrooms.zig:87`) and a 300-byte UTF-8 preview per message (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`), inside a block whose own text says the messages are untrusted and must not be followed (`src/agent/loop.zig:988`) | see left | R14 (partial: the bytes are bounded and labelled, but the fence markers are not neutralized, which every other untrusted-bytes path does) |
+| M22 | `[mcp_servers.*]` shape is validated at config load, so a `stdio` stanza with no `command` is refused before anything could spawn, and the client bridge that connects stays behind `modules.mcp_client` (off by default) | `parseMcpServer` `src/config.zig:3319`, `McpServer` fields `:1266-1276`, `modules.mcp_client` `src/config.zig:1105` | T13/T11 elevation (partial: shape only, and `GET /api/mcp/servers` still discloses the configuration) |
+| M23 | Chat writes are bounded and serialized at the store: per-field caps (`max_text_len` `src/peers/chatrooms.zig:53`, `max_topic_len` `src/peers/chatrooms.zig:57`, `max_emoji_len` `src/peers/chatrooms.zig:83`), UTF-8 sanitation on append (`sendMessageOpts` `src/peers/chatrooms.zig:900`), a per-write lock (`acquireChatroomLock` `src/peers/chatrooms.zig:435`) and a `max_history`-sized window (`chatrooms.max_history` `src/config.zig:1090`) | see left | R10/R11 (bounds only: none of this is an authorization check) |
+| M24 | The chatroom inbox is bounded before it reaches the model: `inbox_limit` 5 messages (`inbox_limit` `src/peers/chatrooms.zig:87`) and a 300-byte UTF-8 preview per message (`max_chat_inbox_preview_bytes` `src/agent/loop.zig:104`), inside a block whose own text says the messages are untrusted and must not be followed (`src/agent/loop.zig:4054`), and with every peer-chosen string run through `prompt_fence.neutralize` (`src/agent/loop.zig:4059-4061`) | see left | R14 (closed: the fence rewrite every other untrusted-bytes path already had now covers the inbox too) |
 
 ### Highest-value gaps (ranked)
 
@@ -544,7 +551,7 @@ different in kind from the T1 rows, which mostly read or configure this one host
 2. **Proxy token off by default** (R2): M4 exists but is opt-in, and an unset
    `proxy_token_env` disables the check rather than the surface: `proxy.authorize` is
    only reached inside the `on_proxy` branch, and `proxy.token` yields no expected value
-   to compare against, so every `/v1/*` request is admitted (`src/cli.zig:8441-8446`).
+   to compare against, so every `/v1/*` request is admitted (`src/cli.zig:8482-8487`).
    The standalone `clanker-proxy` additionally runs no Host/Origin guard.
 3. **Mesh admission is not a credential** (R4): an allowlist matches a self-asserted name.
 4. **No inbound rate limiting per route**: the DoS surface is the shared 64-slot connection
@@ -553,9 +560,9 @@ different in kind from the T1 rows, which mostly read or configure this one host
    `app.js` inherits the whole control plane in the browser, and the only control is the
    operator's own enable switch.
 6. **The chat control plane has no caller identity and its owner check compares the wrong side** (R10): every message is stamped with the *server's* name, so the 403 in `editMessage`/`deleteMessage` means "is this one mine" rather than "is this one the caller's" (`src/peers/chatrooms.zig:706`, `src/peers/chatrooms.zig:739`), and `/api/chat/react` has no check at all. Default-on, fleet-shared, and its output reaches other instances and the model prompt.
-7. **One untrusted-bytes path is unfenced** (R14): the `[chatroom inbox]` does not run `prompt_fence.neutralize`, so a peer's fence markers survive into the prompt, where tool results, knowledge hits and the Skills/Learnings sections are all rewritten (`src/agent/loop.zig:988` against `src/agent/loop.zig:4047`).
+7. **No untrusted-bytes path is unfenced** (R14, closed): the `[chatroom inbox]` runs `prompt_fence.neutralize` like every other one, so a peer's fence markers are rewritten before they reach the prompt (`src/agent/loop.zig:4059-4061`, against tool results `src/agent/loop.zig:4028`). Kept in this list because the class recurs: a new untrusted-bytes path is unfenced until someone adds the call.
 8. **Configuration disclosure with no authentication**: `GET /api/mcp/servers` (R7,
-   `src/cli.zig:8596`) hands an unauthenticated caller every configured MCP command and
+   `src/cli.zig:8637`) hands an unauthenticated caller every configured MCP command and
    URL. It is the one read-only route whose answer is a map of the operator's internal
    hosts, and it is easy to mistake for harmless because nothing in it is a credential.
 9. **Extension points that leave the sandbox** (R8): the CLI Tier 2 plugin exec
@@ -576,7 +583,7 @@ different in kind from the T1 rows, which mostly read or configure this one host
 - The **enabled list** is now the single control for three separate surfaces with real
   authority behind them: web UI plugins in the browser (T10, `src/cli.zig:13226`), the
   unsandboxed CLI Tier 2 exec (T11, `src/cli.zig:6040`), and the external MCP bridge
-  (T13, `src/config.zig:1087`). They share no policy and no sandbox, only the idea that
+  (T13, `src/config.zig:1105`). They share no policy and no sandbox, only the idea that
   enabling is consent; one list's compromise is three unrelated exposures.
 
 ## 6. Abuse cases (hostile-but-authenticated)
@@ -584,9 +591,9 @@ different in kind from the T1 rows, which mostly read or configure this one host
 *Authenticated* here means "can reach the port", which is the only authentication there is.
 
 - **Speaking as the fleet in a shared chat room**: `POST /api/chat/send`
-  (`handleChatSend` `src/cli.zig:9190`) stamps every message with `cfg.instance.name`
+  (`handleChatSend` `src/cli.zig:9302`) stamps every message with `cfg.instance.name`
   (`sendMessageOpts` `src/peers/chatrooms.zig:903`) and the same call auto-joins whatever room
-  the body names (`src/cli.zig:9210`). A caller that can reach the port therefore posts as this
+  the body names (`src/cli.zig:9322`). A caller that can reach the port therefore posts as this
   instance into a room its *peers* subscribe to, and `fanOut` (`src/peers/chatrooms.zig:1115`, called `src/peers/chatrooms.zig:919`)
   carries it onward: the message is attributed to a real instance name, so nothing downstream
   distinguishes it from one the agent wrote. Editing or deleting it back is likewise possible
@@ -594,16 +601,16 @@ different in kind from the T1 rows, which mostly read or configure this one host
   (`src/peers/chatrooms.zig:706`). The business-logic abuse is impersonation inside a fleet
   control plane, and the room log is the durable record of it.
 - **Answering the mesh admission prompt for the operator**: with `mesh.admission = "prompt"`
-  (`src/config.zig:975`), `POST /api/mesh/pending` (`handleMeshPendingPost` `src/cli.zig:16818`)
+  (`src/config.zig:993`), `POST /api/mesh/pending` (`handleMeshPendingPost` `src/cli.zig:16940`)
   is the one place a human approves a peer. Any caller can send `{"allow":true}` for a queued
-  `join_id` and the peer is admitted (`resolvePending` `src/serve/mesh_net.zig:878`), so the
+  `join_id` and the peer is admitted (`resolvePending` `src/serve/mesh_net.zig:886`), so the
   prompt mode is advisory against a caller that does not have to be the operator. The same
-  caller can evict members with `POST /api/mesh/leave` (`handleMeshLeave` `src/cli.zig:16763`).
+  caller can evict members with `POST /api/mesh/leave` (`handleMeshLeave` `src/cli.zig:16885`).
 - **Credential spending via proxy**: `POST /v1/chat/completions` (or `/proxy/v1/...` on the
   shared socket) with any body spends the configured provider keys; with no
   `proxy_token_env` there is no per-request gate. Enabling `--host 0.0.0.0` without a token
   makes this LAN-wide; the warning fires, nothing stops it (`src/cli.zig:7932-7937`).
-- **Full agent drive and policy tampering**: `POST /api/run` (`src/cli.zig:8782`) dispatches
+- **Full agent drive and policy tampering**: `POST /api/run` (`src/cli.zig:8823`) dispatches
   agent work, but guest descriptor policy is not a boundary around the HTTP caller. The same
   caller can read and replace native configuration through `/api/config/raw`
   (`src/cli.zig:8559-8560`, handlers `:12292`, `:12323`). Config parsing validates values, not
@@ -618,19 +625,19 @@ different in kind from the T1 rows, which mostly read or configure this one host
   (`is_a2a` predicate `:8744`, handler `handleA2AMessage` `:9919`) is a JSON-RPC-shaped route that runs a task
   through the agent model with the same tool registry. Its only gate is `modules.a2a`, which
   defaults **on** (`src/config.zig:1092`), so unlike `modules.acp` and `modules.mcp_client`
-  (off by default, `src/config.zig:1090` and `:1087`) this is a second agent-invoking route
+  (off by default, `src/config.zig:1090` and `:1105`) this is a second agent-invoking route
   present in a stock install, carrying no check of its own.
 - **Backend selection**: a run body naming a supported backend (`src/cli.zig:17306-17311`)
   reaches native process spawning (`src/cli.zig:17706`), where the vendor CLI's own permission model, not
   clanker's sandbox, governs what the task may do.
-- **Write confirmation bypass**: `/api/ask` (`handleAsk` `src/cli.zig:10552`, dispatched `src/cli.zig:8778`) answers `confirm` events with a
+- **Write confirmation bypass**: `/api/ask` (`handleAsk` `src/cli.zig:10649`, dispatched `src/cli.zig:8819`) answers `confirm` events with a
   byte-exact option check; a client that already reaches the port can answer "allow" itself;
   the confirmation protects against *accidental* writes, not a hostile caller.
 - **Transcript scraping**: `GET /api/sessions` + per-session reads and `/api/logs` are
   unauthenticated reads of conversation and log content (route table `docs/README.md:1625`).
   With the backup timers installed, the same transcripts exist off-checkout under
   `<storage_root>/backups/` (`scripts/backup-state.sh:154-197`).
-- **Prompt-surface tampering**: `POST /api/skills` (`handleSkills`, `src/cli.zig:14678`) flips a
+- **Prompt-surface tampering**: `POST /api/skills` (`handleSkills`, `src/cli.zig:14800`) flips a
   skill's enable flag in `state/skills.json`, and that flag decides which markdown files are
   inlined into the next system prompt (the `skills` guest's `fs_prefixes` is `skills` plus that one
   file, `tools/manifests/skills.tool.json:18`; the name is gated by `validSkillName`,
@@ -682,7 +689,7 @@ are the only "identity"; neither is a secret.
   inherits its file from the preceding reference in the same cell, and that is the form that
   silently rots: the bare form is what the mechanical check has to guess a file for, and a
   guessed file makes a wrong line look verified. A reference whose line lands inside a comment
-  (`scripts/backup-state.sh:79-83` is the `case` that opens the in-checkout refusal, which is
+  (`scripts/backup-state.sh:99-103` is the `case` that opens the in-checkout refusal, which is
   the right span) is worth re-reading rather than re-numbering. Prefer a symbol
   (`respondSaturated`) over a line number when adding a new reference here; where a line number
   is kept, the symbol belongs next to it.
