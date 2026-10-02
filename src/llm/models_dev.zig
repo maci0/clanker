@@ -867,3 +867,97 @@ test "filledStamp files a body under the version it was read from" {
     // file: the post stamp is the honest one.
     try std.testing.expectEqual(@as(u64, 9), filledStamp(0, 9));
 }
+
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
+
+/// Seed snapshots for the member-scanner fuzz target, in the shapes the real
+/// `state/models-dev.json` takes and the shapes a truncated or tampered
+/// download takes: a provider member with a nested `models` object, one whose
+/// api URL lives inside a string holding braces, a closed object with trailing
+/// garbage, and the empty / non-object bodies the loader degrades on.
+const snapshot_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry(
+        \\{"openai":{"api":"https://api.openai.com/v1","env":["OPENAI_API_KEY"],"models":{"gpt-4o":{"name":"GPT-4o"}}}}
+    ),
+    fuzz_corpus.entry(
+        \\{"weird":{"api":"https://x.test/}","note":"}{","models":{"m":{"name":"M"}},"env":["K"]}}
+    ),
+    fuzz_corpus.entry(
+        \\{"a":{"api":"https://a.test/v1"},"b":{"api":"https://b.test/v1"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"a": {"unterminated
+    ),
+    fuzz_corpus.entry(
+        \\{"a": {"b": {"c": [1, 2, {"d": "e"}]}}}
+    ),
+    fuzz_corpus.entry(
+        \\{},"trailing":"garbage"
+    ),
+    fuzz_corpus.entry("[1,2,3]"),
+    fuzz_corpus.entry(""),
+};
+
+test "fuzz: a scanned member is a window of the snapshot and re-parses on its own" {
+    // `MemberIterator` / `valueEnd` / `stringEnd` are a hand-rolled byte walk
+    // over the whole models.dev snapshot -- a multi-megabyte file fetched from
+    // the network and then read on every config load. It is the one place in
+    // the harness that decides byte ranges in a document nobody in this repo
+    // wrote, so a span reaching past the end, a member whose `value` does not
+    // re-parse, or a `depth` underflow on a stray `}` is a crash or a garbage
+    // match on the next `Config.load`. The existing tests are hand-written
+    // examples; this drives arbitrary byte layouts through the same walk.
+    //
+    // Liveness is half the contract. The rest are the properties every caller
+    // relies on: a key and a value are windows of the input, the value span
+    // re-parses as JSON on its own (that is what `findProviderSpan`'s callers
+    // do with it), a scan that finds nothing yields no members, and scanning
+    // is deterministic (same bytes, same members) -- a mutation that made the
+    // walker order-dependent would fuzz clean forever otherwise.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [8192]u8 = undefined;
+            const input = buf[0..smith.slice(&buf)];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const members = topLevelMembers(arena, input);
+            const base = @intFromPtr(input.ptr);
+            for (members) |m| {
+                const kp = @intFromPtr(m.key.ptr);
+                const vp = @intFromPtr(m.value.ptr);
+                try std.testing.expect(kp >= base);
+                try std.testing.expect(vp >= base);
+                try std.testing.expect(kp + m.key.len <= base + input.len);
+                try std.testing.expect(vp + m.value.len <= base + input.len);
+                try std.testing.expect(m.key.len <= input.len);
+                try std.testing.expect(m.value.len <= input.len);
+
+                // The value span is handed to `std.json` by the provider
+                // lookup, so it must be a self-contained JSON value. This is
+                // the oracle that a mis-tracked brace or an early close
+                // fails, not a crash.
+                _ = std.json.parseFromSliceLeaky(std.json.Value, arena, m.value, .{}) catch |err| switch (err) {
+                    error.OutOfMemory => return err,
+                    else => return error.ValueSpanDidNotReparse,
+                };
+            }
+
+            // Determinism and the empty-body contract.
+            var arena2 = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena2.deinit();
+            const again = topLevelMembers(arena2.allocator(), input);
+            try std.testing.expectEqual(members.len, again.len);
+            for (members, again) |a, b| {
+                try std.testing.expectEqualStrings(a.key, b.key);
+                try std.testing.expectEqualStrings(a.value, b.value);
+            }
+            if (std.mem.indexOfScalar(u8, input, '{') == null) {
+                try std.testing.expectEqual(@as(usize, 0), members.len);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &snapshot_fuzz_corpus });
+}

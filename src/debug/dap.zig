@@ -1971,3 +1971,74 @@ test "DAP decode refuses an oversized declared frame before arithmetic" {
     const evil = try std.fmt.bufPrint(&evil_buf, "Content-Length: {d}\r\n\r\n", .{std.math.maxInt(usize)});
     try std.testing.expect(decodeFrame(evil) == null);
 }
+
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
+
+/// Seed frames for the DAP codec fuzz target, in the shapes an adapter (and a
+/// broken or hostile one) actually writes: a well-formed response, a
+/// stop-shaped event, a frame with trailing bytes belonging to the next one,
+/// an over-long declaration, and the garbage prefixes an adapter can emit
+/// before it ever speaks the protocol. Structure-aware seeds so `decodeFrame`
+/// reaches its happy path and its refusal path, not just the "no separator"
+/// early return.
+const dap_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry("Content-Length: 27\r\n\r\n{\"seq\":1,\"type\":\"response\"}"),
+    fuzz_corpus.entry("Content-Length: 33\r\n\r\n{\"type\":\"event\",\"event\":\"stopped\"}"),
+    fuzz_corpus.entry("Content-Length: 30\r\n\r\n{\"seq\":3,\"type\":\"request\"}xx"),
+    fuzz_corpus.entry("content-length: 12\r\n\r\n{\"a\":1}"),
+    fuzz_corpus.entry("Content-Length: 999999999\r\n\r\n{}"),
+    fuzz_corpus.entry("Content-Length: 18446744073709551615\r\n\r\n{}"),
+    fuzz_corpus.entry("Content-Length:\r\n\r\n{}"),
+    fuzz_corpus.entry("Content-Length: -1\r\n\r\n{}"),
+    fuzz_corpus.entry("Content-Length: 10\r\n\r\n{\"x\":"),
+    fuzz_corpus.entry("garbage without any separator"),
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry("\x00\xff\x00\xff"),
+};
+
+test "fuzz: adapter frames decode only inside their own bytes and respect the cap" {
+    // `decodeFrame` parses whatever a debug adapter writes into its stdout
+    // pipe: the `Content-Length` header, the `\r\n\r\n` separator and the
+    // declared body length are all adapter-controlled, and a panic here takes
+    // the whole harness down, not just the debug session. The existing check
+    // is a single maxInt case; this drives the header scan, the separator
+    // search, the completeness arithmetic and the frame cap across arbitrary
+    // byte layouts.
+    //
+    // Liveness is half the contract. The rest are the invariants every caller
+    // of `decodeFrame` depends on: a decoded payload is a window of the input
+    // and never reaches past it, `consumed` covers exactly the frame returned
+    // (the remainder belongs to the next frame), the frame cap holds, and a
+    // payload re-wrapped by `encodeFrame` decodes back to itself -- the round
+    // trip the request/response path is built on. Without these a mutation
+    // that flipped one comparison would fuzz clean forever.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const input = buf[0..smith.slice(&buf)];
+
+            const dec = decodeFrame(input) orelse return;
+            const base = @intFromPtr(input.ptr);
+            const at = @intFromPtr(dec.payload.ptr);
+            try std.testing.expect(at >= base);
+            try std.testing.expect(at + dec.payload.len <= base + input.len);
+            try std.testing.expect(dec.consumed <= input.len);
+            try std.testing.expectEqual(@as(usize, dec.payload.len), dec.consumed - (at - base));
+            // A body over the cap can never complete, so it is refused rather
+            // than accumulated one chunk per read.
+            try std.testing.expect(dec.payload.len <= max_frame_bytes);
+
+            const framed = try encodeFrame(std.testing.allocator, dec.payload);
+            defer std.testing.allocator.free(framed);
+            const back = decodeFrame(framed) orelse return error.RoundTripDidNotDecode;
+            try std.testing.expectEqualStrings(dec.payload, back.payload);
+            try std.testing.expectEqual(framed.len, back.consumed);
+
+            // What the session does with every frame it decodes: classify it
+            // and pull its sequence number out of whatever the payload is.
+            _ = frameIs(dec.payload, "event", "stopped");
+            _ = frameRequestSeq(dec.payload);
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &dap_fuzz_corpus });
+}
