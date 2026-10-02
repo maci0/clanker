@@ -7,6 +7,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [0.12.0] - 2026-10-02
 
+Compatibility-breaking minor. The changes that stop a config loading are under
+Breaking, each with the edit that keeps it loading; the rest are additive or
+fixes.
+
 ### Security
 
 - `POST /api/a2a/message`: the reply cache no longer replays one task's agent
@@ -15,6 +19,38 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   answered with that request's stored output. Replay now requires the id and
   the task text to agree, and a string id is no longer the same key as the
   integer with the same spelling.
+
+### Breaking
+
+- Config load refuses a `base_url` that is not an `http://` or `https://` URL:
+  `providers.<name>.base_url` and the per-model `models.<provider/model>.base_url`
+  override. Both are concatenated onto the wire path, so a bare host
+  (`api.example.test/v1`) or an empty value used to load and then failed as an
+  opaque transport error on the first chat request; load now names the provider
+  or model. `kind = "vertex"` and `"vertex_anthropic"` are exempt — their
+  adapter builds the host from `project`/`location`, so an empty `base_url`
+  stays correct. Migration: prefix the value with the scheme it was missing
+  (`base_url = "https://api.example.test/v1"`). A keyless local endpoint is
+  unchanged (`http://127.0.0.1:11434/v1`).
+- Config load refuses a secret-source key that is not a name a shell can export:
+  `providers.<name>.api_key_env` and `[serve].proxy_token_env`. The rule is
+  letters, digits, `_`, `.` and `-`, non-empty. `api_key_env` previously refused
+  only the empty string and `proxy_token_env` accepted anything, and both
+  resolvers answer `null` for a name no child process can carry, so
+  `proxy_token_env = "CLANKER PROXY TOKEN"` left the proxy serving
+  unauthenticated while the startup warning named an unset variable. Migration:
+  rename the variable to a shell-valid name in the config and in the
+  environment it is exported from. `.env` applies the same rule to the names it
+  *defines*: a line whose key is not shell-valid is now skipped with a warning
+  naming the line instead of loading a value no child or next launch could see.
+- Config load refuses `[serve].host` and `[mesh].listen_host` that is not a
+  bindable IP literal (`0.0.0.0` and `::` included). The mesh listener parsed
+  the value as an IP and, when it did not parse, silently bound loopback while
+  logging the address the operator had configured, so the peers were told to
+  reach a host the process was not listening on; `[serve].host` is refused on
+  the same rule so the two bind keys cannot disagree about the same string.
+  Migration: a hostname or a `host:port` pair in either key becomes the
+  corresponding IP literal (`host = "127.0.0.1"`, `listen_host = "0.0.0.0"`).
 
 ### Added
 
@@ -37,6 +73,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - HTTP API: a wrong method on a known route answers `405 Method Not Allowed`
   with an `Allow` header naming the methods it takes, instead of the bare 404
   an unknown URL gets. HEAD requests are unchanged.
+- `GET /api/sessions/<id>`, `POST /api/sessions/<id>/fork` and
+  `POST /api/sessions/<id>/compact` answer `500` (and log the cause) when the
+  session database exists but cannot be read, and reserve `404` for a session
+  that is genuinely not there. A corrupt or unreadable database previously
+  answered `404`, so a client branching on "no such session" also swallowed
+  the server fault behind it.
+- `config_view` (`clanker config view`): a `config.local.toml` that exists but
+  cannot be read is now a refusal, not an absent file. A whole-file dump
+  reported the committed `config.toml` alone, hiding the settings actually in
+  force, and `config set` read the unreadable override as an empty document —
+  then wrote back the one key it was setting, so the operator's entire local
+  override was replaced while the reply named only that key as the change.
 - `POST /api/knowledge/<id>/sync`: the reply carries `unindexed` (only when
   nonzero) counting documents stored but missing from the search index. The
   `knowledge` tool's `add_doc` reply now includes `indexed`, plus
@@ -53,14 +101,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - Copy buttons select and focus the labelled fallback input when the Clipboard API is unavailable. The input is removed when focus leaves it.
 
-- `[mesh] listen_host`: an address that is not a bindable IP literal is
-  refused at config load, naming the key. The mesh listener parsed the value
-  as an IP and, when it did not parse, silently bound loopback while logging
-  the address the operator had configured, so the mesh peers were told to
-  reach never came up and the startup line named a host the process was not
-  listening on. `[serve] host` now answers on the same rule, so the two bind
-  keys cannot disagree about the same string.
-
 - `clanker doctor`: the network exposure section reads `CLANKER_HOST` as well
   as `[serve].host`, matching the two layers `clanker serve` actually binds
   from. Reading only the file reported a LAN-exposed proxy with no effective
@@ -71,6 +111,39 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Commit subjects & alarms: cap commit messages on codepoint boundaries to avoid
   splitting multi-byte UTF-8 characters, and deduplicate reminders under canonical
   Unicode equivalence.
+
+- A `ck_tool` nested call is bounded by the *callee's* descriptor, so every
+  field the callee's `*.tool.json` decides is now taken from it rather than
+  inherited from the caller. Two shipped descriptors declared `fs_read_only`
+  and can call any non-internal tool, so a nested `edit_file` / `file_ops` /
+  `patch_apply` ran under the caller's flag and every write came back denied.
+  The other direction: a tool reached through `ck_tool` inherited the caller's
+  `session` grant, so one that never asked for the session store answered
+  `ck_session` in full. `ck_fs_read_if`/`ck_fs_write_if` are unchanged — only a
+  nested call's descriptor is re-read.
+
+- `write_note` and `POST /api/feedback` dedup under a compare-and-swap
+  (`ck_fs_write_if`) instead of a read-then-append. Two identical calls racing
+  (tools in one turn run in parallel; a retry of a call whose reply was lost)
+  both read a file without the note and both landed, so the store could hold a
+  duplicate pair. A repeat now answers `duplicate: true` and writes nothing.
+
+- Mesh session replication keeps one fan-out cursor per peer instead of one
+  per session. A single cursor was advanced past a tail that reached only some
+  peers, so a single unreachable peer stranded every other peer permanently:
+  the next push read the advanced cursor, found an empty tail, and returned.
+  The per-peer cursor (`fanned:<peer>`) makes "delivered to this peer" the only
+  thing a stored cursor claims; a peer that took nothing is re-offered the
+  tail. The old `mesh_last_fanned` meta key is not read, so an upgraded owner
+  re-offers its recent tail once and then resumes.
+
+- Hooks, retrieval and DAP: a hook that writes output the runner cannot read
+  (not a JSON object, or invalid JSON) now logs a warning naming the command
+  and treats the hook as having no verdict, instead of reading a `deny` its
+  author wrote but did not encode as an `allow`. Exit code 2 still denies
+  regardless. A tool result that is not valid UTF-8 stays a JSON string at
+  the spill and skill boundaries instead of a parse error, and a DAP reply that
+  cannot be built is reported rather than dropped.
 
 ## [0.11.1] - 2026-09-29
 
@@ -4626,7 +4699,17 @@ Developer tooling only: no public surface changes.
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/maci0/clanker/releases/tag/v0.12.0
+[0.11.1]: https://github.com/maci0/clanker/releases/tag/v0.11.1
+[0.11.0]: https://github.com/maci0/clanker/releases/tag/v0.11.0
+[0.10.0]: https://github.com/maci0/clanker/releases/tag/v0.10.0
+[0.9.0]: https://github.com/maci0/clanker/releases/tag/v0.9.0
+[0.8.0]: https://github.com/maci0/clanker/releases/tag/v0.8.0
+[0.7.0]: https://github.com/maci0/clanker/releases/tag/v0.7.0
+[0.6.2]: https://github.com/maci0/clanker/releases/tag/v0.6.2
+[0.6.1]: https://github.com/maci0/clanker/releases/tag/v0.6.1
+[0.6.0]: https://github.com/maci0/clanker/releases/tag/v0.6.0
 [0.5.0]: https://github.com/maci0/clanker/releases/tag/v0.5.0
 [0.4.0]: https://github.com/maci0/clanker/releases/tag/v0.4.0
 [0.3.0]: https://github.com/maci0/clanker/releases/tag/v0.3.0

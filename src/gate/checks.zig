@@ -1438,6 +1438,94 @@ fn newestReleasedVersion(changelog: []const u8) ?std.SemanticVersion {
     return null;
 }
 
+/// The link-reference block at the bottom of `CHANGELOG.md` is what turns each
+/// version heading into a clickable release link and `[unreleased]` into a
+/// compare against the last published tag. Nothing else writes it, so it rots
+/// silently: it still ended at 0.5.0 after seven releases, which left every
+/// `## [0.6.0]`..`## [0.12.0]` heading an unresolved reference and pointed
+/// `[unreleased]` at `v0.5.0...HEAD`, a range covering seven releases of
+/// unrelated history. Returns an allocated detail string, or null when the
+/// block covers every dated section and the compare link names the newest.
+fn findChangelogLinkDrift(gpa: std.mem.Allocator, changelog: []const u8) !?[]const u8 {
+    var versions: std.ArrayList(std.SemanticVersion) = .empty;
+    defer versions.deinit(gpa);
+    var lines = std.mem.splitScalar(u8, changelog, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "## [")) continue;
+        const rest = line["## [".len..];
+        const close = std.mem.indexOfScalar(u8, rest, ']') orelse continue;
+        const version = std.SemanticVersion.parse(rest[0..close]) catch continue;
+        if (std.mem.startsWith(u8, rest[close + 1 ..], " - ")) try versions.append(gpa, version);
+    }
+    if (versions.items.len == 0) return null;
+
+    for (versions.items) |version| {
+        var buf: [96]u8 = undefined;
+        const ref = try std.fmt.bufPrint(&buf, "[{f}]: https://github.com/maci0/clanker/releases/tag/v{f}", .{ version, version });
+        if (std.mem.indexOf(u8, changelog, ref) == null) {
+            return try std.fmt.allocPrint(
+                gpa,
+                "CHANGELOG.md has no '{s}' link reference; every dated version section needs one in the block at the bottom, or its heading renders as plain text",
+                .{ref},
+            );
+        }
+    }
+
+    // `[unreleased]` must compare from the newest published tag, not whatever
+    // the block was last extended to. It is the one link a reader follows to
+    // see what is pending, so it is checked against the section list rather
+    // than trusted.
+    const newest = versions.items[0];
+    var buf: [96]u8 = undefined;
+    const want = try std.fmt.bufPrint(&buf, "[unreleased]: https://github.com/maci0/clanker/compare/v{f}...", .{newest});
+    if (std.mem.indexOf(u8, changelog, want) == null) {
+        return try std.fmt.allocPrint(
+            gpa,
+            "CHANGELOG.md [unreleased] does not compare from the newest released version v{f}; it should start '{s}'",
+            .{ newest, want },
+        );
+    }
+    return null;
+}
+
+/// `package.json` and `tools/ts/package.json` must repeat `build.zig.zon`'s
+/// version. Returns an allocated detail string naming the manifest that
+/// disagrees, or null when both agree. Mirrors the check
+/// `scripts/release-check.sh manifests` makes at tag time, moved earlier so
+/// a one-sided version bump is refused by the gate rather than by the publish
+/// job after the tag is already cut.
+fn findPkgManifestVersionDrift(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_version: []const u8) !?[]const u8 {
+    for ([_][]const u8{ "package.json", "tools/ts/package.json" }) |pkg_path| {
+        const pkg_text = dir.readFileAlloc(io, pkg_path, gpa, .limited(1 << 20)) catch |err| {
+            return try std.fmt.allocPrint(gpa, "cannot read {s}: {s}", .{ pkg_path, @errorName(err) });
+        };
+        defer gpa.free(pkg_text);
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, pkg_text, .{}) catch |err| {
+            return try std.fmt.allocPrint(gpa, "{s} is not valid JSON: {s}", .{ pkg_path, @errorName(err) });
+        };
+        defer parsed.deinit();
+        const root = switch (parsed.value) {
+            .object => |o| o,
+            else => return try std.fmt.allocPrint(gpa, "{s} is not a JSON object", .{pkg_path}),
+        };
+        const ver_value = root.get("version") orelse {
+            return try std.fmt.allocPrint(gpa, "{s} has no \"version\" field", .{pkg_path});
+        };
+        const pkg_version = switch (ver_value) {
+            .string => |sv| sv,
+            else => return try std.fmt.allocPrint(gpa, "{s} \"version\" is not a string", .{pkg_path}),
+        };
+        if (!std.mem.eql(u8, pkg_version, build_version)) {
+            return try std.fmt.allocPrint(
+                gpa,
+                "{s} version {s} disagrees with build.zig.zon version {s}; build.zig.zon is the single source of truth",
+                .{ pkg_path, pkg_version, build_version },
+            );
+        }
+    }
+    return null;
+}
+
 /// Validates the consumer-facing release contract files that must stay aligned
 /// with `build.zig.zon` and the policy in RELEASES.md.
 pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
@@ -1456,6 +1544,9 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
     if (try findDuplicateChangelogSection(gpa, changelog)) |detail| {
         return .{ .ok = false, .label = "release-contract", .detail = detail };
     }
+    if (try findChangelogLinkDrift(gpa, changelog)) |detail| {
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
+    }
     // RELEASES.md allows the manifest to run ahead of the last release (that is
     // what a development version is) but never behind it: a manifest left at or
     // below an already published version would rebuild an artifact claiming a
@@ -1470,6 +1561,15 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
             );
             return .{ .ok = false, .label = "release-contract", .detail = detail };
         }
+    }
+
+    // build.zig.zon is the single source of truth; the secondary package
+    // manifests must repeat it. scripts/release-check.sh `manifests` compares
+    // the same pair, but it runs as the last step of the release pipeline, so
+    // without this a version bumped in only one of the two ships a tree that
+    // builds and gates green and is then refused at tag time.
+    if (try findPkgManifestVersionDrift(gpa, io, dir, build_options.version)) |detail| {
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
     }
 
     const readme = dir.readFileAlloc(io, "README.md", gpa, .limited(1 << 20)) catch |err| {
@@ -1503,6 +1603,49 @@ test "releaseContractGate accepts the live release files" {
     try std.testing.expect(result.ok);
 }
 
+test "findPkgManifestVersionDrift accepts the live tree's manifests" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    try std.testing.expect((try findPkgManifestVersionDrift(gpa, threaded.io(), std.Io.Dir.cwd(), build_options.version)) == null);
+}
+
+test "findPkgManifestVersionDrift names a manifest that disagrees with build.zig.zon" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"name\":\"clanker\",\"version\":\"0.11.1\"}" });
+    try tmp.dir.createDirPath(io, "tools/ts");
+    try tmp.dir.writeFile(io, .{ .sub_path = "tools/ts/package.json", .data = "{\"name\":\"clanker-as-tools\",\"version\":\"0.12.0\"}" });
+
+    const detail = (try findPkgManifestVersionDrift(gpa, io, tmp.dir, "0.12.0")).?;
+    defer gpa.free(detail);
+    try std.testing.expect(std.mem.startsWith(u8, detail, "package.json version 0.11.1"));
+}
+
+test "findPkgManifestVersionDrift names a manifest with no version field" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "package.json", .data = "{\"name\":\"clanker\"}" });
+    try tmp.dir.createDirPath(io, "tools/ts");
+    try tmp.dir.writeFile(io, .{ .sub_path = "tools/ts/package.json", .data = "{\"name\":\"clanker-as-tools\",\"version\":\"0.12.0\"}" });
+
+    const detail = (try findPkgManifestVersionDrift(gpa, io, tmp.dir, "0.12.0")).?;
+    defer gpa.free(detail);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "no \"version\" field") != null);
+}
+
 test "releaseContractGate rejects a changelog without Unreleased" {
     const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
     try std.testing.expect(std.mem.find(u8, bad, "## [Unreleased]") == null);
@@ -1529,6 +1672,43 @@ test "newestReleasedVersion skips an unparseable heading rather than giving up" 
     const text = "## [not-a-version] - 2026-01-01\n\n## [0.5.0] - 2026-09-18\n";
     const newest = newestReleasedVersion(text).?;
     try std.testing.expectEqual(@as(u64, 5), newest.minor);
+}
+
+test "findChangelogLinkDrift accepts a block covering every dated section" {
+    const text = "# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-10-01\n\n### Fixed\n\n- a\n\n" ++
+        "## [0.5.0] - 2026-09-18\n\n### Fixed\n\n- b\n\n" ++
+        "[unreleased]: https://github.com/maci0/clanker/compare/v0.6.0...HEAD\n" ++
+        "[0.6.0]: https://github.com/maci0/clanker/releases/tag/v0.6.0\n" ++
+        "[0.5.0]: https://github.com/maci0/clanker/releases/tag/v0.5.0\n";
+    try std.testing.expect((try findChangelogLinkDrift(std.testing.allocator, text)) == null);
+}
+
+test "findChangelogLinkDrift names the version whose link reference is missing" {
+    // The shipped shape before the fix: a release cut with a link block that
+    // stopped three versions back, so the new heading rendered as plain text.
+    const text = "# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-10-01\n\n### Fixed\n\n- a\n\n" ++
+        "## [0.5.0] - 2026-09-18\n\n### Fixed\n\n- b\n\n" ++
+        "[unreleased]: https://github.com/maci0/clanker/compare/v0.5.0...HEAD\n" ++
+        "[0.5.0]: https://github.com/maci0/clanker/releases/tag/v0.5.0\n";
+    const detail = (try findChangelogLinkDrift(std.testing.allocator, text)).?;
+    defer std.testing.allocator.free(detail);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "[0.6.0]: https://github.com/maci0/clanker/releases/tag/v0.6.0") != null);
+}
+
+test "findChangelogLinkDrift catches an [unreleased] anchor left behind by a release" {
+    const text = "# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-10-01\n\n### Fixed\n\n- a\n\n" ++
+        "## [0.5.0] - 2026-09-18\n\n### Fixed\n\n- b\n\n" ++
+        "[unreleased]: https://github.com/maci0/clanker/compare/v0.5.0...HEAD\n" ++
+        "[0.6.0]: https://github.com/maci0/clanker/releases/tag/v0.6.0\n" ++
+        "[0.5.0]: https://github.com/maci0/clanker/releases/tag/v0.5.0\n";
+    const detail = (try findChangelogLinkDrift(std.testing.allocator, text)).?;
+    defer std.testing.allocator.free(detail);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "[unreleased]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "v0.6.0") != null);
+}
+
+test "findChangelogLinkDrift has nothing to check before the first release" {
+    try std.testing.expect((try findChangelogLinkDrift(std.testing.allocator, "# Changelog\n\n## [Unreleased]\n\n- work in progress\n")) == null);
 }
 
 test "findDuplicateChangelogSection flags a repeated heading in one version block" {
