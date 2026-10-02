@@ -234,6 +234,11 @@ comptime {
     _ = @import("util/http_client.zig");
     _ = @import("util/deadline.zig");
     _ = @import("util/sanitize.zig");
+    // The lock every subsystem without an `Io` handle shares (process table,
+    // job table, A2A cache). Its exclusion property is only observable across
+    // threads, so it carries its own test, and a `test` in a `src/` module
+    // this block does not name never runs.
+    _ = @import("util/spin_mutex.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("evals/runner.zig");

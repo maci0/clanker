@@ -14,6 +14,7 @@ const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 const log = @import("../util/log.zig");
 const elapsed = @import("../util/elapsed.zig");
 const subprocess = @import("../agent/subprocess.zig");
+const spin_mutex = @import("../util/spin_mutex.zig");
 const vendor = @import("vendor.zig");
 const llm_types = @import("../llm/types.zig");
 
@@ -526,20 +527,8 @@ const FakeJob = struct {
     mode: FakeMode,
 };
 
-const SpinMutex = struct {
-    raw: std.atomic.Mutex = .unlocked,
-    fn lock(self: *SpinMutex) void {
-        while (!self.raw.tryLock()) {
-            std.Thread.yield() catch {};
-        }
-    }
-    fn unlock(self: *SpinMutex) void {
-        self.raw.unlock();
-    }
-};
-
 const Mailbox = struct {
-    mutex: SpinMutex = .{},
+    mutex: spin_mutex.SpinMutex = .{},
     lines: std.ArrayList([]const u8) = .empty,
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -587,7 +576,7 @@ const Pair = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
     replies: std.ArrayList([]const u8) = .empty,
-    mutex: SpinMutex = .{},
+    mutex: spin_mutex.SpinMutex = .{},
     job: FakeJob = undefined,
 
     fn init(io: std.Io, alloc: std.mem.Allocator) Pair {

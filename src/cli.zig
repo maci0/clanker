@@ -21744,14 +21744,21 @@ test "no webui source hand-rolls a partial HTML escape" {
     defer root.close(io);
 
     const needles = [_][]const u8{ "replace(/</g", "replace(/&/g", "replace(/>/g" };
+    // A missing subdir is a failure, not a skip: these four are the webui
+    // source layout, and `catch continue` here is the same trap the asset-route
+    // sweep above already names (a rename of `core` would turn this whole
+    // sweep into a green no-op over the files that survived). Only the
+    // repo-root absence above is a skip. Same for a read error mid-iteration,
+    // which would truncate the walk and hide an escaper below the failure
+    // point. `.` is the top level and must exist for the same reason.
     for ([_][]const u8{ ".", "core", "lib", "features" }) |sub| {
-        var d = root.openDir(io, sub, .{ .iterate = true }) catch continue;
+        var d = try root.openDir(io, sub, .{ .iterate = true });
         defer d.close(io);
         var it = d.iterate();
-        while (it.next(io) catch null) |entry| {
+        while (try it.next(io)) |entry| {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.name, ".js")) continue;
-            const src = d.readFileAlloc(io, entry.name, std.testing.allocator, .limited(4 << 20)) catch continue;
+            const src = try d.readFileAlloc(io, entry.name, std.testing.allocator, .limited(4 << 20));
             defer std.testing.allocator.free(src);
             var lines = std.mem.splitScalar(u8, src, '\n');
             while (lines.next()) |line| {

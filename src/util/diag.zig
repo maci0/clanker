@@ -9,6 +9,12 @@
 //! from the CLI (the record stores, the mesh client) do not, so they print
 //! through here rather than falling back to the logger and answering the same
 //! class of mistake in a second format.
+//!
+//! The shape is pinned at the boundary instead of in a `test` block here:
+//! `tests/e2e/journeys_test.zig` reads the real `error: ...` line off a real
+//! child's stderr. A unit test would have to swap fd 2 under a shared test
+//! runner, which is the fragile kind of test worth less than the journey that
+//! reads what an operator actually sees.
 
 const std = @import("std");
 
