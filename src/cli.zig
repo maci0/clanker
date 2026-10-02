@@ -5501,11 +5501,19 @@ fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyer
 
 fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
     _ = context;
+    const capped = utf8.cap(decision.reason, goal_loop.reason_log_bytes);
+    // The stream event is the browser's view; this is the operator's. Without
+    // it a goal driven through the web UI wrote no evaluator line anywhere, so
+    // a goal that spun to its turn budget, or blocked on a condition nobody
+    // could meet, left no log record at all -- while the CLI adapter logged
+    // every turn. Same shape as `cliGoalLoopDecision`, under whatever
+    // correlation context the request thread carries.
+    log.log(.info, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), capped });
     if (run_stream_socket) |fd| {
         writeStreamEvent(fd, "goal", .{
             .turn = turn,
             .status = @tagName(decision.verdict),
-            .reason = utf8.cap(decision.reason, goal_loop.reason_log_bytes),
+            .reason = capped,
         });
     }
 }

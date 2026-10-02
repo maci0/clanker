@@ -104,6 +104,34 @@ pub fn getContext() []const u8 {
     return context;
 }
 
+/// A copy of the current correlation context, small enough to store inline
+/// and carry across `std.Thread.spawn`.
+///
+/// `context` is threadlocal, so a worker thread started to run work for a
+/// request reads the empty string and every line it emits — including the
+/// lines the host logs on that worker's behalf — is uncorrelated with the
+/// request or run that asked for it. Capture before the spawn, install with
+/// `setContext` on the new thread. Fixed buffer, no allocator: a capture that
+/// could fail would add an unwinding path to every spawn site, and a
+/// truncated id still correlates (a unique prefix of a bounded string).
+pub const Origin = struct {
+    buf: [32]u8 = undefined,
+    len: u8 = 0,
+
+    pub fn capture() Origin {
+        var o: Origin = .{};
+        const ctx = getContext();
+        const n = @min(ctx.len, o.buf.len);
+        @memcpy(o.buf[0..n], ctx[0..n]);
+        o.len = @intCast(n);
+        return o;
+    }
+
+    pub fn slice(self: *const Origin) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
 pub fn unixMilliseconds() i128 {
     // Residual std.c clock: std.log's logFn carries no `std.Io` handle.
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };

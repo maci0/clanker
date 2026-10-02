@@ -3447,6 +3447,7 @@ pub const Agent = struct {
                 .arguments = p.eff_args,
                 .wasm_bytes = p.wasm_bytes,
                 .extras = self.snapshotSandboxExtras(),
+                .origin = log.Origin.capture(),
             };
             const thread = std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker}) catch |err| {
                 self.ctx.gpa.destroy(worker);
@@ -3565,6 +3566,7 @@ pub const Agent = struct {
             .arguments = eff_args,
             .wasm_bytes = wasm_bytes,
             .extras = self.snapshotSandboxExtras(),
+            .origin = log.Origin.capture(),
         };
         const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
         thread.join();
@@ -4099,14 +4101,32 @@ const ToolWorker = struct {
     extras: SandboxExtras = .{},
     out: ?[]u8 = null,
     err: ?anyerror = null,
+    /// The starter's log context, captured before the spawn. See
+    /// `execute`: stored inline rather than allocated, mirroring
+    /// `sandbox/jobs.zig`'s `Origin`, so the spawn path keeps no failure
+    /// point the worker could not report.
+    origin: log.Origin = .{},
 
     fn run(self: *ToolWorker) void {
         self.execute() catch |e| {
             self.err = e;
         };
+        // The worker thread ends here and takes its threadlocal context with
+        // it. Cleared anyway so a future reuse of this struct (or a test that
+        // runs it on the calling thread) cannot leak the captured id.
+        log.clearContext();
     }
 
     fn execute(self: *ToolWorker) !void {
+        // `log`'s correlation context is threadlocal and does not cross
+        // `std.Thread.spawn`, so every line this worker emits — the host's
+        // own `running tool` / `-> N bytes`, and every `ck_log`, `[tool]`,
+        // `[llm]` and `[sandbox]` record from inside the guest — would carry
+        // `request_id=` empty and read as an orphan. The starter captured its
+        // context into `origin` before the spawn; install it here so the whole
+        // tool call is attributable to the run or request that asked for it.
+        log.setContext(self.origin.slice());
+        defer log.clearContext();
         // Give each worker its own thread-safe I/O context so concurrent
         // zwasm instantiations cannot corrupt shared state and recurse
         // into a stack overflow.
@@ -4632,6 +4652,75 @@ test "the parallel-tool stack reservation stays above the observed crash floor" 
     const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, W.run, .{&w});
     thread.join();
     try std.testing.expectEqual(@as(i32, 42), w.sum orelse return error.WorkerDidNotRun);
+}
+
+test "a tool worker logs under the request that started it" {
+    // Regression: `log`'s correlation context is threadlocal and does not
+    // cross `std.Thread.spawn`, so every line a parallel tool call produced --
+    // the host's own `running tool` / `-> N bytes in Nms`, plus every `ck_log`,
+    // `[tool]`, `[llm]` and `[sandbox]` record the guest emitted while running
+    // -- carried `request_id=` empty. The whole parallel half of a turn was
+    // uncorrelated: an operator holding a failing request id had no line
+    // naming the tool it ran, and an orphan `[sandbox]` line named no run.
+    // `sandbox/jobs.zig` had solved this for jobs with a private `Origin`;
+    // the shared `log.Origin` now covers both spawn sites.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "tests/fixtures/tiny.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var cfg = config.Config{};
+    cfg.agent.state_dir = "state";
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env, .cfg = &cfg };
+    var tool = registry.Tool{ .name = "ctx_tool", .description = "", .wasm = "t.wasm", .input_schema = .null };
+
+    // The sink and the level are process-global, so both are saved.
+    const saved_level = log.getLevel();
+    log.setLevel(.debug);
+    defer log.setLevel(saved_level);
+    log.clearContext();
+    defer log.clearContext();
+    log.setContext("run-ctx-test");
+
+    const Capture = struct {
+        mu: std.atomic.Mutex = .unlocked,
+        lines: std.ArrayList(u8) = .empty,
+        alloc: std.mem.Allocator,
+
+        fn write(cb_ctx: *const anyopaque, line: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(cb_ctx)));
+            while (!self.mu.tryLock()) std.Thread.yield() catch {};
+            defer self.mu.unlock();
+            self.lines.appendSlice(self.alloc, line) catch {};
+        }
+    };
+    var capture = Capture{ .alloc = std.testing.allocator };
+    defer capture.lines.deinit(std.testing.allocator);
+    log.setSink(.{ .ctx = @ptrCast(&capture), .write = Capture.write });
+    defer log.setSink(null);
+
+    var worker = ToolWorker{
+        .ctx = &ctx,
+        .cfg = &cfg,
+        .tool = &tool,
+        .arguments = "",
+        .wasm_bytes = wasm,
+        .origin = log.Origin.capture(),
+    };
+    const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{&worker});
+    thread.join();
+
+    // The tool ran (it reached the host's own completion line) and every line
+    // it produced carried the starter's id, not the empty string a fresh
+    // threadlocal starts with.
+    try std.testing.expect(capture.lines.items.len > 0);
+    try std.testing.expect(std.mem.find(u8, capture.lines.items, "ctx_tool") != null);
+    try std.testing.expect(std.mem.find(u8, capture.lines.items, "request_id=run-ctx-test") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.lines.items, "request_id= ") == null);
 }
 
 test "worker sandbox delegates the descriptor's session grant through host.sandboxFor" {

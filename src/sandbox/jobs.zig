@@ -48,28 +48,14 @@ pub fn snapshotJobMetrics() JobMetrics {
 
 /// The log context of whoever started a job, copied at start.
 ///
-/// `log`'s correlation context is threadlocal and does not cross
-/// `std.Thread.spawn`, so a waiter thread reading it would report the empty
-/// string and the job's completion would be uncorrelatable with the request
-/// or run that asked for it. Stored inline rather than allocated so the start
-/// path's allocation-failure unwinding stays as it is.
-const Origin = struct {
-    buf: [32]u8 = undefined,
-    len: u8 = 0,
-
-    fn capture() Origin {
-        var o: Origin = .{};
-        const ctx = log.getContext();
-        const n = @min(ctx.len, o.buf.len);
-        @memcpy(o.buf[0..n], ctx[0..n]);
-        o.len = @intCast(n);
-        return o;
-    }
-
-    fn slice(self: *const Origin) []const u8 {
-        return self.buf[0..self.len];
-    }
-};
+/// The capture is `log.Origin`, which every thread that inherits a caller's
+/// correlation id now shares (this was the first: `log`'s context is threadlocal
+/// and does not cross `std.Thread.spawn`, so a waiter thread reading it would
+/// report the empty string and the job's completion would be uncorrelatable
+/// with the request or run that asked for it). The spawn paths stay
+/// allocation-free, as they must — a capture that could fail would add an
+/// unwinding path where none existed.
+const Origin = log.Origin;
 
 pub const SubJob = struct {
     id: []const u8,
