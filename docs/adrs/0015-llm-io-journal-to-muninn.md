@@ -1,4 +1,4 @@
-# ADR 0015: LLM I/O is journaled at the client tap, then optionally to Muninn
+# ADR 0015 — LLM I/O is journaled at the client tap, then optionally to Muninn
 
 ## Status
 

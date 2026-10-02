@@ -81,11 +81,11 @@ The vaxis REPL renders markdown line-by-line (headings, bold/italic, single bull
 
 **Confidence:** 7/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** Answered by what shipped: ADR 0021 and the `src/tui/repl.zig` renderer, where `fenceLineSegments` carries `syntax.State` across a fenced block. The open question named here, table width and wrapping, was settled in favour of wrapping in the draw path rather than pre-wrap, which is what let one line array serve both the transcript and the export render. A finding that would have sunk it: the per-frame block parse costing enough to drop tokens, which did not happen because the parse is pure and the segments are derived per line.
 
 **Rationale.** Smallest scope that closes the roadmap gap with no new dependency and no cross-cutting MdStream refactor; reuse existing appendInline/mdStyles; easy to later extract into shared md_block if a second consumer needs it.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Self-contained in `repl.zig`: the block parser and its styles are additive, and dropping them returns the transcript to inline-only rendering with no stored state touched. The point of no return is a second consumer. Once `md_block` is extracted for the exporter, the segment vocabulary becomes a contract shared by both renderers, and changing it means changing both at once.
 
 ## Open questions
 

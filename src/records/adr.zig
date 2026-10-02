@@ -209,9 +209,11 @@ pub fn renderList(arena: std.mem.Allocator, raw_adrs: []const std.json.Value, ne
     return w.written();
 }
 
-/// Every ADR title in the store repeats its own number — "ADR 0001 — X", and
-/// in three files "ADR 0014: X". The path in the row above already carries it,
-/// so the prefix is dropped for display only; the document keeps it.
+/// Every ADR title in the store repeats its own number — "ADR 0001 — X". The
+/// path in the row above already carries it, so the prefix is dropped for
+/// display only; the document keeps it. The colon form "ADR 0014: X" is
+/// tolerated because three older records used it before the set was
+/// normalized, and `stripAdrPrefix` must still handle one an author writes.
 fn stripAdrPrefix(title: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, title, "ADR ")) return title;
     var i: usize = "ADR ".len;
@@ -319,7 +321,8 @@ test "renderList drops the ADR number prefix the path already carries" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Both punctuations occur in the tree: "ADR 0001 — X" and "ADR 0014: X".
+    // Both punctuations must parse: the set uses "ADR 0001 — X", and an author
+    // (or a record predating the normalization) may still write "ADR 0014: X".
     const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0001-board.md","title":"ADR 0001 — The board is a chatroom","status":"Accepted"},
         \\ {"path":"docs/adrs/0014-uploads.md","title":"ADR 0014: Uploads land in Knowledge","status":"Accepted"}]

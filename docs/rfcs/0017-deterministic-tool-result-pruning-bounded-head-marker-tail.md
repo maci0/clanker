@@ -70,11 +70,11 @@ Today: `Agent.maybeCompactMessages` summarizes the middle of the conversation vi
 
 **Confidence:** 8/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** Verified in `src/agent/prune.zig`, which exposes `pruneToolResults` and `reclaimableBytes` as pure functions over a message list with explicit head, tail and threshold parameters, so the cost of the rule is measurable before it is applied to anything. What would have sunk it: the saved transcript turning out to be the only copy of a truncated tail. It is not, because the rewrite lands on the request copy and the stored session keeps the exact text, which is also what makes the feature safe to enable by default.
 
 **Rationale.** Avoids LLM summarizer cost for one bulky tool result, keeps saved transcript exact, and degrades to no-op when disabled.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Cheap, and the no-op path is the reversal: with pruning disabled the transform does nothing at all, so switching it off restores full tool results with no stored state involved. The point of no return is small: once the marker line is what a model has been reading to understand that content was elided, a summary written without it reads as a complete answer. That is why the elision is marked rather than silently truncated.
 
 ## Open questions
 

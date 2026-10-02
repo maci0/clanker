@@ -88,8 +88,21 @@ Today: every `Agent` gets the same `Registry` tool set from `agent.tools_dir` pl
 
 **Confidence:** 7/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** Verified in tree since the decision: Option A shipped
+as `presets/<name>.toml` over `src/preset/preset.zig`, with `full`,
+`minimal`, and `research` presets, and the enforceability Option C lacks is
+observable — `research.toml` denies the write tools, so a research session
+cannot reach them through the model at all. What would have sunk it: the
+`tools_deny` key silently parsing to an empty list on a multi-line write, which
+is exactly the failure `preset.zig` `known_keys` now refuses; a reader checking
+this RFC before the port landed would have found that gap, and it is why the
+confidence was not higher than 7.
 
 **Rationale.** Only Option A gives enforceable allow/deny plus persona in a named bundle per session; out-of-box role files are advisory only and config-only filter has no inventory.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Cheap to undo: deleting `presets/`, the `--preset` flag and
+`/preset` leaves every other surface as it was, and a preset affects only the
+session that names it, so nothing is migrated and no stored state depends on a
+preset existing. The one point of no return is a preset name an operator starts
+depending on in scripts; there is no alias table, so retiring a preset is a
+breaking change for those scripts.

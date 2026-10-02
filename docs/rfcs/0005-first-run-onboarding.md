@@ -323,7 +323,7 @@ pages ignore them.
 
 ## References
 
-- [ADR 0016: First-run is one doctor verdict on existing empty surfaces](../adrs/0016-first-run-readiness-verdict.md)
+- [ADR 0016 — First-run is one doctor verdict on existing empty surfaces](../adrs/0016-first-run-readiness-verdict.md)
 - `src/doctor.zig` (`cmdSetup`, `cmdDoctor`, `runChecks`)
 - `src/cli.zig` `cmdInit`, `local_template`, `handleStatus`
 - `ui/app/app.js` `SUGGESTIONS`, `loadStatus`, `syncTranscriptEmpty`

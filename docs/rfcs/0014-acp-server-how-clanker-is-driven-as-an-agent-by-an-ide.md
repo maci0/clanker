@@ -82,11 +82,11 @@ Today: `src/acp/server.zig` implements framing + `initialize` (protocol v1, base
 
 **Confidence:** 8/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** Verified in the shipped surface: `src/acp/server.zig` makes `session/new` the only lifecycle method and refuses what comes after a session has run, rather than pretending to support it. That refusal is the decision's substance, because a minimal server that names its one lifecycle is honest to an IDE, where a server that half-implements the protocol's other methods is not. The score stops short of higher because whether an editor's UI degrades usefully against a one-method server is not something this repository can verify.
 
 **Rationale.** Provides a native agent session for ACP editors (Zed) without reusing the tool-oriented MCP channel; session lifecycle and streaming map cleanly to clanker's existing agent/session model.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** `clanker acp` is a separate verb over stdio with no listener, no port and no stored state, so removing it takes nothing else along. The point of no return is the method set an IDE has learned to drive: an editor automating around `session/new` plus `prompt` will keep sending them after the decision is reversed, which makes a later expansion easy to live with and a later contraction not.
 
 ## Open questions
 

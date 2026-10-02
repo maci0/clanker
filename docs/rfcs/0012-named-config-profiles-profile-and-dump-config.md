@@ -84,11 +84,11 @@ Today: `Config.load` merges `config.toml` and `config.local.toml` then env/flags
 
 **Confidence:** 7/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** The open question here, precedence against env and flags, was the whole risk: an overlay loaded in the wrong order is indistinguishable from a broken profile at the call site. It resolved cleanly because a profile composes with the existing `config.local.toml` layer through the same merge path rather than sitting beside it, so there is no new precedence rule to get wrong. What would have sunk it: a profile needing to express something a file overlay cannot, such as an env var name or a path resolved against the working directory, which would have forced a second precedence tier and reintroduced the question.
 
 **Rationale.** File-based overlay composes cleanly between config.local.toml and env, reuses existing merge logic, and gives plugin surfaces a way to ship curated bundles without hard-coding presets.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Cheap and complete: delete `profiles/`, `--profile` and `--dump-config`, and configuration falls back to what it was. No stored state records which profile loaded it, so nothing needs migrating. One consequence is worth naming because it is a trap rather than a lock-in: a profile that silently fails to apply looks identical to one that applied and set nothing, so the only signal is its absence from the dump. That is why `--dump-config` is part of this decision and not a convenience.
 
 ## Open questions
 

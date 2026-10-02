@@ -255,7 +255,7 @@ a migration.
 
 ## References
 
-- [ADR 0014: Chat file uploads land in Knowledge through add_doc](../adrs/0014-chat-uploads-land-in-knowledge.md)
+- [ADR 0014 — Chat file uploads land in Knowledge through add_doc](../adrs/0014-chat-uploads-land-in-knowledge.md)
 - [PRD 0007 — Configurable memory layer](../prds/0007-memory.md)
 - [PRD 0006 — Web UI](../prds/0006-webui.md) (image attach, not document ingest)
 - [RFC 0001 — Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md)

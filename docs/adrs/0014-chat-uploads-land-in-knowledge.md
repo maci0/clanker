@@ -1,4 +1,4 @@
-# ADR 0014: Chat file uploads land in Knowledge through add_doc
+# ADR 0014 — Chat file uploads land in Knowledge through add_doc
 
 ## Status
 

@@ -1,4 +1,4 @@
-# ADR 0016: First-run is one doctor verdict on existing empty surfaces
+# ADR 0016 — First-run is one doctor verdict on existing empty surfaces
 
 ## Status
 

@@ -94,7 +94,11 @@ replaces that field, unchanged.
 - A template-fresh RFC's guidance paragraphs are now preserved verbatim by a
   field-less recommend instead of being swapped for the one-line underscore
   placeholders; both are filler awaiting a real answer, so nothing is lost,
-  but the two spellings of "not written yet" now coexist.
+  but the two spellings of "not written yet" now coexist. The placeholder
+  spellings this report left in the tree have since been answered on all nine
+  Decided RFCs that carried them (0009-0017), so opening any of them no longer
+  shows an underscore line where the reasoning belongs; the placeholder remains
+  only on an RFC whose Recommendation has genuinely never been written.
 
 ## References
 

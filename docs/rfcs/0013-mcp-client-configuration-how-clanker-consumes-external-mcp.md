@@ -83,11 +83,11 @@ Today: `clanker mcp` is a stdio JSON-RPC *server* (`src/mcp/server.zig`) exposin
 
 **Confidence:** 8/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** The decision was taken before the bridge landed, and the Status section now carries the answer: parsing and validation of `[mcp_servers.*]` shipped, consumption did not. Discount the option's scaling claim, one implementation for N servers, until the dispatch lands; the qualified-name scheme is only worth its cost once more than one server can be registered. What would have sunk it: a vendor server whose tool names collide after qualification. That is checkable only against real servers, and no such matrix was run.
 
 **Rationale.** Native bridge scales to N servers with one implementation, handles reconnect/streaming, and matches the provider-config ergonomics clanker already uses; shims duplicate per server and lose fidelity, forking per call adds latency and state loss.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** A config section and a dispatch kind that nothing reads yet, so the back-out is a delete. The point of no return is the qualified name itself: once `mcp__<server>__<tool>` appears in saved transcripts and in model-visible tool catalogs, renaming the scheme means rewriting history rather than config. That is why the name was fixed in the ADR while the bridge is still unbuilt.
 
 ## Open questions
 

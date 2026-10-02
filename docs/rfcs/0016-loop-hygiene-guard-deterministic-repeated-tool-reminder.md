@@ -71,11 +71,11 @@ Today: `src/agent/loop_guard.zig` and wiring in `src/agent/loop.zig:Agent.execut
 
 **Confidence:** 8/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** The determinism claim is checkable in the shipped module: `src/agent/loop_guard.zig` canonicalizes the tool name and arguments and compares them against the previous call, so a guard firing is a pure function of the call sequence and not of wall clock or model output. What would have sunk it: canonicalization being lossy in a way that merged two genuinely different calls into one chain and produced a false reminder. The guard is advisory for that reason, so a wrong reminder costs a turn's attention rather than the turn itself.
 
 **Rationale.** Zero-cost exact-match guard complements priced Advisor; pure canonicalization and bounded injection fit the existing executeCalls gate without blocking.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Cheap: the guard is additive, and leaving it out returns every turn to unmediated tool loops with nothing stored and nothing migrated. The point of no return is small and worth naming anyway: once a user tunes `loop_guard.thresholds` for their own workload, those numbers encode their tolerance for repetition, and changing the defaults underneath a tuned install changes behaviour they had already accounted for.
 
 ## Open questions
 

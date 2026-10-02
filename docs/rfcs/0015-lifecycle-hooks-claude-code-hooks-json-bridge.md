@@ -72,11 +72,11 @@ Files touched by a full bridge: `src/hooks/*`, `src/config.zig:Hooks`, `src/agen
 
 **Confidence:** 8/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** The core question, whether the Claude dialect is stable enough to bridge, was answered by the dialect being an existing installed surface rather than a proposal: the hooks a user's editor already validates are the ones this reads, so there is nobody to negotiate with. What would have sunk it: a hook whose stdin payload turns out to carry something the merge order cannot express. Most-restrictive-wins is total but can only ever refuse more, never ask for more, and that limit is why a hook's `reason` is capped and redacted rather than treated as an authorization.
 
 **Rationale.** Lets existing Claude hooks.json linters/notify/policy transfer without rewriting, reusing DSH's narrow core and execUnderPolicy gate; B forces rewriting and C leaves parity open.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Hooks are advisory and inert unless configured, so removing the bridge returns every session to no hooks with no stored state to migrate. The point of no return is the dialect: a `hooks.json` written against this bridge keeps working only while the Claude field names do, and nothing here can promise they will not change upstream. The narrow core is the hedge; the matcher, the exit codes and the merge are dialect-neutral and survive a rename.
 
 ## Open questions
 

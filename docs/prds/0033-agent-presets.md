@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped — 2026-08-17. presets/*.toml + src/preset/preset.zig + src/cli.zig (preset list|show|new, --preset filter + persona), src/agent/loop.zig (dispatch refusal), src/tui/repl.zig (/preset guard, status pill)
+Shipped — 2026-08-17. presets/*.toml + src/preset/preset.zig + src/cli.zig (preset list|show|new, --preset filter + persona), src/agent/loop.zig (dispatch refusal), src/tui/repl.zig (/preset guard, status pill). Three presets ship, not the two named under Ship: `research`, `full`, and a later `minimal` (shell + file editing, the DSH Minimal-mode shape).
 
 The offered side landed 2026-08-24: the mask is `Registry.presetHides` in
 `src/toolhost/registry.zig`, consulted by `lazyToolDefs`, `catalogText` and

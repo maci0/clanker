@@ -215,7 +215,7 @@ UX risk, not a migration.
 
 - [RFC 0001: Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md)
 - [RFC 0002: Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md)
-- [ADR 0014: Chat file uploads land in Knowledge through add_doc](../adrs/0014-chat-uploads-land-in-knowledge.md)
+- [ADR 0014 — Chat file uploads land in Knowledge through add_doc](../adrs/0014-chat-uploads-land-in-knowledge.md)
 - [ADR 0012: Goal draft, persistence, and execution are separate](../adrs/0012-goal-draft-persistence-and-execution-are-separate.md)
 - [PRD 0002: Shared Kanban board](../prds/0002-kanban-board.md)
 - [PRD 0007: Memory layer](../prds/0007-memory.md)

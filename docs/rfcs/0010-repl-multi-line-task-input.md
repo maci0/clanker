@@ -83,11 +83,11 @@ vxfw.TextField is single-line; Enter always submits. Users cannot compose multi-
 
 **Confidence:** 7/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** The one open question, the vaxis signal for Shift+Enter, was answered by the terminal rather than by us: the kitty keyboard protocol reports the modifier, and terminals without it need `kp_enter`, which needed `patches/vaxis-ss3-keypad-enter.patch` to arrive as a distinct key at all. That fallback is why this sits at 7 rather than higher: on an older terminal the binding is a second key that does not exist there, which is a worse failure than no multi-line input at all. A terminal matrix covering the keypad path would raise this.
 
 **Rationale.** Direct chat-like UX with minimal indirection, preserves Enter-to-submit, vaxis-mappable; keeps scope to one widget change. B adds modal friction, C does not deliver deliberate multi-line composition.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** A composer behaviour, not a format. Undoing it means Enter inserts a newline and some other key submits, and nothing saved or written depends on which. The narrow point of no return is the marker: the composer field holds breaks as `newline_marker`, so a saved draft or history entry written by one build is misread by a build that lacks it. That is why the marker is decoded by `takeComposerText` and never rendered as a glyph.
 
 ## Open questions
 

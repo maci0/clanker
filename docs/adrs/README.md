@@ -49,8 +49,11 @@ specification (a [PRD](../prds/)), or an operational failure and its recovery
 ## Conventions
 
 - Files are numbered `NNNN-<short-title>.md`, allocated by the tool.
-- The title is phrased as the **choice made**, not as the question: "Providers
-  are a native vtable", not "How should providers be implemented?".
+- The H1 is `# ADR NNNN — <title>`: em dash, spaces, the choice itself. (Three
+  records wrote `# ADR NNNN: <title>` before this was normalized; the CLI
+  still renders both.) The title is phrased as the **choice made**, not as the
+  question: "Providers are a native vtable", not "How should providers be
+  implemented?".
 - Status is one of `Accepted`, `Superseded`, `Deprecated` — a decision still
   being made is an RFC, not a proposed ADR. Set it
   with `clanker adr status` so the inventory below stays true.

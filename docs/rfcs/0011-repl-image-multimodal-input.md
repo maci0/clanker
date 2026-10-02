@@ -81,11 +81,11 @@ The vaxis REPL (`src/tui/repl.zig`) has no image path: tasks are `TextField` tex
 
 **Confidence:** 7/10
 
-**Why this confidence.** _State what evidence would raise it, and what finding would sink this recommendation._
+**Why this confidence.** Split, and the Status section now says so: `/attach` and the `image_in` transport shipped; drag-drop and clipboard paste did not. The unverified claim here was that a terminal's drag payload reaches the vaxis event stream at all. It reaches for some terminals and not others, and no matrix was ever run, so the recommendation holds only for the half that was actually verified. The confidence would drop further if a provider without vision were reachable from a TUI attach, which is why the gate stays in the submit path rather than the parse path.
 
 **Rationale.** Achieves web-composer parity by reusing the existing agent image_in transport; Option B leaves UX inconsistent and agent-dependent, Option C adds unnecessary modal weight.
 
-**Reversibility.** _How hard is this to undo, and where is the point of no return?_
+**Reversibility.** Additive on both halves: dropping `/attach` removes a command and a queue, and no session store, transcript or tool contract changes. The point of no return is the `image_in` message type, because a stored session that recorded an image keeps a reference to it, so withdrawing the type later means migrating stored sessions rather than flipping a flag. The MIME handling named as an open question is still open, for the half that did not land.
 
 ## Open questions
 

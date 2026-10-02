@@ -223,9 +223,9 @@ until that is accepted.
 
 ## References
 
-- [ADR 0015: LLM I/O is journaled at the client tap, then optionally to Muninn](../adrs/0015-llm-io-journal-to-muninn.md)
+- [ADR 0015 — LLM I/O is journaled at the client tap, then optionally to Muninn](../adrs/0015-llm-io-journal-to-muninn.md)
 - [PRD 0007: Memory layer](../prds/0007-memory.md) (`vector.backend` unused)
-- [ADR 0014: Chat uploads land in Knowledge](../adrs/0014-chat-uploads-land-in-knowledge.md)
+- [ADR 0014 — Chat uploads land in Knowledge](../adrs/0014-chat-uploads-land-in-knowledge.md)
 - [RFC 0002](0002-chat-upload-into-knowledge.md), [RFC 0003](0003-goal-card-file-attachments.md)
 - `src/llm/client.zig` (`recordUsage`, `recordFailure`)
 - `src/stats/tokens.zig` (jsonl, 32 MiB cap, no bodies)
