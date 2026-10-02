@@ -10,11 +10,14 @@
 
 Applies where `scripts/backup-state.sh` is installed behind a user timer
 (`scripts/install-state-backup.sh` links it to
-`~/.local/bin/clanker-state-backup` and installs
+`$XDG_BIN_HOME/clanker-state-backup` and installs
 `clanker-state-backup.timer`, every 30 minutes). The same install adds
 `clanker-state-verify.timer`, a weekly restore drill over
-`~/.local/bin/clanker-state-verify`; a failed drill is this runbook's subject
-too, since it means the newest snapshots cannot be restored. The backup root
+`$XDG_BIN_HOME/clanker-state-verify`; a failed drill is this runbook's subject
+too, since it means the newest snapshots cannot be restored. The launcher
+directory is `$XDG_BIN_HOME` when set and `~/.local/bin` otherwise, and the
+installer repoints the two service units at whichever it used, since a unit
+expands no variable in `ExecStart=`. The backup root
 is `<storage_root>/backups/`, where `storage_root` is the parent of whatever
 `state` resolves to.
 
@@ -126,8 +129,9 @@ A backup is never restored by editing `backups/`. Copy out of a snapshot:
 `agents/` when present), and neither service may print `failed`. A green
 backup service with a failed verify service means snapshots are being
 written that may not restore — treat the newest snapshots as unproven until a
-verify run passes. `~/.local/bin/clanker-state-backup` and
-`~/.local/bin/clanker-state-verify` are symlinks to the repo scripts, so a
+verify run passes. `clanker-state-backup` and
+`clanker-state-verify` in the launcher directory are symlinks to the repo
+scripts, so a
 fix in the checkout needs no reinstall.
 
 ## Escalate or follow up

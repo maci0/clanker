@@ -10,7 +10,10 @@
 set -euo pipefail
 
 OUT_DIR="${CLANKER_GRAMMAR_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-SRC_DIR="${CLANKER_GRAMMAR_SRC_DIR:-$HOME/.cache/clanker-grammars}"
+# XDG, falling back to the same ~/.cache every other script in this repo uses
+# (scripts/verify-goal.sh reads XDG_CACHE_HOME first); a bare `$HOME/.cache`
+# ignores a set XDG_CACHE_HOME and clones into a second copy of the source.
+SRC_DIR="${CLANKER_GRAMMAR_SRC_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/clanker-grammars}"
 REPO_ZIG="https://github.com/tree-sitter-grammars/tree-sitter-zig.git"
 # Master tip that the 0.17-dev patch applies against (not crates.io 1.1.2).
 # Full SHA required: short form is not a fetchable remote ref.
@@ -39,10 +42,11 @@ fi
 
 if command -v tree-sitter >/dev/null; then
   tree-sitter generate
-elif [ -x /tmp/tree-sitter ]; then
-  /tmp/tree-sitter generate
+elif [ -n "${TREE_SITTER_BIN:-}" ] && [ -x "$TREE_SITTER_BIN" ]; then
+  "$TREE_SITTER_BIN" generate
 else
   printf 'error: tree-sitter CLI required to regenerate after patch\n' >&2
+  printf 'hint: put it on PATH, or set TREE_SITTER_BIN to its path\n' >&2
   exit 1
 fi
 

@@ -217,7 +217,17 @@ pub fn spawnRepl(pty: *const Pty, cwd: [:0]const u8, extra_args: []const [*:0]co
     argv[1] = "repl";
     if (extra_args.len > argv.len - 3) return error.TooManyArgs;
     for (extra_args, 0..) |arg, i| argv[2 + i] = arg;
-    const envp = [_:null]?[*:0]const u8{ "TERM=xterm-256color", "HOME=/tmp" };
+    // HOME is the caller's own temp cwd, not a literal. `/tmp` is world-writable
+    // and shared by every test run and every user on the machine, and on macOS
+    // it is a symlink to `/private/tmp`, so the repl's `$HOME/.agents/AGENTS.md`
+    // global-instructions layer resolved through a path no real run uses. The
+    // cwd is the same per-test `tmpDir`, private and removed with the test.
+    // On the stack, so fork's copy-on-write image is the only lifetime there is
+    // between here and the execve below.
+    var home_buf: [4200]u8 = undefined;
+    const home_z = std.fmt.bufPrintZ(&home_buf, "HOME={s}", .{cwd}) catch return error.HomePathTooLong;
+
+    const envp = [_:null]?[*:0]const u8{ "TERM=xterm-256color", home_z.ptr };
 
     const rc = posix.system.fork();
     if (rc < 0) return error.ForkFailed;

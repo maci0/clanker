@@ -35,8 +35,14 @@ class InstallStateBackupTest(unittest.TestCase):
         self.script = self.repo / "scripts" / "install-state-backup.sh"
         self.script.write_bytes(SCRIPT.read_bytes())
         self.script.chmod(0o755)
+        # Stub units carry the one line the installer's ExecStart rewrite acts
+        # on, so the drill can pin that rewrite without the fixture depending on
+        # the rest of the shipped unit text.
         for unit in ("clanker-state-backup.service", "clanker-state-verify.service"):
-            (self.repo / "scripts" / "systemd" / unit).write_text("[Service]\n")
+            launcher = unit.removesuffix(".service")
+            (self.repo / "scripts" / "systemd" / unit).write_text(
+                "[Service]\nExecStart=%h/.local/bin/" + launcher + "\n"
+            )
         # A `systemctl` that succeeds for everything, so the run reaches the
         # configuration file on a machine with a real user manager. Its log
         # also shows which units the run would have installed.
@@ -48,12 +54,16 @@ class InstallStateBackupTest(unittest.TestCase):
         stub.chmod(0o755)
         self.log = log
 
-    def run_install(self, xdg_config_home: str | None) -> subprocess.CompletedProcess:
+    def run_install(
+        self, xdg_config_home: str | None, **extra_env: str
+    ) -> subprocess.CompletedProcess:
         env = dict(os.environ, HOME=str(self.home), PATH=f"{self.bin}:{os.environ['PATH']}")
         if xdg_config_home is not None:
             env["XDG_CONFIG_HOME"] = xdg_config_home
         else:
             env.pop("XDG_CONFIG_HOME", None)
+        env.pop("XDG_BIN_HOME", None)
+        env.update(extra_env)
         return subprocess.run(
             [str(self.script)],
             cwd=self.repo,
@@ -111,6 +121,69 @@ class InstallStateBackupTest(unittest.TestCase):
         log = self.log.read_text()
         self.assertIn("--user enable --now clanker-state-backup.timer", log)
         self.assertIn("--user enable --now clanker-state-verify.timer", log)
+
+    def test_launchers_land_where_xdg_bin_home_names(self) -> None:
+        # The Linux default (`~/.local/bin`) is not on a default macOS PATH, so
+        # the installer links the launchers where the XDG user-install spec says
+        # and the operator's own setting wins over that default.
+        bin_home = self.root / "mybin"
+        result = self.run_install(None, XDG_BIN_HOME=str(bin_home))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((bin_home / "clanker-state-backup").is_symlink())
+        self.assertTrue((bin_home / "clanker-state-verify").is_symlink())
+        self.assertFalse((self.home / ".local" / "bin" / "clanker-state-backup").exists())
+
+    def test_a_launcher_directory_off_path_is_reported(self) -> None:
+        # A link that succeeds is what makes an unreachable install look whole:
+        # the drill's own name is then "command not found" much later.
+        result = self.run_install(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("is not on PATH", result.stderr)
+        # ...and the launchers are still there, because the operator may intend
+        # to add the directory later or call it by full path.
+        self.assertTrue((self.home / ".local" / "bin" / "clanker-state-backup").is_symlink())
+
+    def test_a_launcher_directory_on_path_is_not_reported(self) -> None:
+        bin_home = self.root / "mybin"
+        bin_home.mkdir()
+        result = self.run_install(
+            None,
+            XDG_BIN_HOME=str(bin_home),
+            PATH=f"{self.bin}:{bin_home}:{os.environ['PATH']}",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("is not on PATH", result.stderr)
+
+    def test_moving_the_launchers_repoints_the_scheduled_run(self) -> None:
+        # A unit expands no variable in ExecStart=, so the service files name the
+        # launcher directory literally. An install that honours XDG_BIN_HOME
+        # without repointing them leaves the timer running a path the installer
+        # stopped creating, which is scheduled backups silently being off.
+        bin_home = self.root / "mybin"
+        result = self.run_install(None, XDG_BIN_HOME=str(bin_home))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        units = self.home / ".config" / "systemd" / "user"
+        for name, launcher in (
+            ("clanker-state-backup.service", "clanker-state-backup"),
+            ("clanker-state-verify.service", "clanker-state-verify"),
+        ):
+            text = (units / name).read_text()
+            self.assertIn(f"ExecStart={bin_home}/{launcher}", text)
+            self.assertNotIn(".local/bin", text)
+
+    def test_the_default_install_leaves_the_shipped_units_alone(self) -> None:
+        # No override, so no rewrite runs: the launchers and the shipped units
+        # both still name the same default directory. Asserted on the shipped
+        # file, because the stub `systemctl` never creates the user-unit link.
+        result = self.run_install(None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.home / ".local" / "bin" / "clanker-state-backup").is_symlink())
+        units = self.home / ".config" / "systemd" / "user"
+        if (units / "clanker-state-backup.service").exists():
+            self.assertIn(
+                "ExecStart=%h/.local/bin/clanker-state-backup",
+                (units / "clanker-state-backup.service").read_text(),
+            )
 
 
 if __name__ == "__main__":

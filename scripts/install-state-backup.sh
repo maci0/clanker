@@ -47,14 +47,33 @@ resolve_path() {
 
 script_path=$(resolve_path "$0")
 script_dir=$(dirname -- "$script_path")
-user_bin="${HOME:?}/.local/bin"
 
+# Where the launchers go. XDG first, then the historical `~/.local/bin` this
+# script has always used, then a macOS HOME that has neither -- a default
+# macOS PATH carries /usr/local/bin and the Homebrew prefix but NOT
+# `~/.local/bin`, so hardcoding the Linux answer linked two launchers a macOS
+# operator could not run by name and had to call by path.
+user_bin="${XDG_BIN_HOME:-${HOME:?}/.local/bin}"
 mkdir -p "$user_bin"
 ln -sfn "$script_dir/backup-state.sh" "$user_bin/clanker-state-backup"
 # The weekly restore drill is part of the same install: a backup that has
 # never been restored is a hypothesis, and nothing else runs
 # verify-backup.sh on its own (ADR 0008: nothing fires alone).
 ln -sfn "$script_dir/verify-backup.sh" "$user_bin/clanker-state-verify"
+
+# A launcher nobody can name is a broken install, and the link succeeding is
+# exactly what makes it look whole. Probe PATH for the directory rather than
+# assuming the platform: this is the same capability probe the systemd branch
+# below runs, applied to the half that works everywhere.
+case ":${PATH:-}:" in
+    *":$user_bin:"*) ;;
+    *)
+        printf 'warning: %s is not on PATH, so clanker-state-backup and clanker-state-verify need it by full path\n' \
+            "$user_bin" >&2
+        # shellcheck disable=SC2016 # $PATH is printed literally, not expanded
+        printf 'hint: add it with export PATH="%s:$PATH"\n' "$user_bin" >&2
+        ;;
+esac
 
 # The launchers above work anywhere; the schedule does not. macOS is a claimed
 # platform for the harness and ships no systemd at all, where the old
@@ -92,6 +111,32 @@ if [ "$have_systemd" -eq 1 ]; then
     link_unit clanker-state-backup.timer
     link_unit clanker-state-verify.service
     link_unit clanker-state-verify.timer
+
+    # A unit expands no variable in `ExecStart=`, so the two service files name
+    # the launcher directory literally, and they name the same one the two
+    # branches above had to agree on. The unit files are the shipped defaults for
+    # the un-overridden install; when XDG_BIN_HOME moves the launchers, a
+    # timer that still ran `%h/.local/bin/clanker-state-backup` failed on a path
+    # the installer had just stopped creating -- scheduled backups silently off,
+    # which is the failure this whole install exists to prevent. Point the linked
+    # units at the directory the launchers actually landed in. Editing the linked
+    # copy in place would follow the symlink back into the checkout, so the
+    # content is written through a real file the link is re-pointed at.
+    if [ "$user_bin" != "$HOME/.local/bin" ]; then
+        for unit in clanker-state-backup.service clanker-state-verify.service; do
+            src="$script_dir/systemd/$unit"
+            dst="$user_units/$unit"
+            # `\|` is a GNU sed extension BSD sed (macOS) rejects, so the
+            # launcher name is captured rather than alternated over. Only a line
+            # already naming a clanker-state launcher is rewritten; any other
+            # ExecStart in the file is left alone.
+            sed "s|^ExecStart=\(.*/\)\(clanker-state-[a-z]*\)$|ExecStart=$user_bin/\2|" \
+                "$src" > "$user_units/.$unit.override" || continue
+            rm -f -- "$dst"
+            mv -- "$user_units/.$unit.override" "$dst"
+            systemctl --user link "$dst" 2>/dev/null || true
+        done
+    fi
 fi
 
 # Both units read their configuration from here (EnvironmentFile=). A user
