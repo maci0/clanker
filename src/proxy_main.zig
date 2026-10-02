@@ -287,6 +287,17 @@ fn handleRequest(conn: *Conn) !void {
     const query = if (qmark) |i| target[i + 1 ..] else "";
     request_method = method;
     request_path = path;
+
+    // Ambiguous or unsupported body framing is refused before the body is
+    // dispatched (RFC 9112 §6.3); see `raw_http.bodyFraming`. Conflicting
+    // `Content-Length` headers, or a `Transfer-Encoding` this binary cannot
+    // decode, would be framed one way here and another at the next hop. After
+    // the method/path are recorded, so the completion log names the request
+    // the refusal answers instead of `method=unknown`.
+    if (raw_http.framingRefused(headers_raw)) {
+        respond(conn.stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"unsupported request framing\"}");
+        return;
+    }
     // Preserve a caller's correlation id across proxies and peer agents: it
     // lands in the completion logs and the `X-Request-ID` response header,
     // mirroring the full server's handleConnection.

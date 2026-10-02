@@ -8448,6 +8448,22 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             method = it.next() orelse "";
             target = it.next() orelse "";
         }
+        // Ambiguous or unsupported body framing is refused before the body is
+        // read or any route runs (RFC 9112 §6.3). A request carrying
+        // conflicting `Content-Length` headers, or a `Transfer-Encoding` this
+        // server cannot decode, would otherwise be framed one way here and
+        // another at the next hop, which is request smuggling. `requestComplete`
+        // treats a refused head as complete precisely so this runs. The
+        // request line is parsed first and the completion fields recorded, so
+        // the refusal's log line names the method and path it answered instead
+        // of `method=unknown path=unknown`.
+        if (raw_http.framingRefused(headers_raw)) {
+            request_head = std.mem.eql(u8, method, "HEAD");
+            request_method = method;
+            request_path = requestPath(target);
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"unsupported request framing\"}");
+            return;
+        }
         // Routes match the path, never the whole target. Comparing the target
         // meant any URL carrying a query string missed its route and 404'd:
         // "/" was fine but "/?v=3" was not, and the board could not name its
