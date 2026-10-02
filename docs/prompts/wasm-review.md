@@ -257,6 +257,32 @@ moved by the time you read this.
 
 ---
 
+## Search recipes (run early)
+
+```bash
+# Native code holding capabilities a guest could be granted instead
+rg -n 'ck_http|ck_http_ex' src/                    # fetch_web/web_fetch already own this
+rg -n 'std.process.run|std.process.spawn' src/     # shelling out beside ck_exec-gated tools
+rg -n 'readFileAlloc|writeFile' src/agent src/peers src/stats   # native fs work outside the sandbox
+
+# What already exists as a tool, so nothing is proposed twice
+ls tools/manifests/*.tool.json | xargs -n1 basename
+
+# Protected surfaces: a move here is a top-severity finding, not a proposal
+rg -n 'allowed_prefixes|isAppendOnly|validatePath' -A 20 src/improve/proposal.zig
+rg -n 'pub fn .*Gate' src/gate/checks.zig
+rg -n 'src/improve/|src/toolhost/builder.zig' src/config.zig src/gate/checks.zig
+
+# The trust root: what ck_llm is built on, and what streams tokens
+rg -n 'pub fn chat|pub fn chatStream' src/llm/client.zig
+```
+
+Classify each hit before writing a row: **guest candidate** / **trust root or
+protected surface, stays native** / **hot-path cost, stays native** / **needs an
+ABI extension no `ck_*` registers today**.
+
+---
+
 ## Review procedure
 
 ### 1. Inventory

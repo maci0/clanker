@@ -67,7 +67,7 @@ already closed.
 | `docs/prds/0006-webui.md` | Phase plan, the named reference products, what's still marked Open |
 | `docs/prds/0005-repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
 | `ui/app/index.html` | The 11 real views: chat, kanban, runs, fleet, arena, rooms, models, knowledge, prompts, tools, system, plus rail/header structure (`#board`/`#goals` are legacy aliases of kanban) |
-| `ui/app/tailwind.src.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`) and all existing motion (`@keyframes` `toast-in`, `card-pulse`, `slack-typing`, `lamp-*`, the `.suggestion`/`.skeleton` rules), with `prefers-reduced-motion` gating. It is the only first-party sheet and compiles to the shipped `ui/app/tailwind.css`, so judge rules in the source sheet |
+| `ui/app/tailwind.src.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`) and all existing motion (`@keyframes` `toast-in`, `card-pulse`, `slack-typing`, `lamp-*`, the `.suggestion` rules), with `prefers-reduced-motion` gating. It is the only first-party sheet and compiles to the shipped `ui/app/tailwind.css`, so judge rules in the source sheet. Skeleton rows are not here — they are Tailwind utility classes (`skeletonRows` in `ui/app/core/ui.js`), so judge loading placeholders there |
 | `ui/app/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |
 | `src/tui/repl.zig` (module doc comment, `command_registry`, `printHelp`, `completeSlashCommand`, `handlePickerKey`) | The TUI's whole interaction surface — one file, single `Model` widget |
 | `src/tui/transcript.zig`, `src/tui/theme.zig` | Card rendering (left-bar tool-call style), the theme/color mapping the TUI draws with |

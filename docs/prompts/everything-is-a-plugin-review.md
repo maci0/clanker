@@ -150,12 +150,19 @@ Two parallel read-only passes (one per pass above), then one ranked list:
 4. Always end with the "verified clean / stays core on purpose" list so
    the review is not misread as "pluginize the sandbox."
 
-## Deliverable
+## Response contents
+
+Return these sections in the captured response:
 
 - Scope (paths, mode, date) and the skip result if it applied
-- At most 10 findings. Each one: path, current shape, the plugin shape it
+- Inventory table: every capability with its current shape (bridged guest,
+  reimplemented handler, native core) and the plugin shape it belongs in
+- Findings: at most 10. Each one: path, current shape, the plugin shape it
   belongs in, why it is not there (missing pin, or leak), smallest next
   step. No patches.
+- The "verified clean / stays core on purpose" list the procedure asks for
+
+Conclude with the top 3 candidates and whether any check was unverified.
 
 ## Finding severity
 
