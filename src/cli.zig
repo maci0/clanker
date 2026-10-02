@@ -2010,15 +2010,47 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
     w.print("\n{s}\n", .{s.blurb}) catch {};
     if (s.detail.len > 0) {
         w.print("\n{s}\n", .{s.detail}) catch {};
-    } else if (s.flags.len > 0) {
+    }
+    // Every flag a command accepts, spelled out, unless its own detail or
+    // usage line already names it. The `Accepts:` block used to be an
+    // `else if` on an empty detail, so it was unreachable: every spec with
+    // flags carries a detail, and a command added with flags and no detail
+    // would have had the list silently dropped -- an option the parser
+    // honours and nobody can read about. The check is the same one the
+    // "every flag a command accepts is named in that command's --help" test
+    // makes, so this list and that guard cannot disagree.
+    const undoc = undocumentedishFlags(s);
+    if (undoc.len > 0) {
         w.writeAll("\nAccepts:\n") catch {};
-        for (s.flags) |f| {
+        for (undoc) |f| {
             w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
     }
     w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --profile <name>;\n--dump-config; --help, -h.\n") catch {};
     return buf[0..w.end];
 }
+
+/// The non-global flags `spec` accepts whose spelling neither its `usage`
+/// line nor its `detail` names. Bounded by the flag count, so a caller can
+/// hold the result in a fixed array.
+fn undocumentedishFlags(s: *const Spec) []const Flag {
+    var buf: [FlagEnumCount]Flag = undefined;
+    var len: usize = 0;
+    for (s.flags) |f| {
+        if (f.global()) continue;
+        const spelling = primaryFlagName(f);
+        if (documentsFlagSpelling(s.detail, spelling)) continue;
+        if (documentsFlagSpelling(s.usage, spelling)) continue;
+        buf[len] = f;
+        len += 1;
+    }
+    return buf[0..len];
+}
+
+/// `@typeInfo(Flag).@"enum".fields.len`: the fixed bound on a per-command
+/// flag list. Written out rather than comptime-evaluated at each use so the
+/// two arrays above cannot be sized differently by a later edit.
+const FlagEnumCount = std.enums.values(Flag).len;
 
 /// `clanker --flag -h`: a focused option reference. This is deliberately
 /// separate from command help: an option may be valid on more than one
@@ -2389,7 +2421,7 @@ const specs = [_]Spec{
 
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can\nactually reach, and finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, compare-and-swap lock files under state/locks/ that\nnothing has re-acquired in 12 hours, spilled tool results older than 12 hours,\nand the worktrees of goals that have been archived or abandoned whose branch\nis already merged. Sessions, goals, learnings and chat history are never\ntouched, and neither is a worktree whose branch still holds commits the base\ndoes not.\n\nAn aged lock file is not a stuck lock. ck_fs_write_if locks with flock, which\nthe kernel releases when the holding descriptor closes -- a crash included --\nso a lock is never stale. The 12 hours is a retention window for the file,\nwhich is named for a hash of its target: a target that recurs keeps the same\nlock fresh, and only one that will never be written again ages out." },
-    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
+    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. The check list goes to stdout; the tally, the\nfix-it advice and the copy-paste `diagnostic:` line go to stderr, so\n`clanker doctor > report.txt` keeps the evidence and nothing else." },
     .{ .command = .update, .usage = "update [--check] [--repo <owner/name>]", .blurb = "replace this binary with the latest verified release", .group = .maintain, .flags = &.{ .update_check, .update_repo }, .detail = "Replace this binary with the latest verified GitHub release.\n\n--check              report the latest release and do not download or replace\n--repo <owner/name>  repository as owner/name (default maci0/clanker)\n\nA failed verification does not replace the binary. The download must match\nthe .sha256 sidecar published with that release. The same version is left\nin place. Comparison is exact, not a range.\n\nStdout of --check is only the release page URL. The comparison is printed\non stderr. An optional GITHUB_TOKEN authenticates the API request." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi,\ntools-ts-toolchain, the release contract (CHANGELOG/RELEASES.md),\nreports-inventory (record ## Status vs README row), skills-inventory (every\nskill file has a prompt-visible trigger) and dep-patches (patches/ applied to\nzig-pkg/) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
@@ -22105,4 +22137,39 @@ test "a memory hit that lands keeps its separator, and clean text is unchanged" 
     var buf: std.ArrayList(u8) = .empty;
     try std.testing.expectEqual(@as(usize, 0), appendMemoryHits(&buf, arena, hits));
     try std.testing.expectEqualStrings("alpha\n\nbeta", buf.items);
+}
+
+test "a flag no detail names is still spelled out in the command's help" {
+    // The `Accepts:` block is not an else-branch on an empty detail: it
+    // lists whatever the hand-written detail left out. Every shipped spec
+    // documents all of its own flags, so this drives the helper directly --
+    // the shape a new command is added in, and the one that used to lose
+    // the list.
+    const s: Spec = .{
+        .command = .stats,
+        .usage = "stats",
+        .blurb = "token usage per provider and model",
+        .group = .inspect,
+        .flags = &.{ .model, .tasks },
+    };
+    const undoc = undocumentedishFlags(&s);
+    try std.testing.expectEqual(@as(usize, 2), undoc.len);
+    try std.testing.expectEqual(Flag.model, undoc[0]);
+    try std.testing.expectEqual(Flag.tasks, undoc[1]);
+
+    // A flag the usage line already names is not listed twice.
+    const named: Spec = .{
+        .command = .stats,
+        .usage = "stats [--model <name>]",
+        .blurb = "token usage per provider and model",
+        .group = .inspect,
+        .flags = &.{ .model, .tasks },
+    };
+    try std.testing.expectEqual(@as(usize, 1), undocumentedishFlags(&named).len);
+
+    // No shipped command regressed into an `Accepts:` block: every one
+    // documents its own flags in prose, so today's help is byte-identical.
+    for (&specs) |*spec| {
+        try std.testing.expectEqual(@as(usize, 0), undocumentedishFlags(spec).len);
+    }
 }

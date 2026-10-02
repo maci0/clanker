@@ -967,22 +967,31 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     rep.w.print("clanker doctor {s} ({s}/{s})\n", .{ build_options.version, plat_os, plat_arch }) catch {};
 
     try runChecks(io, arena, init.environ_map, &rep);
+    out.interface.flush() catch {};
 
-    rep.w.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
+    // The tally, the advice and the diagnostic line are status, not report:
+    // they are the same whatever stdout is attached to, and `clanker doctor >
+    // report.txt` is how a CI step keeps the evidence. They go to stderr, so
+    // a redirected stdout holds the check list alone and `clanker doctor |
+    // tail -n +2` no longer swallows the verdict. The exit code was always
+    // the real contract; this makes the stream match it.
+    var err = std.Io.File.stderr().writer(io, &.{});
+    const ew = &err.interface;
+    ew.print("\n{d} failing, {d} warning\n", .{ rep.failures, rep.warnings }) catch {};
     if (rep.failures > 0) {
-        rep.w.writeAll("Fix the failures above, then run `clanker providers check` for connectivity.\n") catch {};
+        ew.writeAll("Fix the failures above, then run `clanker providers check` for connectivity.\n") catch {};
     } else if (rep.warnings > 0) {
-        rep.w.writeAll("Warnings are fine if those providers are not needed. Run `clanker providers check` for connectivity.\n") catch {};
+        ew.writeAll("Warnings are fine if those providers are not needed. Run `clanker providers check` for connectivity.\n") catch {};
     } else {
-        rep.w.writeAll("Everything looks good. Run `clanker providers check` for connectivity.\n") catch {};
+        ew.writeAll("Everything looks good. Run `clanker providers check` for connectivity.\n") catch {};
     }
     // Compact diagnostic line designed for copy-paste into bug reports and
     // support threads: version, platform, and outcome in one string.
-    rep.w.print(
+    ew.print(
         "diagnostic: clanker/{s} {s}/{s} provider={s} failures={d} warnings={d}\n",
         .{ build_options.version, plat_os, plat_arch, rep.default_provider, rep.failures, rep.warnings },
     ) catch {};
-    out.interface.flush() catch {};
+    ew.flush() catch {};
     // A non-zero exit lets `clanker doctor` guard a script or a CI step.
     if (rep.failures > 0) std.process.exit(1);
 }

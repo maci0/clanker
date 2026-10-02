@@ -297,3 +297,41 @@ test "operator journey: rfc create then list shows the decision" {
     try std.testing.expect(std.mem.find(u8, listed.stdout, title) != null);
     std.debug.print("pass: operator journey: rfc create then list shows the decision\n", .{});
 }
+
+test "operator journey: doctor's stdout is the report, and the verdict is on stderr" {
+    // `clanker doctor` is a guard: its exit code is the contract a script
+    // reads, so its streams have to say the same thing. The check list is
+    // the evidence someone keeps (`clanker doctor > report.txt`), and the
+    // tally, the fix-it advice and the copy-paste `diagnostic:` line are
+    // status. The two were both on stdout, so a redirected report carried
+    // the verdict too and `clanker doctor | tail -n +2` ate it.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
+    try harness.linkZigOut(io, tmp.dir);
+
+    var doctor = try harness.run(gpa, io, tmp.dir, &.{"doctor"});
+    defer doctor.deinit(gpa);
+    std.debug.print("doctor exit={any} stdout={d}B stderr={d}B\n", .{ doctor.term, doctor.stdout.len, doctor.stderr.len });
+    if (!doctor.ok()) std.debug.print("doctor stdout:\n{s}\nstderr:\n{s}\n", .{ doctor.stdout, doctor.stderr });
+
+    // The report: the header and the check sections, and none of the
+    // status. `exec_pattern_allow` is empty in the mock config, so this
+    // fixture does fail a check and the exit code is 1; the streams are
+    // what is under test, not the verdict.
+    try std.testing.expect(std.mem.find(u8, doctor.stdout, "clanker doctor") != null);
+    try std.testing.expect(std.mem.find(u8, doctor.stdout, "[FAIL] exec_pattern_allow") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor.stdout, "failing,") == null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor.stdout, "diagnostic:") == null);
+
+    // The verdict, on stderr, and it agrees with the exit code.
+    try std.testing.expect(std.mem.find(u8, doctor.stderr, "failing,") != null);
+    try std.testing.expect(std.mem.find(u8, doctor.stderr, "diagnostic: clanker/") != null);
+    const failed = std.mem.indexOf(u8, doctor.stdout, "[FAIL]") != null;
+    try std.testing.expectEqual(failed, !doctor.ok());
+}
