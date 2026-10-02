@@ -36,6 +36,7 @@
 //! nothing to navigate, just a line to finish or list.
 
 const std = @import("std");
+const wait_budget = @import("../util/deadline.zig");
 const edit_distance = @import("../util/edit_distance.zig");
 const error_hint = @import("../util/error_hint.zig");
 const elapsed = @import("../util/elapsed.zig");
@@ -729,6 +730,19 @@ var ask_cond: std.c.pthread_cond_t = .{};
 /// serve bridge gives a closed browser tab.
 var ask_timeout_ns: u64 = 120 * std.time.ns_per_s;
 
+/// CLOCK_MONOTONIC in nanoseconds. u64: the clock does not run backwards, so
+/// the difference of two readings is a span and never a negative.
+///
+/// The slice ceiling and the budget arithmetic are `util/deadline.zig`'s, the
+/// same two `cli.zig`'s serve-side bridge uses: the two bridges sit on either
+/// side of one run, and a question raised in one is answered in the other only
+/// by a stop, so the budget has to mean the same thing in both.
+fn askMonotonicNowNs() u64 {
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+}
+
 const AskKind = enum { ask, confirm };
 const PendingAsk = struct {
     active: bool = false,
@@ -777,18 +791,31 @@ fn askOnRunThread(kind: AskKind, question: []const u8, options: []const []const 
     var picked: ?usize = null;
     if (!refused) {
         pending_ask = .{ .active = true, .kind = kind, .question = q, .options = opts };
-        // Absolute CLOCK_REALTIME deadline, serve's pattern: a broadcast
-        // that wakes this waiter without answering re-waits on what is
-        // left of the budget for free.
-        var now: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-        _ = std.c.clock_gettime(.REALTIME, &now);
-        const total = @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec)) + ask_timeout_ns;
-        const deadline: std.c.timespec = .{
-            .sec = @intCast(total / std.time.ns_per_s),
-            .nsec = @intCast(total % std.time.ns_per_s),
-        };
+        // The budget is spent against CLOCK_MONOTONIC and the wall clock is
+        // read only to place each wait; see `wait_budget.condWaitSlice` for why
+        // the two cannot be the same clock. MONOTONIC through std.c rather than
+        // `std.Io.Timestamp.now(io, .awake)` because `askOnRunThread` has no
+        // `io`: `tuiAsk`/`tuiConfirm` are bare function pointers (AskFn /
+        // ConfirmFn) whose signature cannot carry one. Same reason
+        // `tui/mascot.zig` reads a clock the std.Io seam cannot hand it.
+        const start = askMonotonicNowNs();
         while (!pending_ask.answered) {
-            if (std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline) == .TIMEDOUT) break;
+            // Re-armed rather than set once, so a step that lands between the
+            // two clock reads cannot outlive the budget by an hour. A wakeup
+            // that answered nothing (broadcast, spurious) simply re-reads what
+            // is left.
+            const slice = wait_budget.condWaitSlice(ask_timeout_ns, askMonotonicNowNs() - start) orelse break;
+            var wall: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+            _ = std.c.clock_gettime(.REALTIME, &wall);
+            const wall_ns = @as(i128, wall.sec) * std.time.ns_per_s + @as(i128, wall.nsec);
+            const deadline_total: u128 = @intCast(wall_ns + slice);
+            const abs_deadline: std.c.timespec = .{
+                .sec = @intCast(deadline_total / std.time.ns_per_s),
+                .nsec = @intCast(deadline_total % std.time.ns_per_s),
+            };
+            // TIMEDOUT is not a verdict here: it says this slice's wall deadline
+            // passed, and the loop above is what decides whether the budget is.
+            _ = std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &abs_deadline);
         }
         // Only the asker that published the question may read it back or
         // clear the slot. A refused caller did not publish anything, so

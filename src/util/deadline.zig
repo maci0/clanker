@@ -75,6 +75,65 @@ pub fn runBounded(
     return try fut.await(io);
 }
 
+// ---------------------------------------------------------------------
+// pthread_cond_timedwait budgets
+// ---------------------------------------------------------------------
+
+/// Longest single `pthread_cond_timedwait` a caller re-arms for. The budget is
+/// re-checked against the monotonic clock between slices, so this bounds how
+/// long a wall-clock step can delay a wakeup that has already arrived, not how
+/// long the whole wait may last.
+pub const cond_slice_ns: u64 = std.time.ns_per_s;
+
+/// How much of `budget_ns` is left after `spent_ns` of monotonic time, and how
+/// long the next `pthread_cond_timedwait` should be armed for.
+///
+/// A `timedwait` deadline is absolute and expressed on whatever clock the
+/// condvar was built with, which is CLOCK_REALTIME unless a clock attribute
+/// says otherwise — and `std.c` exposes no way to set that attribute. So the
+/// absolute deadline has to be computed from the wall clock, while the question
+/// "is the budget spent?" can only be answered from the monotonic one. Measured
+/// against the wall clock, an NTP step or an operator `date -s` decides a budget
+/// that is really a claim about how long a person gets to answer: a backward
+/// step puts the absolute deadline in the past and every waiter times out at
+/// once, refusing on the caller's behalf; a forward step grants the whole
+/// interval again and holds the thread for it. Re-arming in short slices bounds
+/// both to one slice.
+///
+/// `null` means the budget is spent and the caller must stop waiting. `spent_ns`
+/// is a monotonic difference and so never negative.
+pub fn condWaitSlice(budget_ns: u64, spent_ns: u64) ?u64 {
+    if (spent_ns >= budget_ns) return null;
+    const left = budget_ns - spent_ns;
+    return @min(left, cond_slice_ns);
+}
+
+test "a spent budget stops the wait, and a partial one waits the slice" {
+    // Nothing spent: one whole slice, not the whole budget, so a wall-clock
+    // step can extend the wait by at most this.
+    try std.testing.expectEqual(@as(u64, cond_slice_ns), condWaitSlice(120 * std.time.ns_per_s, 0).?);
+
+    // Mid-budget: the slice, because the budget exceeds it.
+    try std.testing.expectEqual(@as(u64, cond_slice_ns), condWaitSlice(120 * std.time.ns_per_s, 5 * std.time.ns_per_s).?);
+
+    // The last slice is what is left, never the slice ceiling again: this is
+    // the arming that ends the wait instead of overshooting the budget.
+    try std.testing.expectEqual(@as(u64, 250 * std.time.ns_per_ms), condWaitSlice(120 * std.time.ns_per_s, 120 * std.time.ns_per_s - 250 * std.time.ns_per_ms).?);
+
+    // Spent, and exactly spent, both stop: `>=` rather than `>` so a budget
+    // that reaches zero exactly does not buy one more slice.
+    try std.testing.expect(condWaitSlice(120 * std.time.ns_per_s, 120 * std.time.ns_per_s) == null);
+    try std.testing.expect(condWaitSlice(120 * std.time.ns_per_s, 121 * std.time.ns_per_s) == null);
+}
+
+test "a zero budget never waits" {
+    // A zero budget is spent from the first reading: `left` would be 0, and
+    // arming a timedwait for zero would park a thread on a deadline it has
+    // already passed and hand the answer to whoever steps the clock next.
+    try std.testing.expect(condWaitSlice(0, 0) == null);
+    try std.testing.expect(condWaitSlice(0, 1) == null);
+}
+
 test "runBounded passes the task's result through" {
     const alloc = std.testing.allocator;
     var threaded = std.Io.Threaded.init(alloc, .{});

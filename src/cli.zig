@@ -114,6 +114,7 @@ const ui_vendor = @import("vendor");
 const edit_distance = @import("util/edit_distance.zig");
 const error_hint = @import("util/error_hint.zig");
 const no_color = @import("util/no_color.zig");
+const wait_budget = @import("util/deadline.zig");
 const elapsed = @import("util/elapsed.zig");
 const test_env = @import("util/test_env.zig");
 
@@ -10516,14 +10517,13 @@ fn askResolve(gpa: std.mem.Allocator, id: u64, answer: []const u8) AskResolve {
     return .not_found;
 }
 
-/// Longest single `pthread_cond_timedwait` an ask blocks for. The budget is
-/// re-checked against the monotonic clock between slices, so this bounds how
-/// long a wall-clock step can delay an answer that has already arrived, not
-/// how long a question is allowed to stay open.
-const ask_wait_slice_ns: u64 = std.time.ns_per_s;
-
 /// CLOCK_MONOTONIC in nanoseconds. u64: the clock does not run backwards, so
 /// the difference of two readings is a span and never a negative.
+///
+/// The slice ceiling and the budget arithmetic are `util/deadline.zig`'s, the
+/// same two `tui/repl.zig`'s ask bridge uses: both are `pthread_cond_timedwait`
+/// budgets with no `std.Io` to read through, so both read CLOCK_MONOTONIC
+/// directly and share one rule rather than two that agree until one is edited.
 fn monotonicNowNs() u64 {
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
@@ -10540,45 +10540,31 @@ fn askAwait(id: u64, timeout_ns: u64) ?[]u8 {
     const slot = for (&ask_slots) |*s| {
         if (s.id == id) break s;
     } else return null;
-    // The budget is spent against CLOCK_MONOTONIC, not the wall clock. A
-    // timedwait's deadline is absolute and on whatever clock the condvar was
-    // built with, which is CLOCK_REALTIME unless a clock attribute says
-    // otherwise, and std.c exposes no way to set that attribute. Measured
-    // there, the budget is a claim about how long a person gets to answer a
-    // question, and an NTP step or an operator `date -s` decides it instead:
-    // a backward step puts the deadline in the past and every waiting ask
-    // times out at once, with the question never delivered; a forward step
-    // grants the whole interval again and holds the connection thread for it.
-    // So the monotonic clock alone decides expiry, and the wall clock is read
-    // only to place each wait.
-    //
-    // MONOTONIC through std.c rather than `std.Io.Timestamp.now(io, .awake)`
-    // because `askAwait` has no `io`: both callers are bare function pointers
-    // (AskFn, ConfirmFn) whose signature cannot carry one. Same reason
-    // `tui/mascot.zig` reads a clock the std.Io seam cannot hand it.
+    // The budget is spent against CLOCK_MONOTONIC and the wall clock is read
+    // only to place each wait; `wait_budget.condWaitSlice` carries the reason and
+    // the rule, and `tui/repl.zig` runs the same loop over the same helper for
+    // the TUI-side ask. MONOTONIC through std.c rather than
+    // `std.Io.Timestamp.now(io, .awake)` because `askAwait` has no `io`: both
+    // callers are bare function pointers (AskFn, ConfirmFn) whose signature
+    // cannot carry one. Same reason `tui/mascot.zig` reads a clock the std.Io
+    // seam cannot hand it.
     const start = monotonicNowNs();
     while (!slot.answered) {
-        const spent = monotonicNowNs() - start;
-        const budget: i128 = @as(i128, timeout_ns) - @as(i128, @intCast(spent));
-        // Spent, or never had a budget: the caller's own ceiling, not a
-        // wall clock reading, ends the wait.
-        if (budget <= 0) break;
-        // Re-armed rather than set once, in slices, so a step that lands
-        // between the two clock reads cannot outlive the budget by an hour.
-        // A wakeup that answered nothing (broadcast, spurious) simply
-        // re-reads what is left.
-        const slice: u64 = @intCast(@min(budget, ask_wait_slice_ns));
+        // Re-armed rather than set once, so a step that lands between the two
+        // clock reads cannot outlive the budget by an hour. A wakeup that
+        // answered nothing (broadcast, spurious) simply re-reads what is left.
+        const slice = wait_budget.condWaitSlice(timeout_ns, monotonicNowNs() - start) orelse break;
         var wall: std.c.timespec = .{ .sec = 0, .nsec = 0 };
         _ = std.c.clock_gettime(.REALTIME, &wall);
         const wall_ns = @as(i128, wall.sec) * std.time.ns_per_s + @as(i128, wall.nsec);
         const deadline_total: u128 = @intCast(wall_ns + slice);
-        const deadline: std.c.timespec = .{
+        const abs_deadline: std.c.timespec = .{
             .sec = @intCast(deadline_total / std.time.ns_per_s),
             .nsec = @intCast(deadline_total % std.time.ns_per_s),
         };
         // TIMEDOUT is not a verdict here: it says this slice's wall deadline
         // passed, and the loop above is what decides whether the budget is.
-        _ = std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline);
+        _ = std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &abs_deadline);
     }
     const answer = if (slot.answered) slot.answer else null;
     slot.* = .{};
