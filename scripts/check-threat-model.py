@@ -39,9 +39,22 @@ import sys
 REF = re.compile(r'([A-Za-z0-9_./-]+\.(?:zig|md|sh|ts|js|json|yml|py)):(\d+)(?:-(\d+))?')
 BARE = re.compile(r'^:(\d+)(?:-(\d+))?$')
 PLAIN_PATH = re.compile(r'^[A-Za-z0-9_./-]+\.(?:zig|md|sh|ts|js|json|yml|py)$')
-SYMBOL = re.compile(r'`([A-Za-z_][A-Za-z0-9_]{3,})`')
+SYMBOL = re.compile(r'`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`')
 DEF = re.compile(r'^\s*(?:pub\s+)?(?:fn|const|var|threadlocal\s+fn)\s+([A-Za-z_][A-Za-z0-9_]*)')
 WINDOW = 4
+IDENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?')
+
+
+def word_rx(symbol):
+    """Match a possibly module-qualified name as whole words.
+
+    `\b` cannot bracket a dotted name -- the boundary falls mid-token -- so the
+    bare name is matched as an alternative instead.
+    """
+    bare = symbol.rsplit('.', 1)[-1]
+    if bare == symbol:
+        return re.compile(rf'\b{re.escape(symbol)}\b')
+    return re.compile(rf'\b{re.escape(symbol)}\b|\b{re.escape(bare)}\b')
 
 
 def repo_root():
@@ -71,6 +84,9 @@ class Tree:
         return self._lines[rel]
 
     def defs(self, rel, symbol):
+        # A clause may qualify a name with the module it is reached through
+        # (`cli_plugins.resolveTier2`); the definition is under the bare name.
+        symbol = symbol.rsplit('.', 1)[-1]
         out = []
         for n, line in enumerate(self.lines(rel) or [], 1):
             m = DEF.match(line)
@@ -79,18 +95,64 @@ class Tree:
         return out
 
     def occurrences(self, rel, symbol):
-        rx = re.compile(rf'\b{re.escape(symbol)}\b')
+        rx = word_rx(symbol)
         return [n for n, line in enumerate(self.lines(rel) or [], 1) if rx.search(line)]
 
+    def span(self, rel, symbol):
+        """First definition's line range: (start, end), or (None, None).
 
-def resolve(tree, path, a, b, symbols, *, bare=False):
+        A citation may land on the `fn` line, on a comment above it, or on any
+        line inside the body -- a guard clause, the refusal it returns. All
+        three describe the same function, so a reference inside the body is
+        accepted as naming it. The end is found by counting braces with string
+        literals and line comments stripped, so neither can move it.
+        """
+        lines = self.lines(rel)
+        if lines is None:
+            return None, None
+        starts = self.defs(rel, symbol)
+        if not starts:
+            return None, None
+        start = starts[0]
+        depth = 0
+        opened = False
+        for n in range(start, len(lines) + 1):
+            stripped = re.sub(r'//.*$', '', lines[n - 1])
+            stripped = re.sub(r'"(?:[^"\\]|\\.)*"', '""', stripped)
+            for ch in stripped:
+                if ch == '{':
+                    depth += 1
+                    opened = True
+                elif ch == '}':
+                    depth -= 1
+                    if opened and depth <= 0:
+                        return start, n
+        return start, len(lines)
+
+
+def resolve(tree, path, a, b, symbols, *, bare=False, primary=None):
     """Return (ok, detail). Definitions win over incidental mentions.
 
     A cell names several symbols and a reference is expected to land on any of
     them: the risk table's DoS row cites a constant, the cap that enforces it
     and the thread that refuses over it, and each reference answers a different
     one. Requiring every reference to match the cell's first symbol would flag
-    a correct citation because the constant is not the symbol it names.
+    a correct citation because the constant is not the symbol it names. That
+    any-of is the fallback, not the rule; see `primary`.
+
+    `primary` is the symbol the reference's own clause named. When there is
+    one, the reference is held to it and to nothing else: it may name its `fn`
+    line, a doc comment or call site up to `WINDOW` lines above, or any line
+    inside its body. Only when no clause names a symbol does this fall back to
+    the cell-wide any-of, which is what the dense rows need -- one that cites a
+    constant, the cap enforcing it and the thread refusing over it in a single
+    cell, where each reference answers a different one.
+
+    Both halves were holes. A cell naming five handlers let a citation for one
+    of them resolve on a neighbour's definition four lines off, and a citation
+    naming `readinessBody` resolved on `max_connection_threads` because the row
+    named it too. `primary` closes both: the clause's symbol wins outright, and
+    the `nearby` tolerance is scoped to it.
 
     `bare` says the reference is the `:NNNN` form, which inherits its file from
     the cell rather than naming it, and only that form is allowed the port
@@ -112,14 +174,42 @@ def resolve(tree, path, a, b, symbols, *, bare=False):
         return False, f'out of range ({path} has {len(lines)} lines)'
     if not symbols:
         return True, 'no symbol named in the cell'
+    # A clause that names its own symbol is held to that symbol and no other.
+    # Any-of across the whole cell is the fallback for the rows that name a
+    # constant, the cap enforcing it and the thread refusing over it, where
+    # each reference answers a different one and the clause names none of them
+    # itself. Letting the any-of answer a clause that *does* name a symbol is
+    # the same hole one level up: `readinessBody src/cli.zig:9970` rewritten
+    # to `:8138` reported clean, because `max_connection_threads` sits there and
+    # is named elsewhere in the same row.
+    if primary:
+        for line in tree.defs(path, primary):
+            if a <= line <= b:
+                return True, f'def {primary}'
+        for line in tree.defs(path, primary):
+            if a - WINDOW <= line <= b + WINDOW:
+                return True, f'def {primary} nearby'
+        # A clause citing a line inside the function it names -- a guard clause,
+        # a comment explaining the refusal -- is as correct as citing the `fn`
+        # line, and far more useful to the next reader. Anything else is drift.
+        lo, hi = tree.span(path, primary)
+        if lo is not None and lo <= a and b <= hi:
+            return True, f'inside {primary}'
+        rx = word_rx(primary)
+        for n, line in enumerate(lines, 1):
+            if a <= n <= b and rx.search(line):
+                return True, f'uses {primary}'
+        return False, f'{primary} not in {a}-{b}'
     for symbol in symbols:
         for line in tree.defs(path, symbol):
             if a <= line <= b:
                 return True, f'def {symbol}'
+    for symbol in symbols:
+        for line in tree.defs(path, symbol):
             if a - WINDOW <= line <= b + WINDOW:
                 return True, f'def {symbol} nearby'
     for symbol in symbols:
-        rx = re.compile(rf'\b{re.escape(symbol)}\b')
+        rx = word_rx(symbol)
         for n, line in enumerate(lines, 1):
             if a <= n <= b and rx.search(line):
                 return True, f'uses {symbol}'
@@ -169,7 +259,28 @@ def check(doc_path, list_all):
                 named = set(SYMBOL.findall(cell))
                 named |= set(SYMBOL.findall(row_subjects(cell, line)))
                 symbols = sorted(named)
-                symbols = [s for s in symbols if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', s)]
+                symbols = [s for s in symbols if IDENT.fullmatch(s)]
+                # The symbol this reference's own clause names: the nearest
+                # backticked identifier at or before it. The `nearby`
+                # tolerance goes to this one alone, so a row naming several
+                # handlers cannot have a citation for one of them satisfied by
+                # a neighbour's definition a few lines off.
+                primary = None
+                for m2 in SYMBOL.finditer(cell[:span.start()]):
+                    primary = m2.group(1)
+                # Only an *adjacent* backtick pair binds: the document's
+                # citation idiom is `sym` `path:line`, and adjacency is how a
+                # clause says "this reference is about that symbol". A symbol
+                # three clauses back, in a row that names five handlers, says
+                # nothing about this reference and must not bind it.
+                before = cell[:span.start()]
+                gap = cell[before.rfind('`') + 1:span.start()] if '`' in before else ''
+                if not re.fullmatch(r'[\s,():]*', gap):
+                    primary = None
+                if primary is not None and not IDENT.fullmatch(primary):
+                    primary = None
+                if primary is not None and primary not in symbols:
+                    symbols = [*symbols, primary]
                 # `span` is already the re.finditer match over the cell; the
                 # ASSERTED key needs its own name, and reusing the loop
                 # variable shadowed it for the rest of the iteration.
@@ -178,7 +289,8 @@ def check(doc_path, list_all):
                     ok, detail = assert_text(tree, path, a, b, ASSERTED[(path, cited)])
                     by_text += 1
                 else:
-                    ok, detail = resolve(tree, path, a, b, symbols, bare=is_bare)
+                    ok, detail = resolve(tree, path, a, b, symbols, bare=is_bare,
+                                         primary=primary)
                     by_symbol += 1
                 if 'port number' in detail:
                     skipped += 1
@@ -214,6 +326,19 @@ ASSERTED = {
     ('src/cli.zig', '10305-10306'): ('max_run_images',),
     ('src/cli.zig', '8544'): ('request_head',),
     ('src/cli.zig', '12603'): ('handleMcpServers',),
+    # A command-table row, not a symbol definition: the `clanker update`
+    # surface lives in `src/cli/update.zig`, and its entry in the CLI's verb
+    # table is what `src/cli.zig:2425` proves.
+    ('src/cli.zig', '2425'): ('.command = .update',),
+    # Prose citations that name no identifier: `src/cli.zig:17469` is the
+    # `req.backend` check the R1/T7 rows point at, and no symbol either cell
+    # names is defined there, so the row falls through to this table and the
+    # cited line has to say what it says.
+    ('src/cli.zig', '17469'): ('req.backend',),
+    ('src/cli.zig', '4434'): ('acp_vendor.Name.parse', 'BadBackend'),
+    ('src/config.zig', '1110'): ('a2a: bool = true',),
+    ('docs/README.md', '1623'): ('There is no authentication',),
+    ('README.md', '250'): ('There is no', 'authentication',),
     ('src/serve/proxy.zig', '30-31'): ('default_first_byte_s', 'default_idle_s'),
     ('src/serve/proxy.zig', '57'): ('fn authorize',),
     ('src/serve/proxy.zig', '426-427'): ('first_byte',),

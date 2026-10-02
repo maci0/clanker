@@ -117,6 +117,11 @@ fi
 # references drifted while the header kept asserting they had not. The unit
 # test covers the resolution rules and pins the shipped model clean, so a
 # checker that quietly stopped detecting drift fails here too.
+# A reference is held to the symbol its own clause names (`sym` `path:line`),
+# not to any symbol in the same row: a row naming five handlers once passed a
+# stale citation on whichever handler happened to sit four lines off. The rule
+# and the regressions it closes are pinned by scripts/test_check_threat_model.py;
+# loosening either one turns this step green on a model it no longer describes.
 step "Threat model references (CI: Check threat model references)"
 if command -v python3 >/dev/null 2>&1; then
     python3 -B -m unittest scripts.test_check_threat_model || status=1

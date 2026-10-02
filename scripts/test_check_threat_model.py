@@ -57,7 +57,91 @@ class CheckerUnit(unittest.TestCase):
 
     def test_resolve_accepts_a_definition_a_few_lines_below(self):
         self.write("src/a.zig", "// a caller\n// calls this:\npub fn one() void {}\n")
-        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 1, 2, ["one"])
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 1, 2, ["one"],
+                                 primary="one")
+        self.assertTrue(ok)
+
+    def test_resolve_refuses_the_nearby_tolerance_for_a_neighbouring_symbol(self):
+        """The chatroom row: five handlers named, three citations stale.
+
+        `nearby` used to answer for any symbol in the cell, so a citation for
+        `handleChatPin` passed because `handleChatSubscribe` happened to be
+        four lines off. Only the symbol the clause named may use the window.
+        """
+        self.write(
+            "src/a.zig",
+            "pub fn one() void {}\n"
+            + "".join(f"// filler {n}\n" for n in range(2))
+            + "pub fn two() void {}\n"
+            + "".join(f"// filler {n}\n" for n in range(20)),
+        )
+        # A citation naming `two`, sitting inside the trailing filler and so
+        # far from both definitions that only `one` is within the window.
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 24, 24, ["one", "two"],
+                                 primary="two")
+        self.assertFalse(ok)
+
+    def test_resolve_accepts_a_line_inside_the_body_it_names(self):
+        """A clause citing a guard clause, not the `fn` line, is correct.
+
+        The readiness report is cited at the line that builds the JSON
+        envelope, several lines below `readinessBody`. The span test is what
+        keeps that honest: it stops at the closing brace, so the next
+        function's body does not satisfy it either.
+        """
+        self.write(
+            "src/a.zig",
+            "fn outer() void {\n"
+            "    const s = \"{\";\n"
+            "    _ = s;\n"
+            "}\n"
+            + "".join(f"// filler {n}\n" for n in range(20))
+            + "fn inner() void {\n"
+            "    _ = 1;\n"
+            "}\n",
+        )
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 2, 2, ["outer"],
+                                 primary="outer")
+        self.assertTrue(ok)
+        # Line 25 is `inner`'s body; naming `outer` there is drift, and it is
+        # far enough out that neither the span nor the window can excuse it.
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 26, 26, ["outer", "inner"],
+                                 primary="outer")
+        self.assertFalse(ok)
+
+    def test_resolve_holds_a_clause_to_its_own_symbol_not_the_cell(self):
+        """`readinessBody src/cli.zig:8138` must not pass on a neighbour.
+
+        `max_connection_threads` is defined on that line and the risk row
+        names it too, so an any-of match reports clean. The clause named
+        `readinessBody`, so that is what the citation has to reach.
+        """
+        self.write(
+            "src/a.zig",
+            "const max_connection_threads: u16 = 64;\n"
+            + "".join(f"// filler {n}\n" for n in range(20))
+            + "fn readinessBody() void {}\n",
+        )
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 1, 1,
+                                 ["max_connection_threads", "readinessBody"],
+                                 primary="readinessBody")
+        self.assertFalse(ok)
+
+    def test_defs_resolves_a_module_qualified_name_to_the_bare_symbol(self):
+        """`cli_plugins.resolveTier2` is defined under the bare name."""
+        self.write("src/cli/plugins.zig", "fn resolveTier2() bool {\n    return true;\n}\n")
+        self.assertEqual(
+            self.tree.defs("src/cli/plugins.zig", "cli_plugins.resolveTier2"), [1])
+
+    def test_resolve_still_matches_an_exact_span_from_any_cell_symbol(self):
+        """Splitting out `nearby` must not cost the any-of exact match.
+
+        The DoS row cites a constant, the cap and the refusing thread from one
+        cell; each reference answers a different symbol, all inside the span.
+        """
+        self.write("src/a.zig", "const cap: usize = 8;\nfn other() void {}\n")
+        ok, _ = self.mod.resolve(self.tree, "src/a.zig", 1, 2, ["cap", "other"],
+                                 primary="other")
         self.assertTrue(ok)
 
     def test_resolve_rejects_a_missing_file(self):
