@@ -26,6 +26,12 @@ runtime state, private agent instructions, and local machine data. The backup
 script resolves those links from its own checkout, verifies that they share one
 storage root, and writes snapshots under that root's `backups/` directory.
 
+**Requirements.** `rsync` is required by `backup-state.sh` and
+`verify-backup.sh`, and both refuse to start without it (macOS ships no rsync
+by default; `brew install rsync`). `sqlite3` is optional: without it the run
+skips the WAL checkpoint and the loadability check and says so, falling back to
+a crash-consistent copy. Neither is a dependency of `clanker` itself.
+
 Each snapshot is timestamped. `rsync --link-dest` hard-links unchanged files
 to the preceding snapshot, so snapshots are incremental while each one remains
 a complete directory tree. Transient `*.lock` files are excluded, and so is

@@ -9,6 +9,7 @@ promotion, and the derived search index does not take the backup down with it.
 """
 
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -44,13 +45,14 @@ class BackupStateTest(unittest.TestCase):
         self.script.write_bytes(SCRIPT.read_bytes())
         self.script.chmod(0o755)
 
-    def run_backup(self) -> subprocess.CompletedProcess:
+    def run_backup(self, **env_extra: str) -> subprocess.CompletedProcess:
         # The drill's exit status is the assertion, so a non-zero code must
-        # come back as a value the test can read, not as a raise.
+        # come back as a value the test can read, not as a raise. `env_extra`
+        # overrides one variable per call (used to drop a tool from PATH).
         return subprocess.run(
             [str(self.script)],
             cwd=self.repo,
-            env=dict(os.environ, HOME=str(self.root)),
+            env=dict(os.environ, HOME=str(self.root), **env_extra),
             capture_output=True,
             text=True,
             check=False,
@@ -451,6 +453,42 @@ class BackupStateTest(unittest.TestCase):
         self.assertFalse(
             (self.repo / "backups").exists(), "snapshot landed inside the checkout"
         )
+
+    def path_without_rsync(self) -> str:
+        """A PATH holding every ordinary tool but no rsync.
+
+        Every copy the script makes is an rsync, so a host without one (macOS
+        ships none by default) cannot run it. The script used to find that out
+        at the first copy -- after the staging directory was created, chmod'ed
+        and trapped -- leaving a bare `rsync: command not found` at exit 127,
+        which reads exactly like the 127 systemd reports for a broken unit and
+        names no dependency. Symlinks, not a copy, so the directory still holds
+        the real binaries.
+        """
+        if shutil.which("rsync") is None:
+            self.skipTest("rsync is not installed on this host")
+        stub_dir = self.root / "path-no-rsync"
+        stub_dir.mkdir()
+        for name in ("bash", "sh", "dirname", "basename", "readlink", "pwd", "rm",
+                     "mkdir", "mktemp", "chmod", "sort", "find", "date", "du",
+                     "ls", "sqlite3", "cmp", "diff", "sleep", "stat", "ln"):
+            found = shutil.which(name)
+            if found is not None:
+                (stub_dir / name).symlink_to(found)
+        self.assertIsNone(shutil.which("rsync", path=str(stub_dir)))
+        return str(stub_dir)
+
+    def test_a_host_without_rsync_is_refused_before_anything_is_staged(self) -> None:
+        # A refusal that still created (and trapped, and would have deleted)
+        # a full copy of the store costs exactly what it refuses to spend.
+        result = self.run_backup(PATH=self.path_without_rsync())
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("rsync is required", result.stderr)
+        # Not 127: nothing is reported as "not found" by the shell, because the
+        # script refuses on its own terms rather than exec'ing a missing tool.
+        self.assertNotEqual(result.returncode, 127)
+        self.assertFalse(self.backups.exists(), "a snapshot root was created anyway")
+        self.assertEqual(list(self.storage.iterdir()), [self.state])
 
 
 if __name__ == "__main__":

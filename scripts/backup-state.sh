@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# rsync is required, not optional. Every copy in this script is an rsync
+# (`-a --link-dest` for the incremental snapshots, a plain `-a` for the
+# restore and the off-site mirror), so a host without one had no way to run
+# the script at all -- but it did not say so until the first copy, after the
+# staging directory had been created, chmod'ed and trapped. The failure the
+# operator saw was `rsync: command not found` at 127, which reads exactly like
+# the `command not found` a systemd unit reports for a broken interpreter, and
+# nothing anywhere named rsync as a requirement. Checked here, above any
+# staging work, so a missing one costs a line of output and no half-built
+# snapshot tree. `sqlite3` below is deliberately NOT gated the same way: the
+# run degrades to a crash-consistent copy without it and says so.
+command -v rsync >/dev/null 2>&1 || {
+    printf '%s\n' \
+        "backup-state: rsync is required and was not found on PATH" \
+        "Every snapshot copy is an rsync; this script cannot run without one." \
+        "Install it (Debian/Ubuntu: apt install rsync; macOS: brew install rsync)" \
+        "and re-run. See scripts/README.md." >&2
+    exit 1
+}
+
 # Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
 # `-f`, and every `readlink -f` here died under `set -euo pipefail` on a
 # Mac. The target need not exist (state/ is created on first run), so an

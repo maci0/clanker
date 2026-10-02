@@ -311,6 +311,41 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sorted(p.name for p in scratch_parent.iterdir()), [stale.name])
 
+    def path_without_rsync(self) -> str:
+        """A PATH holding every ordinary tool but no rsync.
+
+        macOS ships no rsync by default, so the drill's only copy has no
+        meaning without one. The script used to discover that at the first
+        `rsync`, which under `set -euo pipefail` is a bare 127 that reads like
+        a broken interpreter rather than a missing dependency; it now refuses
+        before staging anything and names the tool. Symlinks, not a copy, so the
+        directory still holds the real binaries.
+        """
+        if shutil.which("rsync") is None:
+            self.skipTest("rsync is not installed on this host")
+        stub_dir = self.root / "path-no-rsync"
+        stub_dir.mkdir()
+        for name in ("bash", "sh", "dirname", "basename", "readlink", "pwd", "rm",
+                     "mkdir", "mktemp", "chmod", "sort", "find", "date", "du",
+                     "ls", "sqlite3", "cmp", "diff", "sleep", "stat"):
+            found = shutil.which(name)
+            if found is not None:
+                (stub_dir / name).symlink_to(found)
+        self.assertIsNone(shutil.which("rsync", path=str(stub_dir)))
+        return str(stub_dir)
+
+    def test_a_host_without_rsync_says_so_instead_of_exiting_127(self) -> None:
+        self.snapshot("20260901T120000Z", self.healthy_db())
+        result = self.run_verify(env_extra={"PATH": self.path_without_rsync()})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("rsync is required", result.stderr)
+        # The drill's own answers must not appear: nothing was restored, so
+        # there is no elapsed time, no entry count and no ok line to report.
+        self.assertNotIn("ok: ", result.stdout)
+        # Nothing may be staged either, or a refusal would still cost a full
+        # copy of the store on disk before it stopped.
+        self.assertFalse((self.root / "restore-verify").exists())
+
     def wait_for_scratch(self, scratch_parent: Path) -> bool:
         deadline = time.time() + 20
         while time.time() < deadline:

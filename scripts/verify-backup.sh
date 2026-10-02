@@ -32,6 +32,23 @@
 # are absent by design (see backup-state.sh).
 set -euo pipefail
 
+# rsync is required, not optional, and for the same reason
+# backup-state.sh says so: the drill's whole restore is one rsync out of the
+# snapshot, so a host without one reported the drill's own failure modes (a
+# nonzero exit, a "missing entry" count) for what is really a missing
+# dependency. Checked before anything is staged, so the operator reads the
+# reason rather than a restore that stopped halfway. `sqlite3` further down is
+# gated separately and degrades to a note instead: the drill still restores
+# and compares bytes without it.
+command -v rsync >/dev/null 2>&1 || {
+    printf '%s\n' \
+        "verify-backup: rsync is required and was not found on PATH" \
+        "The restore drill copies each snapshot entry out with rsync; it" \
+        "cannot run without one. Install it (Debian/Ubuntu: apt install rsync;" \
+        "macOS: brew install rsync) and re-run. See scripts/README.md." >&2
+    exit 1
+}
+
 # Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
 # `-f`, and every `readlink -f` here died under `set -euo pipefail` on a
 # Mac. The target need not exist (state/ is created on first run), so an
