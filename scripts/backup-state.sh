@@ -276,6 +276,40 @@ copy_home_agents() {
 }
 copy_home_agents
 
+# Operator-built Tier-2 CLI plugins. `clanker <command>` resolves a bare
+# single-word command that no built-in claims against two tiers (PRD 0012),
+# and Tier 2 is a `clanker-<name>` executable on `PATH` or under
+# `$HOME/.clanker/plugins` -- exec'd with inherited stdio and trusted like
+# anything else the operator put on their `PATH` (`src/cli/cli_plugins.zig`
+# resolves the directory, `src/cli.zig` lists it in bare `clanker help`).
+# Those binaries live in no repository and are in neither `$HOME/.agents` nor
+# `$HOME/.config/clanker`, so nothing before this entry carried them: a lost
+# storage root or a reinstalled machine brought back the transcripts, the
+# credentials and the device rules and left every operator-installed
+# `clanker-<name>` gone, so each of those commands silently stopped resolving
+# to a Tier 1 entry or to anything at all. The checkout's `cli-plugins/`
+# (Tier 1 manifests) is carried by the `checkout-data` entry; this is the
+# device-local half of the same surface.
+#
+# Its own entry rather than a corner of `home-agents/`, because a restore has
+# to put it back at `$HOME/.clanker/plugins` -- the path `cli_plugins.zig`
+# builds -- and not at `$HOME/.agents` or anywhere under `$HOME/.config`.
+# Owner-only like the others: a snapshot root that can hold `clanker-<name>`
+# is no less sensitive than one holding `backup.env`. A missing `$HOME` (a
+# service started without one) or an absent directory is a soft skip, exactly
+# like `copy_home_agents` above, so a checkout that never installed a Tier 2
+# plugin does not report a missing entry. `*.lock` is excluded for the reason
+# every other entry excludes it: a lock dies with its process.
+copy_home_plugins() {
+    [ -n "${HOME:-}" ] || return 0
+    [ -d "$HOME/.clanker/plugins" ] || return 0
+    mkdir -p -- "$staging/home-plugins"
+    rsync -a --exclude='*.lock' "$HOME/.clanker/plugins/" "$staging/home-plugins/"
+    chmod 700 -- "$staging/home-plugins"
+    copied="$copied home-plugins"
+}
+copy_home_plugins
+
 # The backup's own configuration. `~/.config/clanker/backup.env` is the whole
 # EnvironmentFile both units read: it names the off-site mirror, the retention
 # window, the drill's staleness bound and the scratch override. It is written

@@ -40,7 +40,11 @@ edit of `backups/`.
   never rewrites it, so a re-install on a replacement machine reproduces the
   commented template; without the entry a restored store comes back with its
   second failure domain silently unset, which nothing reports as missing), plus
-  a `checkout-data/`
+  a `home-plugins/` entry holding `~/.clanker/plugins/` (the operator-built
+  Tier-2 `clanker-<name>` CLI plugin executables `clanker <command>` execs
+  after Tier 1 resolves nothing; they live in no repository and the checkout's
+  `cli-plugins/` in `checkout-data/` is only the Tier 1 manifest half), plus a
+  `checkout-data/`
   entry holding the operator-created data that lives in the checkout and is
   written at runtime, at its checkout-relative path: `ui/plugins/` (the
   `webui_addon` views), `cli-plugins/`, `tui-plugins/`, `tools/manifests/`,
@@ -161,6 +165,12 @@ this runbook can manufacture a snapshot that does not exist.
    rsync -a "$SNAP/config/" "$repo_root/" 2>/dev/null || true
    # the device-global operator rules, back into $HOME (never the storage root)
    rsync -a "$SNAP/home-agents/" "$HOME/.agents/" 2>/dev/null || true
+   # the operator's Tier-2 CLI plugin executables, back into $HOME. No
+   # --delete: a snapshot is older than the checkout by construction, and
+   # deleting what it no longer carries would drop a plugin installed after
+   # it. $HOME/.clanker/plugins is where src/cli/cli_plugins.zig looks.
+   mkdir -p "$HOME/.clanker/plugins" && chmod 700 "$HOME/.clanker/plugins"
+   rsync -a "$SNAP/home-plugins/" "$HOME/.clanker/plugins/" 2>/dev/null || true
    # the backup units' own configuration, back into $HOME: the off-site
    # destination, the retention window and the drill's staleness bound. Restore
    # this before reinstalling the timer, or the reinstall reproduces the

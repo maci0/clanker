@@ -121,6 +121,22 @@ run with no `$HOME/.agents` skips the entry; it never fails the backup. A
 snapshot that holds it carries a `home-agents/` entry, which a restore puts
 back at `$HOME/.agents`.
 
+**Operator-built CLI plugins.** `clanker <command>` resolves a bare
+single-word command that no built-in claims against two tiers (PRD 0012), and
+Tier 2 is a `clanker-<name>` executable on `PATH` or under
+`~/.clanker/plugins`, exec'd with inherited stdio and trusted like anything
+else the operator put on their `PATH` (`src/cli/cli_plugins.zig` resolves the
+directory; bare `clanker help` lists the source). Those binaries are in no
+repository and are in neither `~/.agents` nor `~/.config/clanker`, so no other
+entry carried them: a lost storage root restored the transcripts, the
+credentials and the device rules and left every operator-installed Tier 2
+command gone, so those commands silently stopped resolving to a Tier 1 entry
+or to anything. A snapshot therefore carries a `home-plugins/` entry,
+owner-only, which a restore puts back at `$HOME/.clanker/plugins` (the
+checkout's `cli-plugins/` in `checkout-data/` is the Tier 1 manifest half of
+the same surface). A host with no `~/.clanker/plugins` skips the entry rather
+than carrying a hollow one.
+
 **The backup's own configuration.** `~/.config/clanker/backup.env` is the
 whole `EnvironmentFile=` both units read: the off-site mirror, the retention
 window, the drill's staleness bound and the scratch override. The installer

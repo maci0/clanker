@@ -292,6 +292,35 @@ class BackupStateTest(unittest.TestCase):
         )
         self.assertEqual((latest / "agents" / "AGENTS.md").read_text(), "project rules\n")
 
+    def test_tier2_cli_plugin_executables_are_snapshotted(self) -> None:
+        # `clanker <command>` resolves a bare single-word command no built-in
+        # claims against two tiers (PRD 0012), and Tier 2 is a `clanker-<name>`
+        # executable on PATH or under `~/.clanker/plugins`, exec'd with
+        # inherited stdio and trusted like a PATH entry. Those binaries live in
+        # no repository and are in neither `~/.agents` nor
+        # `~/.config/clanker`, so nothing else carried them: a lost storage
+        # root brought back the transcripts, the credentials and the device
+        # rules and left every operator-installed Tier 2 command gone. The
+        # checkout's `cli-plugins/` (Tier 1 manifests) rides in the
+        # `checkout-data` entry; this is the device-local half.
+        home_plugins = self.root / ".clanker" / "plugins"
+        home_plugins.mkdir(parents=True)
+        (home_plugins / "clanker-demo").write_text("#!/bin/sh\necho demo\n")
+        (home_plugins / "clanker-demo").chmod(0o755)
+
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        latest = self.latest()
+        self.assertEqual(
+            (latest / "home-plugins" / "clanker-demo").read_text(), "#!/bin/sh\necho demo\n"
+        )
+        # The staged entry holds executables and is owner-only, like the backup
+        # root `copy_local_config` and `copy_home_config` tighten.
+        self.assertEqual((latest / "home-plugins").stat().st_mode & 0o777, 0o700)
+
     def test_backup_env_is_snapshotted_so_the_second_failure_domain_survives(self) -> None:
         # `~/.config/clanker/backup.env` names the off-site mirror, the
         # retention window and the drill's staleness bound, and both units read
