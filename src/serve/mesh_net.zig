@@ -668,8 +668,16 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
     const listen_s = try std.fmt.allocPrint(gpa, "{s}:{d}", .{ cfg.mesh.listen_host, cfg.mesh.listen_port });
     const seeds = try gpa.alloc(mesh.PeerSeed, cfg.peers.len);
     for (cfg.peers, 0..) |p, i| seeds[i] = .{ .name = p.name, .id = p.id };
-    const addr = parseAddr(cfg.mesh.listen_host, cfg.mesh.listen_port) catch
-        try std.Io.net.IpAddress.parseIp4("127.0.0.1", cfg.mesh.listen_port);
+    const addr = parseAddr(cfg.mesh.listen_host, cfg.mesh.listen_port) catch {
+        // Refused, not answered with loopback. A bind that quietly became a
+        // different bind is the worst shape this key can take: the peers
+        // that were told this address got a refusal, while the startup log
+        // named a host the process was not listening on. `[mesh].listen_host`
+        // refuses the same string at config load, so reaching here means a
+        // caller built a `Config` by hand rather than through `load`.
+        log.log(.error_, "mesh: [mesh].listen_host '{s}' is not a bindable IP address; not listening (a hostname or a host:port pair is not a bind address)", .{cfg.mesh.listen_host});
+        return error.BadAddress;
+    };
     const server = try std.Io.net.IpAddress.listen(&addr, io, .{ .reuse_address = true });
     const rt = try gpa.create(Runtime);
     rt.* = .{

@@ -57,6 +57,16 @@ A value that is present but empty is not a missing value: `default_provider =
 ""` and `[serve] host = ""` are both refused at load, naming the key, because
 each would otherwise be read as a setting that resolves to nothing.
 
+The two keys naming a bind address, `[serve] host` and `[mesh] listen_host`,
+answer on one rule: the value is an IP literal (`0.0.0.0` and `::` bind every
+interface). The listeners parse an IP literal and nothing else, so a hostname
+is refused at load rather than resolved: a name is a DNS answer the config
+does not pin, and a value that cannot parse used to be answered by binding
+loopback while the startup log named the address the operator wrote. A
+`host:port` pair is refused too: the port is `[serve] webui_port` /
+`[mesh] listen_port`, and one string spelling both is where a typo'd port
+silently became a different one.
+
 Four places read the result, and each is redacted the same way:
 
 - `clanker config dump` prints both files as the operator wrote them, with
@@ -640,7 +650,7 @@ loopback so turning the module on is not a LAN socket.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `listen_host` | `"127.0.0.1"` | Mesh TCP bind, independent of `[serve].host` |
+| `listen_host` | `"127.0.0.1"` | Mesh TCP bind, independent of `[serve].host`. An IP literal only: IPv4, IPv6, or `0.0.0.0` / `::` to bind every interface. A hostname, a `host:port` pair and an empty value are refused at load, naming the key |
 | `listen_port` | `7420` | Mesh TCP port |
 | `ping_interval_seconds` | `15` | Liveness ping |
 | `admission` | `"allowlist"` | `allowlist`, `prompt` (queue for `clanker mesh admit`/`deny`), or `open` |
@@ -694,7 +704,10 @@ A second process on the same host uses another `id`, `listen_port`,
   this machine, and that surface takes no token of its own: it is held back by
   the Host and Origin guards alone. `clanker doctor` says so in its
   **network exposure** section, along with a proxy mounted on a broad host
-  without an effective `proxy_token_env` and a `web.allow` of `["*"]`.
+  without an effective `proxy_token_env` and a `web.allow` of `["*"]`. It
+  resolves the same two layers `serve` binds from, so a `CLANKER_HOST` that
+  widens the bind widens what doctor reports; only a `--host` flag is invisible
+  to it, and each line names the layer it read.
   Field-merged, so a `config.local.toml` that
   only sets `host` keeps a base `proxy = true`. With no proxy enabled, the
   process opens exactly one socket; a distinct `proxy_port` opens the only

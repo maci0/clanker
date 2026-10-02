@@ -817,6 +817,24 @@ pub fn firstToolsDir(dirs: []const []const u8) []const u8 {
 /// the `.env` loader, which *defines* those names, has to apply the same one.
 pub const isEnvVarName = env_names.isEnvVarName;
 
+/// True when `host` is an IP literal a listener can bind: exactly what
+/// `parseIp4`/`parseIp6` accept, and nothing else. Both bind keys answer on
+/// one rule, so `[serve].host` and `[mesh].listen_host` cannot disagree about
+/// the same string. A hostname is deliberately not a bind address: the
+/// listeners parse an IP literal, and a name is a DNS answer the config does
+/// not pin, which is what let an unparseable `listen_host` bind loopback
+/// while the startup log named the configured host. An unspecified address
+/// (`0.0.0.0`, `::`) is a legitimate bind, so it is accepted.
+pub fn isBindHost(host: []const u8) bool {
+    if (host.len == 0) return false;
+    if (std.mem.findScalar(u8, host, ':') != null) {
+        _ = std.Io.net.IpAddress.parseIp6(host, 0) catch return false;
+        return true;
+    }
+    _ = std.Io.net.IpAddress.parseIp4(host, 0) catch return false;
+    return true;
+}
+
 /// Comma-separated `tools_dir` list for diagnostics. One entry is returned
 /// as-is so existing single-directory messages stay unchanged.
 pub fn toolsDirDisplay(arena: std.mem.Allocator, dirs: []const []const u8) ![]const u8 {
@@ -2581,6 +2599,15 @@ pub const Config = struct {
                 cfgLog(.error_, "[serve].host must be a bind address, or be omitted to take the loopback default", .{});
                 return error.ServeHostEmpty;
             }
+            // Same rule `[mesh].listen_host` answers on. `parseBindAddr`
+            // already refused an unparseable value at bind time, so this
+            // does not change which values bind: it moves the message from
+            // "serve failed to start" to one naming the key, and stops the
+            // two bind keys from disagreeing about the same string.
+            if (!isBindHost(host)) {
+                cfgLog(.error_, "[serve].host '{s}' is not a bindable IP address (an IPv4 literal, an IPv6 literal, or 0.0.0.0 / :: to bind all interfaces); a hostname or a host:port pair is not a bind address", .{host});
+                return error.ServeHostInvalid;
+            }
             s.host = host;
             f.host = true;
         }
@@ -3345,7 +3372,19 @@ pub const Config = struct {
             "prompt_timeout_seconds", "max_frame_bytes", "max_file_bytes",
             "file_chunk_bytes",
         }, "mesh");
-        if (obj.get("listen_host")) |s| m.listen_host = try jsonStr(s, "mesh.listen_host");
+        if (obj.get("listen_host")) |s| {
+            m.listen_host = try jsonStr(s, "mesh.listen_host");
+            // The same rule `[serve].host` answers on, and for the same
+            // reason: this string is parsed as an IP literal at bind time,
+            // and a value that will not parse is the one input the
+            // listener used to answer by binding loopback and logging the
+            // *configured* host. Refused here so the failure names the key
+            // while it is being read.
+            if (!isBindHost(m.listen_host)) {
+                cfgLog(.error_, "[mesh].listen_host '{s}' is not a bindable IP address (an IPv4 literal, an IPv6 literal, or 0.0.0.0 / :: to bind all interfaces); a hostname or a host:port pair is not a bind address", .{m.listen_host});
+                return error.MeshListenHostInvalid;
+            }
+        }
         if (obj.get("listen_port")) |n| m.listen_port = try jsonUnsigned(u16, n, "mesh.listen_port");
         if (obj.get("ping_interval_seconds")) |n| m.ping_interval_seconds = try jsonUnsigned(u32, n, "mesh.ping_interval_seconds");
         if (obj.get("admission")) |s| {
@@ -5782,6 +5821,53 @@ test "mesh.admission prompt is a valid load" {
     try std.testing.expectEqualStrings("prompt", cfg.mesh.admission);
 }
 
+test "a mesh.listen_host that cannot be bound is rejected at load" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+    // Every shape a bind address legitimately takes loads. A hostname is
+    // not one: the listener parses an IP literal, and a name whose
+    // resolution the config does not pin is a bind it cannot describe, so
+    // it is refused beside the misspelling rather than silently answered
+    // with loopback at start.
+    for ([_][]const u8{ "0.0.0.0", "127.0.0.1", "::", "::1", "fe80::1" }) |host| {
+        env.tmp.dir.writeFile(io, .{
+            .sub_path = "config.toml",
+            .data = try std.fmt.allocPrint(arena,
+                \\default_provider = "a"
+                \\providers = {{ a = {{ base_url = "https://a.test" }} }}
+                \\models = {{ "a/m" = {{ provider = "a" }} }}
+                \\[modules]
+                \\mesh = true
+                \\[mesh]
+                \\listen_host = "{s}"
+            , .{host}),
+        }) catch return error.SkipZigTest;
+        const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+        try std.testing.expectEqualStrings(host, cfg.mesh.listen_host);
+    }
+
+    // The misspelling, the empty value and a host:port pair are the three
+    // that used to load clean: `listen_host` took any string, and an
+    // unparseable one bound loopback while the startup log named the
+    // configured host.
+    for ([_][]const u8{ "", "0.0.0.999", "localhost", "10.0.0.4:7420" }) |host| {
+        env.tmp.dir.writeFile(io, .{
+            .sub_path = "config.toml",
+            .data = try std.fmt.allocPrint(arena,
+                \\default_provider = "a"
+                \\providers = {{ a = {{ base_url = "https://a.test" }} }}
+                \\models = {{ "a/m" = {{ provider = "a" }} }}
+                \\[modules]
+                \\mesh = true
+                \\[mesh]
+                \\listen_host = "{s}"
+            , .{host}),
+        }) catch return error.SkipZigTest;
+        try std.testing.expectError(error.MeshListenHostInvalid, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+    }
+}
 test "partial local agent keeps base tools_dir" {
     var env: test_env.Env = .init();
     defer env.deinit();

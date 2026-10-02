@@ -46,6 +46,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - Copy buttons select and focus the labelled fallback input when the Clipboard API is unavailable. The input is removed when focus leaves it.
 
+- `[mesh] listen_host`: an address that is not a bindable IP literal is
+  refused at config load, naming the key. The mesh listener parsed the value
+  as an IP and, when it did not parse, silently bound loopback while logging
+  the address the operator had configured, so the mesh peers were told to
+  reach never came up and the startup line named a host the process was not
+  listening on. `[serve] host` now answers on the same rule, so the two bind
+  keys cannot disagree about the same string.
+
+- `clanker doctor`: the network exposure section reads `CLANKER_HOST` as well
+  as `[serve].host`, matching the two layers `clanker serve` actually binds
+  from. Reading only the file reported a LAN-exposed proxy with no effective
+  `proxy_token_env` as `[OK]` under the environment variable every service
+  file sets. Each line now names the layer it read; a `--host` flag is still
+  invisible to doctor.
+
 ## [0.11.1] - 2026-09-29
 
 ### Security

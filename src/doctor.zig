@@ -587,26 +587,39 @@ const proxy = @import("serve/proxy.zig");
 /// A non-loopback bind is a warning, not a failure: it is a legitimate LAN or
 /// container setup. What it says is the part that is otherwise invisible,
 /// that `/api` has no credential of its own and is held back by the Host and
-/// Origin guards (`serve/http.zig`) alone. A flag or an env var overriding
-/// the file is not visible from here, so the line names the config value it
-/// read rather than claiming to know the running listener.
+/// Origin guards (`serve/http.zig`) alone.
+///
+/// The host read here is the one the process actually binds: `CLANKER_HOST`
+/// wins over `[serve].host` in `resolveListen`, and reading only the file
+/// reported a LAN-exposed, token-less proxy as `.ok` under the env var every
+/// service file sets. A `--host` flag is still invisible from here, so the
+/// line names the layer it read.
 fn checkNetworkExposure(
     arena: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
     cfg: *const config.Config,
     rep: *Report,
 ) !void {
-    const host = cfg.serve.host;
+    // Same two layers `resolveListen` resolves the bind from, weakest first:
+    // `[serve].host`, then `CLANKER_HOST`. The flag is not visible here.
+    const env_host: ?[]const u8 = blk: {
+        const v = environ_map.get("CLANKER_HOST") orelse break :blk null;
+        const trimmed = std.mem.trim(u8, v, " \t");
+        break :blk if (trimmed.len > 0) trimmed else null;
+    };
+    const from_env = env_host != null and cfg.serve.host == null;
+    const host = env_host orelse cfg.serve.host;
     const broad = host != null and !proxy.isLoopbackHost(host.?);
+    const source = if (from_env) " (CLANKER_HOST)" else if (host != null) " (config.toml)" else "";
     if (broad) {
         rep.line(.warn, "serve.host", try std.fmt.allocPrint(
             arena,
-            "{s} is reachable off this machine; /api takes no token, so a Host/Origin guard is all that holds it (--host and CLANKER_HOST override this value)",
-            .{host.?},
+            "{s}{s} is reachable off this machine; /api takes no token, so a Host/Origin guard is all that holds it (a --host flag overrides this value)",
+            .{ host.?, source },
         ));
     } else {
         rep.line(.ok, "serve.host", if (host) |h|
-            try std.fmt.allocPrint(arena, "{s} (loopback)", .{h})
+            try std.fmt.allocPrint(arena, "{s}{s} (loopback)", .{ h, source })
         else
             "unset (loopback default)");
     }
@@ -616,7 +629,7 @@ fn checkNetworkExposure(
             if (unprotected) .warn else .ok,
             "serve.proxy",
             if (unprotected)
-                try std.fmt.allocPrint(arena, "mounted on {s} without an effective proxy_token_env; anyone who can reach the port spends the configured keys", .{host.?})
+                try std.fmt.allocPrint(arena, "mounted on {s}{s} without an effective proxy_token_env; anyone who can reach the port spends the configured keys", .{ host.?, source })
             else if (proxy.tokenInEffect(&cfg.serve, environ_map))
                 "mounted; proxy_token_env is set"
             else
@@ -1072,6 +1085,40 @@ pub fn cmdSetup(init: std.process.Init) !void {
     }
     out.interface.flush() catch {};
     if (rep.failures > 0) std.process.exit(1);
+}
+
+test "doctor reads the effective bind host, so CLANKER_HOST can widen the exposure it reports" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{ .default_provider = "p" };
+    try cfg.providers.put(gpa, "p", .{ .name = "p", .base_url = "https://p.test" });
+    defer cfg.providers.deinit(gpa);
+    // The proxy is mounted and no token is configured, so the only thing
+    // between a LAN client and the provider keys is the bind host.
+    cfg.serve.proxy = true;
+    cfg.serve.proxy_token_env = null;
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    // The layer that wins over the file: `resolveListen` binds this, so this
+    // is the host the server is reachable on. The file leaves `host` unset,
+    // which read as loopback and made every line below `.ok`.
+    try env.put("CLANKER_HOST", "0.0.0.0");
+
+    var buf: [2048]u8 = undefined;
+    var wout: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &wout };
+    try checkNetworkExposure(arena, &env, &cfg, &rep);
+    const text = buf[0..wout.end];
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "0.0.0.0") != null);
+    // Both lines, not one: the bind is off-loopback and the proxy mounted on
+    // it has no token. Each is a separate fact the operator has to act on.
+    try std.testing.expectEqual(@as(usize, 2), rep.warnings);
+    try std.testing.expect(std.mem.indexOf(u8, text, "spends the configured keys") != null);
 }
 
 test "a report counts what it prints" {
