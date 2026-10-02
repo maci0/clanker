@@ -9,6 +9,11 @@
 //! guest, never both ways in one compilation.
 
 const std = @import("std");
+// Relative, like `glob.zig` reaching `fuzz_corpus.zig`: this module is
+// compiled twice (root-relatively by `src/main.zig`, and by name from the
+// `alarm` guest), and a relative sibling path resolves in both compilations,
+// where a named `utf8` import would resolve in only the guest's.
+const utf8 = @import("utf8.zig");
 
 /// Declaration order is the on-disk key order; keep it stable so store
 /// rewrites stay diff-friendly. Only `every` has a default: it was added
@@ -83,13 +88,42 @@ test "parseList ignores unknown fields for forward compatibility" {
 /// set, and both copies then surfaced in the system prompt of every later
 /// run until each was handled. Same message, same fire time, same interval
 /// is the same reminder; anything else is a different one.
+///
+/// The message is compared under canonical equivalence, not by bytes, because
+/// the two sides of this dedup spell the same words two ways: a model repeats
+/// "re-read the caf\u{e9} report" from its own context where it was composed,
+/// while the row already on disk came off a keyboard, a file, or another model
+/// and can be decomposed. Byte equality calls those one reminder and two, and
+/// the store then carries the duplicate into every later system prompt --
+/// exactly the failure this function exists to prevent, reached by a spelling
+/// rather than by a retry. See `utf8.canonicalEqual`.
 pub fn findSame(alarms: []const Alarm, message: []const u8, ts: i64, every: i64) ?usize {
     for (alarms, 0..) |a, i| {
         if (a.ts != ts or a.every != every) continue;
-        if (!std.mem.eql(u8, a.message, message)) continue;
+        if (!utf8.canonicalEqual(a.message, message)) continue;
         return i;
     }
     return null;
+}
+
+test "a repeated set in either spelling of the word finds the reminder" {
+    // "café" composed, and "cafe" + combining acute as it comes back off
+    // APFS or out of a model that copies the composed text it was shown.
+    const composed = "check the caf\xc3\xa9 report";
+    const decomposed = "check the cafe\xcc\x81 report";
+    try std.testing.expectEqual(@as(?usize, 0), findSame(&[_]Alarm{.{ .id = "a-1-0", .ts = 100, .message = composed, .set_ts = 90 }}, decomposed, 100, 0));
+    try std.testing.expectEqual(@as(?usize, 0), findSame(&[_]Alarm{.{ .id = "a-1-0", .ts = 100, .message = decomposed, .set_ts = 90 }}, composed, 100, 0));
+    // Still a different reminder: an accent the other message does not carry,
+    // and a composed mark vs a different mark on the same base, are the two
+    // questions `fold` would answer yes and identity must not.
+    try std.testing.expectEqual(@as(?usize, null), findSame(&[_]Alarm{.{ .id = "a-1-0", .ts = 100, .message = composed, .set_ts = 90 }}, "check the cafe report", 100, 0));
+    try std.testing.expectEqual(@as(?usize, null), findSame(&[_]Alarm{.{ .id = "a-1-0", .ts = 100, .message = "caf\xc3\xa9", .set_ts = 90 }}, "cafe\xcc\x88", 100, 0));
+}
+
+test "an ASCII store is unaffected: same bytes, same answer, nothing allocated" {
+    const alarms = [_]Alarm{.{ .id = "a-1-0", .ts = 100, .message = "check CI", .set_ts = 90 }};
+    try std.testing.expectEqual(@as(?usize, 0), findSame(&alarms, "check CI", 100, 0));
+    try std.testing.expectEqual(@as(?usize, null), findSame(&alarms, "check CD", 100, 0));
 }
 
 /// The next fire time for a recurring alarm handled at `now`, or null when
