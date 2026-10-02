@@ -676,8 +676,8 @@ test "the replica messages table matches the owner schema" {
     defer rd.finalize();
     try std.testing.expectEqual(sqlite.Step.done, try rd.step());
 
-    // A pulled row (role + content only) reads back with column defaults
-    // intact, so the projection needs no knowledge of newer columns.
+    // A row the projection does not name reads back with the column default
+    // intact, so a replica written before a column landed still loads.
     var ins = try store.conn.prepare("INSERT INTO messages (role, content) VALUES ('user', 'pulled');");
     defer ins.finalize();
     _ = try ins.step();
@@ -685,6 +685,43 @@ test "the replica messages table matches the owner schema" {
     defer chk.finalize();
     try std.testing.expectEqual(sqlite.Step.row, try chk.step());
     try std.testing.expectEqual(@as(i64, 0), chk.columnInt(0));
+}
+
+test "a pulled transcript keeps the steered flag the owner emitted" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/pulled.db", .{&env.tmp.sub_path});
+    var store = try session_events.Store.open(arena, try arena.dupeZ(u8, path));
+    defer store.close();
+    try ensureMessages(&store);
+
+    // Exactly what `GET /api/sessions/<id>` emits: the owner names a steered
+    // turn so a reader renders it as an interjection rather than sniffing the
+    // harness's framing sentence out of the text to know. A replica that
+    // drops the flag re-reads that turn as an ordinary typed one, and the
+    // divergence is invisible on both sides.
+    const parsed: TranscriptResponse = .{ .messages = &.{
+        .{ .role = "user", .content = "summarize the report" },
+        .{ .role = "user", .content = "actually cite the source", .steered = true },
+    } };
+    try insertTranscript(&store, parsed);
+
+    // Read back the way the owner read path does.
+    var rd = try store.conn.prepare(
+        \\SELECT role, content, steered FROM messages ORDER BY seq;
+    );
+    defer rd.finalize();
+    try std.testing.expectEqual(sqlite.Step.row, try rd.step());
+    try std.testing.expectEqualStrings("user", rd.columnText(0).?);
+    try std.testing.expectEqualStrings("summarize the report", rd.columnText(1).?);
+    try std.testing.expectEqual(@as(i64, 0), rd.columnInt(2));
+
+    try std.testing.expectEqual(sqlite.Step.row, try rd.step());
+    try std.testing.expectEqualStrings("actually cite the source", rd.columnText(1).?);
+    try std.testing.expectEqual(@as(i64, 1), rd.columnInt(2));
+    try std.testing.expectEqual(sqlite.Step.done, try rd.step());
 }
 
 test "a replica written by an older build gains the columns added since" {
@@ -753,6 +790,13 @@ fn ensureMessages(store: *session_events.Store) !void {
 const TranscriptRow = struct {
     role: []const u8 = "",
     content: []const u8 = "",
+    /// The owner's own name for a turn the operator steered into a running
+    /// one. `sessionJSON` emits it precisely so a reader renders such a turn
+    /// as an interjection instead of sniffing the harness's framing sentence
+    /// out of the text, so a replica that drops it re-reads a steer as a turn
+    /// the operator typed. Older owners omit it; absent means not steered,
+    /// which is what the column default already says.
+    steered: bool = false,
 };
 
 const TranscriptResponse = struct {
@@ -842,46 +886,52 @@ fn pullTranscript(
         backfillFailed("store transcript updated", owner, owner_url, id, err);
         return;
     };
-    store.conn.exec("DELETE FROM messages;") catch |err| {
-        backfillFailed("clear replica messages", owner, owner_url, id, err);
-        return;
-    };
-    var ins = store.conn.prepare("INSERT INTO messages (role, content) VALUES (?1, ?2);") catch |err| {
-        backfillFailed("prepare message insert", owner, owner_url, id, err);
-        return;
-    };
-    defer ins.finalize();
-    var stored_bytes: usize = 0;
-    for (parsed.messages) |m| {
-        ins.reset();
-        ins.bindText(1, m.role) catch |err| {
-            backfillFailed("bind message role", owner, owner_url, id, err);
-            return;
-        };
-        ins.bindText(2, m.content) catch |err| {
-            backfillFailed("bind message content", owner, owner_url, id, err);
-            return;
-        };
-        _ = ins.step() catch |err| {
-            backfillFailed("insert message", owner, owner_url, id, err);
-            return;
-        };
-        stored_bytes += m.content.len;
-    }
-    // Keep the listing's cached counts beside the rows they describe, the
-    // same invariant saveSession maintains; a stale figure here would make
-    // every later listing scan this transcript instead of trusting meta.
-    var nbuf: [24]u8 = undefined;
-    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch "0") catch |err| {
-        backfillFailed("store message count", owner, owner_url, id, err);
-        return;
-    };
-    var bbuf: [24]u8 = undefined;
-    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch "0") catch |err| {
-        backfillFailed("store message bytes", owner, owner_url, id, err);
+    insertTranscript(&store, parsed) catch |err| {
+        // Every stage names itself: the counter and the log line are the only
+        // trace a replica that stopped converging leaves, so "write transcript
+        // rows" alone must say which step gave up.
+        switch (err) {
+            error.ExecFailed => backfillFailed("clear replica messages", owner, owner_url, id, err),
+            error.PrepareFailed => backfillFailed("prepare message insert", owner, owner_url, id, err),
+            error.BindFailed => backfillFailed("bind message field", owner, owner_url, id, err),
+            error.StepFailed => backfillFailed("insert message", owner, owner_url, id, err),
+            error.NotOpen, error.OpenFailed, error.ColumnFailed => backfillFailed("write replica transcript rows", owner, owner_url, id, err),
+        }
         return;
     };
     tx.commit() catch |err| {
         backfillFailed("commit transcript", owner, owner_url, id, err);
     };
+}
+
+/// Replaces the replica's `messages` rows with the projection the owner
+/// served, and refreshes the listing's cached counts beside them (the same
+/// invariant `saveSession` maintains; a stale figure makes every later
+/// listing scan this transcript instead of trusting meta). The caller owns
+/// the transaction, so a failure here leaves the previous snapshot intact.
+///
+/// Split out of `pullTranscript` so the row mapping is testable without an
+/// HTTP owner: which columns survive a pull is the part that can drift, and
+/// the owner read path selects all of them by name.
+fn insertTranscript(store: *session_events.Store, parsed: TranscriptResponse) !void {
+    // A failure inside the transaction is reported by the caller's deferred
+    // rollback, which restores the previous snapshot whole.
+    store.conn.exec("DELETE FROM messages;") catch |err| return err;
+    var ins = store.conn.prepare(
+        \\INSERT INTO messages (role, content, steered) VALUES (?1, ?2, ?3);
+    ) catch |err| return err;
+    defer ins.finalize();
+    var stored_bytes: usize = 0;
+    for (parsed.messages) |m| {
+        ins.reset();
+        try ins.bindText(1, m.role);
+        try ins.bindText(2, m.content);
+        try ins.bindInt(3, @intFromBool(m.steered));
+        _ = try ins.step();
+        stored_bytes += m.content.len;
+    }
+    var nbuf: [24]u8 = undefined;
+    try store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch "0");
+    var bbuf: [24]u8 = undefined;
+    try store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch "0");
 }
