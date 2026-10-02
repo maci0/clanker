@@ -369,13 +369,24 @@ const kill_term_grace_ns: i96 = 2 * std.time.ns_per_s;
 /// Also the release for the `ck_exec`/hook/python-cell children the sandbox
 /// host spawns, whose defers call this rather than their own copy.
 ///
-/// The pid is only signalled while the waiter has not stored `done`: the flag
-/// is set after the reap, so `done` unset still means the pid names this
-/// child (the same guard `waitChildBelow` uses). `cancel` joins the waiter, so
-/// nothing is left touching `child` (caller stack) once this returns.
+/// The pid is captured once, before the waiter exists, and every signal goes
+/// to that copy. Re-reading `child.id` to escalate is a use-after-free read
+/// against the waiter: `child.wait` runs `childCleanupPosix`, which sets
+/// `child.id = null` and closes the child's fds, and only *after* that does
+/// `childWaitWorker`'s `defer done.set(io)` publish. So "the flag is set
+/// after the reap" means the window between the reap and the flag is exactly
+/// where `child.id` no longer names this child, and `child.id.?` unwrapped
+/// null there. `waitChildWithin` takes its pid as a parameter for the same
+/// reason, and `dap.runBounded` reads the registry's copy instead of the
+/// child. A stale captured pid is not a hazard: `cancel` joins the waiter
+/// before this returns, so the child is already reaped and its pid freed for
+/// reuse only after every signal here has been sent.
 pub fn killChildBounded(io: std.Io, child: *std.process.Child) void {
+    // The child is ours for the whole call: every path either reaps it (the
+    // waiter) or returns only after `cancel` joined the waiter.
+    const pid = child.id orelse return;
     // Residual posix: signal delivery has no std.Io equivalent.
-    std.posix.kill(child.id orelse return, std.posix.SIG.TERM) catch {};
+    std.posix.kill(pid, std.posix.SIG.TERM) catch {};
     var done: std.Io.Event = .unset;
     var fut = io.concurrent(childWaitWorker, .{ io, child, &done }) catch {
         // No spare unit of concurrency for the wait; fall back to the
@@ -393,12 +404,12 @@ pub fn killChildBounded(io: std.Io, child: *std.process.Child) void {
             error.Timeout => {
                 if (done.isSet()) break;
                 if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                std.posix.kill(pid, std.posix.SIG.KILL) catch {};
                 fut.cancel(io);
                 return;
             },
             error.Canceled => {
-                std.posix.kill(child.id.?, std.posix.SIG.KILL) catch {};
+                std.posix.kill(pid, std.posix.SIG.KILL) catch {};
                 fut.cancel(io);
                 return;
             },
@@ -662,6 +673,51 @@ test "register refuses an empty kind" {
     var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", 42));
+}
+
+test "killChildBounded escalates to SIGKILL without touching a reaped child" {
+    // The bug this pins: the waiter thread's `child.wait` runs
+    // `childCleanupPosix`, which sets `child.id = null` and closes the
+    // child's fds, and only *then* does `childWaitWorker`'s `defer
+    // done.set(io)` publish. So the window where `done` is unset and
+    // `child.id` no longer names this child is real, and the escalation's
+    // unwrap of it hit that window. The old doc comment asserted the
+    // opposite ("the flag is set after the reap, so `done` unset still
+    // means the pid names this child"), which is exactly what made the
+    // forced unwrap look safe while it was the thing that was wrong.
+    //
+    // Every trial ignores SIGTERM, so the grace window always lapses and
+    // the escalation branch really runs: a child that dies on its own
+    // returns before it and never reaches the code being pinned. The
+    // second shape exits near the grace boundary, where the reap and the
+    // deadline read race.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const shapes = [_][]const u8{
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)",
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(2.02)",
+    };
+    for (shapes) |script| {
+        var trial: usize = 0;
+        while (trial < 3) : (trial += 1) {
+            var child = std.process.spawn(io, .{
+                .argv = &.{ "python3", "-c", script },
+                .stdin = .pipe,
+                .stdout = .pipe,
+                .stderr = .ignore,
+            }) catch |err| switch (err) {
+                error.FileNotFound => return error.SkipZigTest,
+                else => return err,
+            };
+            // Reaping is the whole job here: a leaked child outlives the
+            // test binary, and a null id is the shipped signal that the
+            // waiter got to it.
+            killChildBounded(io, &child);
+            try std.testing.expect(child.id == null);
+        }
+    }
 }
 
 test "register and adopt free the identity strings when an allocation fails" {
