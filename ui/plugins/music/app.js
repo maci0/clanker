@@ -234,6 +234,9 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
       load(Math.min(i, tracks.length - 1), !audio.paused);
     }
     draw();
+    // Playing a track confirms itself (the row marks itself current); a
+    // removal does not, and the row carrying the button is the row that went.
+    api.toast("Removed \"" + gone.title + "\".");
   }
 
   function setCollapsed(on) {
@@ -477,7 +480,15 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
       // empty <span> for anything it does not know, so "×" drew a blank
       // button. The dock's own controls were migrated to the grid; this row
       // was missed.
-      var drop = btn("close", "Remove " + t.title, function () { removeAt(i); });
+      // Confirm, as every other persistent removal here does (sessions,
+      // workspaces, cards, collections, prompts): the playlist is persisted,
+      // the close button sits one tap from the track playing, and the file's
+      // object URL is revoked with nothing to restore it from.
+      var drop = btn("close", "Remove " + t.title, function () {
+        api.confirm("Remove \"" + t.title + "\" from the playlist?", {
+          title: "Remove track", confirmLabel: "Remove"
+        }).then(function (yes) { if (yes) { removeAt(i); } });
+      });
       row.appendChild(pick);
       row.appendChild(drop);
       list.appendChild(row);

@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Command palette — entries + rendering + keyboard.
-import { fuzzyMatch as utilFuzzyMatch, view_digit_max } from "./utils.js";
+import { fuzzyMatch as utilFuzzyMatch, plural as utilPlural, view_digit_max } from "./utils.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, trapOverlayTab as overlayTrapTab } from "./overlay.js";
 
 var _VIEWS = null;
@@ -75,17 +75,33 @@ export function paletteEntries() {
   return out;
 }
 
+/* Rows one screen of the palette holds. Entries past the cut are never built,
+   so without a count the operator reads unshown answers as absent. */
+var PALETTE_MAX = 40;
+
+// A line in the list that is a statement, not a pickable row: it must not take
+// `PALETTE_ITEM_CLASS`, which is the shape of an option the arrow keys land on.
+function paletteNote(text) {
+  var li = document.createElement("li");
+  li.className = "meta px-2 py-1";
+  li.textContent = text;
+  return li;
+}
+
 function renderPalette() {
   var rawQ = _el.paletteInput.value.trim();
   var q = rawQ.toLowerCase();
   var empty = !q;
   var all = paletteEntries();
+  var matched = 0;
   paletteItems = [];
-  _el.paletteList.textContent = "";
-  for (var i = 0; i < all.length && paletteItems.length < 40; i++) {
+  for (var i = 0; i < all.length; i++) {
     if (!empty && !utilFuzzyMatch(q, all[i].kind + " " + all[i].label)) continue;
-    paletteItems.push(all[i]);
+    matched += 1;
+    if (paletteItems.length < PALETTE_MAX) paletteItems.push(all[i]);
   }
+  var hidden = matched - paletteItems.length;
+  _el.paletteList.textContent = "";
   if (paletteIndex >= paletteItems.length) paletteIndex = 0;
   paletteItems.forEach(function (entry, i) {
     var li = document.createElement("li");
@@ -106,10 +122,15 @@ function renderPalette() {
     _el.paletteList.appendChild(li);
   });
   if (!paletteItems.length) {
-    var empty2 = document.createElement("li");
-    empty2.className = PALETTE_ITEM_CLASS;
-    empty2.textContent = "Nothing matches.";
-    _el.paletteList.appendChild(empty2);
+    _el.paletteList.appendChild(
+      paletteNote("Nothing matches “" + rawQ + "”. Type more to widen the search.")
+    );
+  }
+  if (hidden > 0) {
+    _el.paletteList.appendChild(
+      paletteNote(utilPlural(hidden, { one: "more match", other: "more matches" }) +
+        ". Type more to narrow the list.")
+    );
   }
   _el.paletteInput.setAttribute("aria-activedescendant", paletteItems.length ? "palette-item-" + paletteIndex : "");
 }

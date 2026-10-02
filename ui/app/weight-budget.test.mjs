@@ -280,7 +280,17 @@ test("eager JS stays inside its weight budget", function () {
   // place in the app that includes one (~0.2K gz). No new request, no new
   // module: the call reuses the already-lazy knowledge chunk, and
   // `webui_strip.zig` drops these comments before the body is written.
-  assert.ok(eagerJsGz <= 164, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 164K`);
+  // Raised to 165 for the command palette's result count. It stopped at forty
+  // rows with nothing saying so, so a query matching more answers than fit
+  // read as a complete one and the operator concluded the thing they were
+  // looking for was not there — and because the entries are pushed view, chat,
+  // run, card, goal, tool in that order, the cut is exactly what removed the
+  // goals and tools. The list now counts what it left out and names the way out
+  // ("N more matches. Type more to narrow the list."), and its no-match line is
+  // a plain note rather than a row wearing the pickable option's classes
+  // (~0.1K gz). core/palette.js is already in the eager closure — Ctrl+K is
+  // bound at startup — so this costs a chat-only visit the bytes of a sentence.
+  assert.ok(eagerJsGz <= 165, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 165K`);
 });
 
 test("first paint stays inside its weight budget", function () {

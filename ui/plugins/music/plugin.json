@@ -6,7 +6,9 @@
   "capabilities": [
     "storage",
     "icon",
-    "showView"
+    "showView",
+    "confirm",
+    "toast"
   ],
   "eager": true
 }

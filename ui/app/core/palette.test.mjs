@@ -90,3 +90,94 @@ test("the palette indexes its refs before any lazy view module has loaded", asyn
   // element map, so an empty-but-live palette still lists them.
   assert.ok(entries.length > 0, "an unloaded palette still offers its static actions");
 });
+
+test("a palette query with more matches than fit says how many it left out", async function () {
+  const { installDom, serialize, dispatch } = await import("../lib/dom-stub.mjs");
+  const restore = installDom();
+  try {
+    const refs = shippedPaletteRefs();
+    Object.assign(refs, {
+      knownSessionsHolder: { list: [] },
+      allToolsHolder: { list: [] },
+      board: { cards: [] },
+      sessionLabel (s) { return s.title || s.id; },
+      runLabel (r) { return r.run_id; }
+    });
+    // Ten runs whose every node label carries the needle: paletteEntries makes
+    // one row per node, so this query matches far more than one screen holds.
+    refs.allRunsHolder = {
+      list: Array.from({ length: 10 }, (_, n) => ({
+        run_id: "run-" + n,
+        task: "task " + n,
+        nodes: Array.from({ length: 6 }, (_, k) => ({ label: "needle " + n + "-" + k }))
+      }))
+    };
+
+    // paletteList is a real element from the stub document: it is the one the
+    // module appends rendered rows to, and the one this asserts on.
+    const els = {
+      paletteOpen: stubNode(), paletteList: document.createElement("ul"), palette: stubNode(),
+      help: stubNode(), paletteInput: document.createElement("input")
+    };
+
+    const { bindPalette } = await import("./palette.js");
+    bindPalette({
+      VIEWS: ["chat"],
+      showView () {},
+      el: els,
+      refs,
+      setRailOpen () {},
+      switchSession () {},
+      openRun () {},
+      renderBoard () {},
+      showToolDetail () {},
+      setOpenCardId () {}
+    });
+
+    // The list re-renders on every keystroke; dispatch the handler the module
+    // installed rather than reimplementing the render.
+    els.paletteInput.value = "needle";
+    dispatch(els.paletteInput, "input", {});
+
+    const out = serialize(els.paletteList);
+    assert.match(out, /more match/, "a truncated result must say so, not stop silently");
+    assert.match(out, /Type more to narrow the list/, "and say what to do about it");
+  } finally {
+    restore();
+  }
+});
+
+test("the palette's no-match note is a note, not a pickable-looking row", async function () {
+  const { installDom, serialize, dispatch } = await import("../lib/dom-stub.mjs");
+  const restore = installDom();
+  try {
+    const refs = shippedPaletteRefs();
+    Object.assign(refs, {
+      knownSessionsHolder: { list: [] },
+      allToolsHolder: { list: [] },
+      board: { cards: [] },
+      sessionLabel (s) { return s.title || s.id; },
+      runLabel (r) { return r.run_id; }
+    });
+    const els = {
+      paletteOpen: stubNode(), paletteList: document.createElement("ul"), palette: stubNode(),
+      help: stubNode(), paletteInput: document.createElement("input")
+    };
+    const { bindPalette, PALETTE_ITEM_CLASS } = await import("./palette.js");
+    bindPalette({
+      VIEWS: ["chat"], showView () {}, el: els, refs,
+      setRailOpen () {}, switchSession () {}, openRun () {},
+      renderBoard () {}, showToolDetail () {}, setOpenCardId () {}
+    });
+    els.paletteInput.value = "zzzznotathing";
+    dispatch(els.paletteInput, "input", {});
+    const out = serialize(els.paletteList);
+    assert.match(out, /Nothing matches/);
+    assert.equal(
+      out.includes('class="' + PALETTE_ITEM_CLASS + '"'), false,
+      "the empty row must not wear the pickable option's classes"
+    );
+  } finally {
+    restore();
+  }
+});

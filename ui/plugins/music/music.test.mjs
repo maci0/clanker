@@ -82,6 +82,18 @@ test("empty playlist and bad URL say what to do next", () => {
   assert.match(js, /text-danger/);
 });
 
+// Every other persistent removal on this page asks first (sessions,
+// workspaces, cards, collections, prompts, peers). The playlist's Remove is one
+// tap from the row currently playing, persists the loss, and revokes the file
+// object URL, so there is nothing to bring it back with.
+test("removing a track asks first and says which track went", () => {
+  assert.match(js, /api\.confirm\("Remove \\"" \+ t\.title \+ "\\" from the playlist\?"/);
+  assert.match(js, /confirmLabel: "Remove"/);
+  // And the removal is announced: the row carrying the button is the row that
+  // disappears, so without a toast the press looks like nothing happened.
+  assert.match(js, /api\.toast\("Removed \\"" \+ gone\.title \+ "\\"\."\)/);
+});
+
 test("music URL field is 16px on a phone so iOS does not zoom", () => {
   // The plugin ships no sheet: its field is a plain `type="url"` input, which
   // the page-wide 40rem guard covers (harden.test.mjs pins that guard). What
