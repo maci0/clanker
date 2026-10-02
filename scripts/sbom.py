@@ -215,7 +215,28 @@ def workspace_devdeps(lockfile: str) -> dict:
     return merged
 
 
+def npm_licenses() -> dict:
+    """SPDX id for every package named in a lockfile, read from tools/deps.
+
+    bun.lock records no license field, so this table is what lets a component
+    carry one. It is committed rather than read from an installed
+    node_modules/ because the SBOM must be identical on a machine that ran
+    `bun install --frozen-lockfile` and one that did not, and because a lock
+    for a platform nobody builds on still lists packages nobody has installed.
+    """
+    path = "tools/deps/npm-licenses.json"
+    try:
+        parsed = json.loads(read(path))
+    except json.JSONDecodeError as e:
+        die(f"{path} is not valid JSON: {e}")
+    licenses = parsed.get("licenses")
+    if not isinstance(licenses, dict):
+        die(f"{path} has no licenses object")
+    return licenses
+
+
 def npm_components() -> list:
+    known = npm_licenses()
     out: dict[tuple[str, str], dict] = {}
     for lockfile in NPM_LOCKFILES:
         lock = _read_lock(lockfile)
@@ -238,9 +259,12 @@ def npm_components() -> list:
                 "name": name,
                 "version": version,
                 "integrity": integrity,
-                # bun.lock records no license field; both manifests declare
-                # only devDependencies, so everything resolved is dev-only.
-                "license": None,
+                # bun.lock records no license field; tools/deps/npm-licenses.json
+                # carries the id each package's own package.json declares, and
+                # both manifests declare only devDependencies, so everything
+                # resolved is dev-only. A package absent from that table is a
+                # test failure, not a component that ships unlabelled.
+                "license": known.get(name),
                 "dev": True,
                 "lockfile": lockfile,
             })
@@ -414,6 +438,13 @@ def python_wasi() -> dict | None:
         "version": ver.group(1) if ver else tag.group(1),
         "release_tag": tag.group(1),
         "sha256": sha.group(1),
+        # CPython ships under the Python Software Foundation License, which is
+        # not on the SPDX id list (it has no canonical SPDX short id, so it is
+        # emitted as a license name). Every other component carried one and
+        # this was the only one left blank; an optional interpreter the kernel
+        # tool runs is still third-party code a consumer has to be able to
+        # trace a grant back to.
+        "license": "PSF-2.0",
         "url": "https://github.com/vmware-labs/webassembly-language-runtimes"
                "/releases/download/" + tag.group(1).replace("+", "%2B"),
     }
@@ -455,10 +486,22 @@ def generic_purl(name: str, version: str) -> str:
     return f"pkg:generic/{name}@{version}"
 
 
+# SPDX identifiers a component may carry. Anything outside this set is emitted
+# as a license *name* instead of an id, which is what CycloneDX asks for: an id
+# is machine-comparable, a name is not, so a license this table does not know
+# must not be dressed up as one. The ids themselves come from
+# tools/deps/npm-licenses.json and the in-tree license inventory, both of
+# which record what a package declares about itself; this set is the closed
+# list of short forms that are safe to call an id.
+SPDX_LICENSE_IDS = {
+    "0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "BSD-4-Clause",
+    "CC0-1.0", "ISC", "LGPL-2.1-or-later", "LGPL-3.0-or-later", "MIT",
+    "MPL-2.0", "Unlicense", "GPL-2.0-only", "GPL-3.0-only",
+}
+
+
 def license_obj(license_id: str) -> dict:
-    # Keep identifiers as names; SPDX id when it matches a known id.
-    spdx = {"MIT", "ISC", "Apache-2.0", "BSD-3-Clause"}
-    if license_id in spdx:
+    if license_id in SPDX_LICENSE_IDS:
         return {"license": {"id": license_id}}
     return {"license": {"name": license_id}}
 
@@ -688,6 +731,7 @@ def build() -> dict:
         comps.append(component({
             "name": pw["name"],
             "version": pw["version"],
+            "license": pw["license"],
             "purl": f"pkg:generic/python-wasi@{pw['version']}",
             "scope": "optional",
             "externalReferences": [{"type": "distribution", "url": pw["url"]}],

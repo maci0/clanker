@@ -5,6 +5,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Security
+
+- Every component in the release SBOM now carries its license. `bun.lock`
+  records no license field, so the document named 159 of its 169 components
+  with an empty `licenses`, among them MPL-2.0 `lightningcss` (reached through
+  `@tailwindcss/cli` -> `@tailwindcss/node`, so no manifest names it) and
+  Apache-2.0 `binaryen` (the pinned AssemblyScript nightly). Those are
+  dev-only, so nothing shipped under an undisclosed obligation, but a
+  downstream license scanner reads the CycloneDX `licenses` field and found
+  nothing to check. Each package's declared identifier is now recorded in
+  `tools/deps/npm-licenses.json` and stamped into the document, with
+  `MPL-2.0` and `0BSD` emitted as SPDX ids rather than free text so a policy
+  can match them. `scripts/test_sbom.py` fails when a lockfile gains a package
+  that table does not cover, and `THIRD_PARTY_LICENSES.md` names the
+  transitive grants no manifest mentions.
+
 ## [0.12.0] - 2026-10-02
 
 Compatibility-breaking minor. The changes that stop a config loading are under

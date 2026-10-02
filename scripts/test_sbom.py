@@ -174,6 +174,96 @@ class SbomTest(unittest.TestCase):
             properties["clanker:pin"], "build.zig.zon:minimum_zig_version"
         )
 
+    def test_every_locked_package_carries_a_license(self) -> None:
+        # bun.lock records no license field, so tools/deps/npm-licenses.json is
+        # the only in-tree record of what each resolved package is licensed
+        # under. Without it the document named 159 of its 169 components with
+        # an empty `licenses`, among them MPL-2.0 lightningcss (reached through
+        # @tailwindcss/node) and Apache-2.0 binaryen (the pinned AssemblyScript
+        # nightly) -- both dev-only, and both grants a downstream compliance
+        # check has to be able to read. A dependency bump that adds a package
+        # without adding it here must fail here rather than ship unlabelled.
+        known = sbom.npm_licenses()
+        for package in sbom.npm_components():
+            with self.subTest(package=f'{package["name"]}@{package["version"]}'):
+                self.assertIn(
+                    package["name"], known,
+                    f"locked in {package['lockfile']} with no license entry",
+                )
+                self.assertTrue(known[package["name"]].strip())
+
+    def test_license_table_has_no_entry_the_lockfiles_lost(self) -> None:
+        # The other direction: a stale row names a package nothing resolves any
+        # more, which reads as coverage and is not. Stale and missing are both
+        # ways the table drifts from the lockfiles.
+        known = sbom.npm_licenses()
+        locked = {p["name"] for p in sbom.npm_components()}
+        self.assertEqual(sorted(set(known) - locked), [])
+
+    def test_every_component_names_its_license(self) -> None:
+        # The document's own contract with a consumer: a CycloneDX reader reads
+        # `licenses`, not THIRD_PARTY_LICENSES.md and not a property. An empty
+        # list is how a whole subtree becomes invisible to a license scanner.
+        for c in self.components.values():
+            with self.subTest(component=c["bom-ref"]):
+                self.assertTrue(
+                    c.get("licenses"),
+                    f'{c["name"]}@{c["version"]} reached the document with no license',
+                )
+
+    def test_every_license_reaches_the_document_as_spdx_id(self) -> None:
+        # An id is machine-comparable and a name is not, so a grant that IS on
+        # the SPDX list has to arrive as an id. Asserting against license_obj
+        # rather than against the id table directly means dropping an id from
+        # that table changes the expectation rather than quietly skipping the
+        # packages it used to cover: MPL-2.0 and 0BSD shipped as bare names
+        # until the table knew them, and a test that only iterated the table
+        # would have reported green throughout.
+        for package in sbom.npm_components():
+            identifier = sbom.npm_licenses()[package["name"]]
+            with self.subTest(package=f'{package["name"]}@{identifier}'):
+                emitted = self.components[
+                    sbom.purl(package["name"], package["version"])
+                ]["licenses"]
+                self.assertEqual(emitted, [sbom.license_obj(identifier)])
+                self.assertEqual(
+                    emitted[0]["license"].get("id") is not None,
+                    identifier in sbom.SPDX_LICENSE_IDS,
+                )
+
+    def test_the_copyleft_grant_reaches_the_document_as_an_id(self) -> None:
+        # lightningcss is the one weak-copyleft package anywhere in either
+        # lockfile, and it arrives three levels down (@tailwindcss/cli ->
+        # @tailwindcss/node -> lightningcss), so nothing that reads a manifest
+        # names it. It was absent from THIRD_PARTY_LICENSES.md entirely and
+        # reached the SBOM with an empty `licenses`, which is exactly how a
+        # copyleft obligation goes unnoticed. Pin it by name: MPL-2.0 is on the
+        # SPDX list, so it has to reach a consumer as an id they can match
+        # against their policy, not as free text.
+        component = next(
+            c for c in self.components.values()
+            if c["name"] == "lightningcss"
+        )
+        self.assertEqual(component["licenses"], [{"license": {"id": "MPL-2.0"}}])
+
+    def test_the_identifiers_that_reach_the_document_are_known(self) -> None:
+        # Every distinct license the document actually emits must be one the
+        # code recognises, so a typo in the table cannot ship as an opaque
+        # free-text name that no scanner can compare.
+        emitted = {
+            entry["license"].get("id") or entry["license"].get("name")
+            for c in self.components.values()
+            for entry in c["licenses"]
+        }
+        for identifier in sorted(x for x in emitted if x):
+            with self.subTest(license=identifier):
+                if identifier in sbom.SPDX_LICENSE_IDS:
+                    self.assertEqual(sbom.license_obj(identifier),
+                                     {"license": {"id": identifier}})
+                else:
+                    self.assertEqual(sbom.license_obj(identifier),
+                                     {"license": {"name": identifier}})
+
     def test_every_manifest_dependency_is_named_in_the_license_inventory(self) -> None:
         # THIRD_PARTY_LICENSES.md claims "adding a dependency means adding a
         # row in the same change"; nothing enforced that, and the Tailwind
