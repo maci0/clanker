@@ -50,19 +50,22 @@ if [ "$missing" -ne 0 ]; then
 fi
 
 # Same pin the CI workflow and the pre-commit hook read (CONTRIBUTING.md
-# spells it 0.16.x; the hook refuses a `zig fmt` from any other major/minor
-# because it would rewrite files to that version's canonical form). Report a
-# mismatch rather than exiting: build.zig has its own configure-time check
-# and prints the authoritative message, and 0.16.1 against a 0.16.0 pin is a
-# warning worth reading, not a reason to refuse to bootstrap.
+# spells the exact release; the hook refuses a `zig fmt` from any other one
+# because it would rewrite files to that version's canonical form). This now
+# refuses rather than warns, because every compile step below reached the same
+# refusal at configure time and printed its message anyway: a warning that is
+# followed by a hard error two lines later is a warning nobody reads. Taking a
+# newer patch release is a deliberate bump of `minimum_zig_version`, which
+# CI installs from this same field.
 required_zig=$(sed -n 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon | head -n1)
 have_zig=$(zig version)
 case "$have_zig" in
-    "$required_zig"*) ;;
+    "$required_zig") ;;
     *)
-        echo "setup: warning: zig on PATH is $have_zig, build.zig.zon pins $required_zig" >&2
-        echo "setup: CI installs exactly $required_zig, so a different patch release" >&2
-        echo "setup: can compile the same tree differently" >&2
+        echo "setup: zig on PATH is $have_zig, build.zig.zon pins $required_zig" >&2
+        echo "setup: install that release (CI installs exactly it); a different one" >&2
+        echo "setup: compiles the same tree differently" >&2
+        exit 1
         ;;
 esac
 

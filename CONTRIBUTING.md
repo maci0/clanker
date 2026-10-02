@@ -30,8 +30,10 @@ repository hooks:
 git config core.hooksPath .githooks
 ```
 
-Requirements are Zig 0.16.x (pinned in `build.zig.zon`, enforced by
-`build.zig`), Git, Bash, and patch. Tests also need Bun for the JS suites
+Requirements are Zig 0.16.0, the release `build.zig.zon` pins. That pin is
+exact rather than a 0.16.x range: `zig build`, `scripts/setup.sh` and the
+pre-commit hook each refuse any other patch release. Git, Bash, and patch are
+required too. Tests also need Bun for the JS suites
 and Python 3 for the process fixtures. Full verification additionally needs
 shellcheck and ruff; `scripts/verify.sh` installs the declared JS
 dependencies locally and refuses to exit 0 while any of those five is

@@ -156,11 +156,26 @@ pub fn build(b: *std.Build) void {
     // Zig 0.16 only: `minimum_zig_version` in build.zig.zon is a floor, so a
     // 0.15 or 0.17 toolchain would otherwise reach the compile and fail with a
     // wall of std-API errors. Name the requirement before the build starts.
+    //
+    // The patch release is part of the pin, not a floor under it. Matching
+    // major.minor only accepted every 0.16.x, so a build config resolved with
+    // 0.16.1 compiled against a compiler `minimum_zig_version` does not name,
+    // and one stdlib patch is enough to change codegen on an unchanged tree.
+    // Every other reader of that field refuses a mismatch
+    // (.githooks/pre-commit exits nonzero, scripts/setup.sh exits nonzero, CI
+    // installs exactly this release), so the configure step was the one place a
+    // wrong patch level reached the compiler silently. Taking a newer patch
+    // release is a deliberate bump of `minimum_zig_version`, which those readers
+    // pick up from the same field.
     const zig_version = @import("builtin").zig_version;
-    if (zig_version.major != 0 or zig_version.minor != 16) {
+    const zig_pin = std.SemanticVersion.parse(build_zon.minimum_zig_version) catch
+        @panic("build.zig.zon minimum_zig_version must be valid SemVer");
+    if (zig_version.major != zig_pin.major or zig_version.minor != zig_pin.minor or
+        zig_version.patch != zig_pin.patch)
+    {
         std.debug.print(
-            "clanker requires Zig 0.16.x (found {d}.{d}.{d}); build.zig.zon's minimum_zig_version pins the CI release\n",
-            .{ zig_version.major, zig_version.minor, zig_version.patch },
+            "clanker requires zig {s} exactly (found {d}.{d}.{d}); build.zig.zon's minimum_zig_version names the release CI installs\n",
+            .{ build_zon.minimum_zig_version, zig_version.major, zig_version.minor, zig_version.patch },
         );
         std.process.exit(1);
     }

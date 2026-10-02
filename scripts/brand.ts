@@ -113,12 +113,21 @@ const BRAND = "docs/brand",
 
     return { d: parts.join(""), width: x - GAP };
   },
+  /* Codepoint order rather than `localeCompare`: the two disagree (locale
+     collation puts `a_b` before `a-b` and orders case-insensitive-equal pairs
+     differently from UTF-16 code units), so the same icon set could be listed in
+     a different order by different toolchains, and everything written under
+     docs/brand/ is committed and compared by `brand.ts --check` in CI and in the
+     pre-commit hook. Every current icon name is lowercase ASCII, where the two
+     happen to agree, so this pins an order correct by construction rather than by
+     accident of the present names. */
+  byCodepoint = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0),
   iconFile = (paths: ReadonlyArray<string>): string =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter">\n${paths.map((d) => `  <path d="${d}"/>`).join("\n")}\n</svg>\n`,
   /* A standalone page listing every icon at two sizes with its name and file, for browsing outside the repo viewer. */
   iconIndex = (day: Palette): string => {
     const cells = Object.entries(ICON_PATHS)
-      .toSorted(([a], [b]) => a.localeCompare(b))
+      .toSorted(([a], [b]) => byCodepoint(a, b))
       .map(
         ([name, paths]) =>
           `<li><a href="icons/${name}.svg"><svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">${paths.map((d) => `<path d="${d}"/>`).join("")}</svg><code>${name}</code></a></li>`,
@@ -156,7 +165,7 @@ ${cells.join("\n")}
   },
   /* Every icon drawn at 32px on a labelled grid. */
   iconSheet = (light: Palette): string => {
-    const all = Object.entries(ICON_PATHS).toSorted(([a], [b]) => a.localeCompare(b)),
+    const all = Object.entries(ICON_PATHS).toSorted(([a], [b]) => byCodepoint(a, b)),
       cells = all.map(([name, paths], i) => {
         const x = (i % ICON_COLUMNS) * ICON_CELL.width,
           y = Math.floor(i / ICON_COLUMNS) * ICON_CELL.height;

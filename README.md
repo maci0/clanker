@@ -65,10 +65,13 @@ To run a published release, download the binary for your platform from the
 ./clanker-v0.12.0-x86_64-linux-musl --version   # clanker 0.12.0
 ```
 
-To build from source, the requirements are **Zig 0.16.x**, **Git**, **Bash**,
+To build from source, the requirements are **Zig 0.16.0**, **Git**, **Bash**,
 and **patch**; the test suite also requires **Bun** and **Python 3**. The Zig
 release is pinned in
-`build.zig.zon`'s `minimum_zig_version` (CI installs exactly that release from it). `zig build` and `zig build tools` need no bun:
+`build.zig.zon`'s `minimum_zig_version`, and the pin is exact: `zig build`
+refuses any other patch release, not just another major/minor, because one
+stdlib patch is enough to compile the same tree differently. CI installs that
+release from the same field. `zig build` and `zig build tools` need no bun:
 `tools/ts/dist/` is committed, so a checkout without a JS toolchain still
 builds and runs every tool. The test step drives its JS suites with
 `bun test`.
