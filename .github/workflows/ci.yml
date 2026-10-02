@@ -15,8 +15,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # The release path must never be cancelled mid-publish. A tag push and a
+  # manual re-dispatch of the same tag share this group, so `true` here would
+  # let the second run kill the first partway through `gh release upload`,
+  # leaving a Release carrying a subset of the matrix binaries — the exact
+  # half-published state the "Verify every target reached the Release" step
+  # checks for, discovered only after the cancel. Ordinary pushes and PRs keep
+  # the fast cancel. Queueing a tag run rather than cancelling it cannot wedge
+  # the ref for good: every job here carries a `timeout-minutes`, so the queued
+  # run starts once the running one is killed by its own budget.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 # Same pinned environment for every job. The fixed epoch keeps timestamps in
 # build artifacts and the release SBOM (generated only in release-publish,
