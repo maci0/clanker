@@ -5,13 +5,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-03
+
 ### Security
 
 - Every component in the release SBOM now carries its license. `bun.lock`
   records no license field, so the document named 159 of its 169 components
   with an empty `licenses`, among them MPL-2.0 `lightningcss` (reached through
   `@tailwindcss/cli` -> `@tailwindcss/node`, so no manifest names it) and
-  Apache-2.0 `binaryen` (the pinned AssemblyScript nightly). Those are
+  `Apache-2.0` `binaryen` (the pinned AssemblyScript nightly). Those are
   dev-only, so nothing shipped under an undisclosed obligation, but a
   downstream license scanner reads the CycloneDX `licenses` field and found
   nothing to check. Each package's declared identifier is now recorded in
@@ -20,6 +22,36 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   can match them. `scripts/test_sbom.py` fails when a lockfile gains a package
   that table does not cover, and `THIRD_PARTY_LICENSES.md` names the
   transitive grants no manifest mentions.
+- HTTP request framing: both the web UI server and proxy server refuse
+  ambiguous request framing with HTTP 400. Requests carrying duplicate or
+  conflicting `Content-Length` headers, comma-separated length lists, or
+  unsupported `Transfer-Encoding` codings are rejected rather than parsed under
+  first-wins or treated as empty bodies, closing CL.TE and TE.CL request
+  smuggling vectors (RFC 9112 §6.3).
+- Chatroom inbox prompt fences: neutralized harness fence markers in incoming
+  messages, preventing message payloads from breaking out of prompt framing.
+
+### Fixed
+
+- State backups: `backup-state.sh` backs up operator-built Tier-2 CLI plugin
+  executables in `state/plugins/`, validates `rsync` presence before staging
+  directories, and replaces Linux-specific paths with POSIX-compatible
+  locations for macOS support.
+- Mesh replication: preserve the steered session flag during mesh replica
+  writes.
+- Subprocess lifecycle: signal the captured child PID directly when escalating
+  process termination to avoid leaving orphaned children.
+- Command palette: accurately report truncated search result counts, and prompt
+  for confirmation before playlist removals in the music plugin.
+
+### Changed
+
+- Update CLI module: moved `update.zig` to `src/cli/update.zig` to conform
+  with the `src/` top-level directory allowlist.
+- Compiler and build stability: pinned the exact Zig compiler patch release in
+  `build.zig.zon` and sorted brand asset generation deterministically.
+- CI tag concurrency: disabled in-progress job cancellation on version tag
+  pushes so artifact publishing runs to completion without matrix interruption.
 
 ## [0.12.0] - 2026-10-02
 
@@ -4715,7 +4747,8 @@ Developer tooling only: no public surface changes.
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.12.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/maci0/clanker/releases/tag/v0.13.0
 [0.12.0]: https://github.com/maci0/clanker/releases/tag/v0.12.0
 [0.11.1]: https://github.com/maci0/clanker/releases/tag/v0.11.1
 [0.11.0]: https://github.com/maci0/clanker/releases/tag/v0.11.0
