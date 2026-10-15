@@ -5,6 +5,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-15
+
+### Added
+
+- `clanker schema` prints the CLI Spec 0.3 document for this command line. `clanker schema <command>` keeps that command and any name that starts with it. The document stays JSON when stdout is a pipe or `-o text` is set, and the command reads no config.
+- Data commands accept `-o` / `--output` with `auto`, `text`, or `json`. `auto` stays text, including on a pipe. `clanker doctor -o json` prints one document whose `items` are the checks (`section`, `status`, `label`, `detail`). `clanker version -o json` prints the name and the version.
+- A failure under `-o json` ends with one error envelope on stderr (`kind`, `message`, `hint`) and the same exit code as text mode: 2 when the invocation is rejected, 1 when the command ran and failed, when the REPL has no terminal, or when `commit` asks for confirmation and stdin is not a terminal.
+
+### Changed
+
+- The MCP server pages `tools/list` (`limit`, `cursor`, `truncated`, `nextCursor`), gives every tool an object input schema and the annotations the registry already records, and returns a tool error when a call fails or its text exceeds the response limit. Logs stay on stderr. Stdout stays JSON-RPC.
+
 ## [0.13.0] - 2026-10-03
 
 ### Security
@@ -4747,7 +4759,8 @@ Developer tooling only: no public surface changes.
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.13.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/maci0/clanker/releases/tag/v0.14.0
 [0.13.0]: https://github.com/maci0/clanker/releases/tag/v0.13.0
 [0.12.0]: https://github.com/maci0/clanker/releases/tag/v0.12.0
 [0.11.1]: https://github.com/maci0/clanker/releases/tag/v0.11.1

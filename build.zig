@@ -415,6 +415,19 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    // The suite cannot call `main` with a real argv. This runs the binary
+    // and checks schema, `-o json`, and a JSON-mode failure.
+    const clispec_check = b.addExecutable(.{
+        .name = "clispec_check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cli/clispec_check.zig"),
+            .target = test_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_clispec = b.addRunArtifact(clispec_check);
+    run_clispec.addArtifactArg(exe);
+    test_step.dependOn(&run_clispec.step);
     // Chat scroll math lives in the shipped ESM helper; bun test drives
     // that file, not a Zig reimplementation.
     const scroll_js_test = b.addSystemCommand(&.{ "bun", "test" });

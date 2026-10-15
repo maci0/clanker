@@ -9,7 +9,6 @@ const config = @import("../config.zig");
 const registry = @import("../toolhost/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const client = @import("../llm/client.zig");
-const types = @import("../llm/types.zig");
 const log = @import("../util/log.zig");
 const tool_out = @import("../util/tool_out.zig");
 
@@ -83,6 +82,7 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
             // stream state the reader deliberately left unmodified.
             error.StreamTooLong => {
                 reader.interface.toss(reader.interface.buffered().len);
+                writeRpcError(io, null, -32700, "Parse error");
                 continue;
             },
             error.ReadFailed => {
@@ -100,8 +100,9 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
         const mcp_id = std.fmt.bufPrint(&mcp_id_buf, "mcp-{d}", .{mcp_sequence.fetchAdd(1, .monotonic)}) catch "mcp-unknown";
         log.setContext(mcp_id);
         defer log.clearContext();
-        handleLine(io, gpa, cache_arena, cfg, environ_map, &reg, tool_defs, &module_cache, &llm_ctx, line) catch |err| {
+        handleLine(io, gpa, cache_arena, cfg, environ_map, &reg, &module_cache, &llm_ctx, line) catch |err| {
             log.log(.error_, "mcp line error: {s}", .{@errorName(err)});
+            writeRpcError(io, null, -32603, "Internal error");
         };
     }
 }
@@ -150,7 +151,7 @@ fn respondText(s: *json.Stringify, text: []const u8, is_error: bool) !void {
     try s.endArray();
 }
 
-fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, tool_defs: []const types.ToolDef, module_cache: *ModuleCache, llm_ctx: *client.Ctx, line: []const u8) !void {
+fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, reg: *const registry.Registry, module_cache: *ModuleCache, llm_ctx: *client.Ctx, line: []const u8) !void {
     // Request-scoped: parseFromSliceLeaky on the process gpa leaked the
     // JSON tree on every line of a long-lived stdio session.
     var req_arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -241,19 +242,12 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
             },
             .ping => {},
             .tools_list => {
-                try s.objectField("tools");
-                try s.beginArray();
-                for (tool_defs) |t| {
-                    try s.beginObject();
-                    try s.objectField("name");
-                    try s.write(t.name);
-                    try s.objectField("description");
-                    try s.write(t.description);
-                    try s.objectField("inputSchema");
-                    try s.write(t.input_schema);
-                    try s.endObject();
-                }
-                try s.endArray();
+                const page = parseToolListParams(req.params) catch {
+                    writeRpcError(io, req.id, -32602, "Invalid params");
+                    return;
+                };
+                const tools = try collectListedTools(req_arena, reg);
+                try writeToolsPage(&s, tools, page);
             },
             .tools_call => {
                 try handleToolCall(&s, io, gpa, cache_arena, cfg, environ_map, reg, module_cache, llm_ctx, req.params);
@@ -371,7 +365,161 @@ fn handleToolCall(s: *json.Stringify, io: std.Io, gpa: std.mem.Allocator, cache_
     // driven over MCP reaches the caller without passing through any of them,
     // and this is the surface tools are usually probed from.
     tool_out.warnIfMalformed(gpa, name, out);
-    try respondText(s, out, false);
+    const bounded = boundedToolText(out);
+    try respondText(s, bounded.text, bounded.is_error);
+}
+
+const tools_page_max: usize = 100;
+const tool_text_headroom: usize = 8192;
+
+const ToolPage = struct {
+    cursor: usize,
+    limit: usize,
+};
+
+fn parseToolListParams(params: ?json.Value) !ToolPage {
+    var cursor: usize = 0;
+    var limit: usize = tools_page_max;
+    const p = params orelse return .{ .cursor = cursor, .limit = limit };
+    const obj = switch (p) {
+        .object => |o| o,
+        else => return error.InvalidParams,
+    };
+    if (obj.get("cursor")) |c| {
+        cursor = switch (c) {
+            .string => |str| blk: {
+                if (str.len == 0) return error.InvalidParams;
+                break :blk std.fmt.parseInt(usize, str, 10) catch return error.InvalidParams;
+            },
+            .integer => |i| blk: {
+                if (i < 0) return error.InvalidParams;
+                break :blk std.math.cast(usize, i) orelse return error.InvalidParams;
+            },
+            else => return error.InvalidParams,
+        };
+    }
+    if (obj.get("limit")) |l| {
+        const n: i64 = switch (l) {
+            .integer => |i| i,
+            else => return error.InvalidParams,
+        };
+        if (n < 1) return error.InvalidParams;
+        limit = @min(std.math.cast(usize, n) orelse tools_page_max, tools_page_max);
+    }
+    return .{ .cursor = cursor, .limit = limit };
+}
+
+fn toolNameLess(_: void, a: *const registry.Tool, b: *const registry.Tool) bool {
+    return std.mem.order(u8, a.name, b.name) == .lt;
+}
+
+fn collectListedTools(arena: std.mem.Allocator, reg: *const registry.Registry) ![]*const registry.Tool {
+    var list: std.ArrayList(*const registry.Tool) = .empty;
+    var it = reg.tools.iterator();
+    while (it.next()) |kv| {
+        const t = kv.value_ptr;
+        if (t.internal or !t.enabled) continue;
+        try list.append(arena, t);
+    }
+    std.mem.sort(*const registry.Tool, list.items, {}, toolNameLess);
+    return list.items;
+}
+
+const ToolAnnotations = struct {
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+};
+
+fn annotationsFor(t: *const registry.Tool) ToolAnnotations {
+    const read_only = t.fs_read_only and t.exec_allow.len == 0 and !t.needsConfirm();
+    return .{
+        .read_only = read_only,
+        .destructive = t.needsConfirm(),
+        .idempotent = read_only,
+        .open_world = t.network_allow.len > 0 or t.network_from_config.len > 0,
+    };
+}
+
+fn writeInputSchema(s: *json.Stringify, schema: json.Value) !void {
+    switch (schema) {
+        .object => |o| {
+            if (o.get("type")) |ty| {
+                if (ty == .string and std.mem.eql(u8, ty.string, "object")) {
+                    try s.write(schema);
+                    return;
+                }
+            }
+        },
+        else => {},
+    }
+    try s.beginObject();
+    try s.objectField("type");
+    try s.write("object");
+    try s.endObject();
+}
+
+fn writeToolsPage(s: *json.Stringify, tools: []const *const registry.Tool, page: ToolPage) !void {
+    const past = page.cursor >= tools.len;
+    const end = if (past) page.cursor else @min(tools.len, page.cursor + page.limit);
+    try s.objectField("tools");
+    try s.beginArray();
+    if (!past) {
+        for (tools[page.cursor..end]) |t| {
+            const ann = annotationsFor(t);
+            const description = if (t.llm_description.len > 0) t.llm_description else t.description;
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write(t.name);
+            try s.objectField("description");
+            try s.write(description);
+            try s.objectField("inputSchema");
+            try writeInputSchema(s, t.input_schema);
+            try s.objectField("annotations");
+            try s.beginObject();
+            try s.objectField("readOnlyHint");
+            try s.write(ann.read_only);
+            try s.objectField("destructiveHint");
+            try s.write(ann.destructive);
+            try s.objectField("idempotentHint");
+            try s.write(ann.idempotent);
+            try s.objectField("openWorldHint");
+            try s.write(ann.open_world);
+            try s.endObject();
+            try s.endObject();
+        }
+    }
+    try s.endArray();
+    if (!past and end < tools.len) {
+        try s.objectField("truncated");
+        try s.write(true);
+        var cursor_buf: [32]u8 = undefined;
+        const next = std.fmt.bufPrint(&cursor_buf, "{d}", .{end}) catch "0";
+        try s.objectField("nextCursor");
+        try s.write(next);
+    }
+}
+
+fn boundedToolText(out: []const u8) struct { text: []const u8, is_error: bool } {
+    if (out.len > max_line - tool_text_headroom) {
+        return .{ .text = "tool output exceeded the MCP response limit", .is_error = true };
+    }
+    return .{ .text = out, .is_error = false };
+}
+
+fn writeRpcError(io: std.Io, id: ?json.Value, code: i64, message: []const u8) void {
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("jsonrpc") catch return;
+    s.write("2.0") catch return;
+    s.objectField("id") catch return;
+    s.write(id orelse .null) catch return;
+    respondError(&s, code, message) catch return;
+    s.endObject() catch return;
+    writeResponse(io, buf[0..w.end]);
 }
 
 test "fuzz: a JSON-RPC line from stdin never crashes the parse/dispatch path" {
@@ -494,4 +642,113 @@ test "hasValidJsonRpc accepts only the JSON-RPC 2.0 version" {
     try std.testing.expect(!hasValidJsonRpc(null));
     try std.testing.expect(!hasValidJsonRpc("1.0"));
     try std.testing.expect(!hasValidJsonRpc("2024-11-05"));
+}
+
+fn bareListedTool(name: []const u8) registry.Tool {
+    return .{
+        .name = name,
+        .description = "full",
+        .llm_description = "short",
+        .wasm = "t.wasm",
+        .input_schema = .{ .object = .empty },
+    };
+}
+
+test "tools list pages, annotations, and the output cap" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parse = struct {
+        fn go(alloc: std.mem.Allocator, raw: []const u8) !json.Value {
+            return json.parseFromSliceLeaky(json.Value, alloc, raw, .{});
+        }
+    }.go;
+
+    const defaults = try parseToolListParams(null);
+    try std.testing.expectEqual(@as(usize, 0), defaults.cursor);
+    try std.testing.expectEqual(tools_page_max, defaults.limit);
+
+    const paged = try parseToolListParams(try parse(arena, "{\"cursor\":\"20\",\"limit\":5}"));
+    try std.testing.expectEqual(@as(usize, 20), paged.cursor);
+    try std.testing.expectEqual(@as(usize, 5), paged.limit);
+
+    const as_int = try parseToolListParams(try parse(arena, "{\"cursor\":3}"));
+    try std.testing.expectEqual(@as(usize, 3), as_int.cursor);
+
+    const clamped = try parseToolListParams(try parse(arena, "{\"limit\":1000}"));
+    try std.testing.expectEqual(tools_page_max, clamped.limit);
+
+    try std.testing.expectError(error.InvalidParams, parseToolListParams(try parse(arena, "{\"cursor\":\"\"}")));
+    try std.testing.expectError(error.InvalidParams, parseToolListParams(try parse(arena, "{\"cursor\":-1}")));
+    try std.testing.expectError(error.InvalidParams, parseToolListParams(try parse(arena, "{\"limit\":0}")));
+    try std.testing.expectError(error.InvalidParams, parseToolListParams(try parse(arena, "{\"cursor\":\"nope\"}")));
+
+    var read_only = bareListedTool("read");
+    read_only.fs_read_only = true;
+    const ro = annotationsFor(&read_only);
+    try std.testing.expect(ro.read_only);
+    try std.testing.expect(ro.idempotent);
+    try std.testing.expect(!ro.destructive);
+    try std.testing.expect(!ro.open_world);
+
+    var writing = bareListedTool("write");
+    writing.fs_prefixes = &.{"src"};
+    const wr = annotationsFor(&writing);
+    try std.testing.expect(!wr.read_only);
+    try std.testing.expect(wr.destructive);
+    try std.testing.expect(!wr.idempotent);
+
+    var networked = bareListedTool("net");
+    networked.fs_read_only = true;
+    networked.network_from_config = "peers";
+    try std.testing.expect(annotationsFor(&networked).open_world);
+    try std.testing.expect(annotationsFor(&networked).read_only);
+
+    const small = boundedToolText("ok");
+    try std.testing.expect(!small.is_error);
+    try std.testing.expectEqualStrings("ok", small.text);
+    const big = try arena.alloc(u8, max_line - tool_text_headroom + 1);
+    @memset(big, 'x');
+    const capped = boundedToolText(big);
+    try std.testing.expect(capped.is_error);
+    try std.testing.expectEqualStrings("tool output exceeded the MCP response limit", capped.text);
+
+    var stored = [_]registry.Tool{
+        bareListedTool("a"),
+        bareListedTool("b"),
+        bareListedTool("c"),
+    };
+    stored[2].llm_description = "";
+    const ptrs = [_]*const registry.Tool{ &stored[0], &stored[1], &stored[2] };
+    var buf: [2048]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = json.Stringify{ .writer = &w, .options = .{ .whitespace = .minified } };
+    try s.beginObject();
+    try writeToolsPage(&s, &ptrs, .{ .cursor = 0, .limit = 2 });
+    try s.endObject();
+    const page = buf[0..w.end];
+    try std.testing.expect(std.mem.indexOf(u8, page, "\"truncated\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page, "\"nextCursor\":\"2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page, "\"name\":\"c\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, page, "\"readOnlyHint\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, page, "\"description\":\"short\"") != null);
+
+    w = .fixed(&buf);
+    s = json.Stringify{ .writer = &w, .options = .{ .whitespace = .minified } };
+    try s.beginObject();
+    try writeToolsPage(&s, &ptrs, .{ .cursor = 3, .limit = 2 });
+    try s.endObject();
+    const empty = buf[0..w.end];
+    try std.testing.expect(std.mem.indexOf(u8, empty, "\"tools\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, empty, "truncated") == null);
+
+    w = .fixed(&buf);
+    s = json.Stringify{ .writer = &w, .options = .{ .whitespace = .minified } };
+    try s.beginObject();
+    try writeToolsPage(&s, &ptrs, .{ .cursor = 0, .limit = 100 });
+    try s.endObject();
+    const all = buf[0..w.end];
+    try std.testing.expect(std.mem.indexOf(u8, all, "truncated") == null);
+    try std.testing.expect(std.mem.indexOf(u8, all, "\"description\":\"full\"") != null);
 }

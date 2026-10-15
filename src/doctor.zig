@@ -56,17 +56,47 @@ const Status = enum {
     }
 };
 
+const DoctorItem = struct {
+    section: []const u8,
+    status: []const u8,
+    label: []const u8,
+    detail: []const u8,
+};
+
 const Report = struct {
     w: *std.Io.Writer,
     failures: usize = 0,
     warnings: usize = 0,
     default_provider: []const u8 = "",
+    /// JSON mode collects one item per check and skips the text layout.
+    /// Defaults keep every `Report{ .w = ... }` literal compiling.
+    json: bool = false,
+    arena: std.mem.Allocator = std.heap.page_allocator,
+    section_name: []const u8 = "",
+    items: std.ArrayList(DoctorItem) = .empty,
+
+    fn statusWord(status: Status) []const u8 {
+        return switch (status) {
+            .ok => "ok",
+            .warn => "warn",
+            .fail => "fail",
+        };
+    }
 
     fn line(self: *Report, status: Status, label: []const u8, detail: []const u8) void {
         switch (status) {
             .fail => self.failures += 1,
             .warn => self.warnings += 1,
             .ok => {},
+        }
+        if (self.json) {
+            self.items.append(self.arena, .{
+                .section = self.section_name,
+                .status = statusWord(status),
+                .label = label,
+                .detail = detail,
+            }) catch {};
+            return;
         }
         if (detail.len > 0) {
             self.w.print("  [{s}] {s: <26} {s}\n", .{ status.mark(), label, detail }) catch {};
@@ -76,9 +106,43 @@ const Report = struct {
     }
 
     fn section(self: *Report, title: []const u8) void {
+        self.section_name = title;
+        if (self.json) return;
         self.w.print("\n{s}\n", .{title}) catch {};
     }
 };
+
+fn writeDoctorJson(io: std.Io, rep: *Report) void {
+    const pretty = std.Io.File.stdout().isTty(io) catch false;
+    var aw: std.Io.Writer.Allocating = .init(rep.arena);
+    var s = std.json.Stringify{
+        .writer = &aw.writer,
+        .options = .{ .whitespace = if (pretty) .indent_2 else .minified },
+    };
+    s.beginObject() catch return;
+    s.objectField("items") catch return;
+    s.beginArray() catch return;
+    for (rep.items.items) |item| {
+        s.beginObject() catch return;
+        s.objectField("section") catch return;
+        s.write(item.section) catch return;
+        s.objectField("status") catch return;
+        s.write(item.status) catch return;
+        s.objectField("label") catch return;
+        s.write(item.label) catch return;
+        s.objectField("detail") catch return;
+        s.write(item.detail) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.objectField("failures") catch return;
+    s.write(rep.failures) catch return;
+    s.objectField("warnings") catch return;
+    s.write(rep.warnings) catch return;
+    s.endObject() catch return;
+    aw.writer.writeByte('\n') catch return;
+    rep.w.writeAll(aw.written()) catch {};
+}
 
 fn dirExists(io: std.Io, path: []const u8) bool {
     var d = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
@@ -958,15 +1022,20 @@ fn runChecks(
     }
 }
 
-pub fn cmdDoctor(init: std.process.Init) !void {
+/// True when at least one check failed. The caller owns the exit so JSON
+/// mode can put the error envelope after the tally.
+pub fn cmdDoctor(init: std.process.Init, json_mode: bool) !bool {
     const io = init.io;
     const arena = init.arena.allocator();
 
     var out = std.Io.File.stdout().writer(io, &.{});
-    var rep = Report{ .w = &out.interface };
-    rep.w.print("clanker doctor {s} ({s}/{s})\n", .{ build_options.version, plat_os, plat_arch }) catch {};
+    var rep = Report{ .w = &out.interface, .json = json_mode, .arena = arena };
+    if (!json_mode) {
+        rep.w.print("clanker doctor {s} ({s}/{s})\n", .{ build_options.version, plat_os, plat_arch }) catch {};
+    }
 
     try runChecks(io, arena, init.environ_map, &rep);
+    if (json_mode) writeDoctorJson(io, &rep);
     out.interface.flush() catch {};
 
     // The tally, the advice and the diagnostic line are status, not report:
@@ -992,8 +1061,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
         .{ build_options.version, plat_os, plat_arch, rep.default_provider, rep.failures, rep.warnings },
     ) catch {};
     ew.flush() catch {};
-    // A non-zero exit lets `clanker doctor` guard a script or a CI step.
-    if (rep.failures > 0) std.process.exit(1);
+    return rep.failures > 0;
 }
 
 /// Provider name to the env var it reads, for the "what could I use" hint.

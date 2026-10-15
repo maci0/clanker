@@ -701,12 +701,18 @@ pub const Registry = struct {
     /// with OpenAI's "parameters" key, or with the type omitted, silently
     /// breaks every tool call for every tool. Accept both spellings here and
     /// default the type rather than shipping a request no provider will take.
+    fn objectSchema(arena: std.mem.Allocator) json.Value {
+        var out: json.ObjectMap = .empty;
+        out.put(arena, "type", json.Value{ .string = "object" }) catch return .{ .object = .empty };
+        return .{ .object = out };
+    }
+
     fn normalizedSchema(arena: std.mem.Allocator, obj: json.ObjectMap) !json.Value {
-        const raw = obj.get("input_schema") orelse obj.get("parameters") orelse json.Value{ .object = .empty };
+        const raw = obj.get("input_schema") orelse obj.get("parameters") orelse return objectSchema(arena);
         const src = switch (raw) {
             .object => |o| o,
             // A non-object schema is not something a provider can use.
-            else => return json.Value{ .object = .empty },
+            else => return objectSchema(arena),
         };
         if (src.get("type") != null) return raw;
 
@@ -749,7 +755,7 @@ pub const Registry = struct {
             // rejects the *whole* request: one malformed manifest takes every
             // tool call down with it. Normalize here instead, an object
             // schema is what every tool in this registry has.
-            .input_schema = normalizedSchema(arena, obj) catch .{ .object = .empty },
+            .input_schema = normalizedSchema(arena, obj) catch objectSchema(arena),
         };
         if (obj.get("llm_description")) |ld| {
             if (ld == .string and ld.string.len > 0) t.llm_description = ld.string;
@@ -1154,6 +1160,19 @@ test "a descriptor schema always reaches the provider with a type" {
     ;
     const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(b.input_schema == .object);
+    try std.testing.expectEqualStrings("object", b.input_schema.object.get("type").?.string);
+
+    const empty_schema =
+        \\{ "name": "empty", "description": "d", "wasm": "e.wasm", "input_schema": {} }
+    ;
+    const empty = try Registry.parseDescriptor(arena, empty_schema);
+    try std.testing.expectEqualStrings("object", empty.input_schema.object.get("type").?.string);
+
+    const not_object =
+        \\{ "name": "bad", "description": "d", "wasm": "b.wasm", "input_schema": "nope" }
+    ;
+    const bad = try Registry.parseDescriptor(arena, not_object);
+    try std.testing.expectEqualStrings("object", bad.input_schema.object.get("type").?.string);
 }
 
 test "prompt_guidance is parsed from the descriptor and rendered for catalog tools only" {

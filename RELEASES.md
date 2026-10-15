@@ -101,7 +101,8 @@ Before creating a tag:
 
 | Version | Supported until |
 |---|---|
-| 0.13.x | Next `0.MINOR.0` release |
+| 0.14.x | Next `0.MINOR.0` release |
+| 0.13.x | Ended at 0.14.0 |
 | 0.12.x | Ended at 0.13.0 |
 | 0.11.x | Ended at 0.12.0 |
 | 0.10.x | Ended at 0.11.0 |

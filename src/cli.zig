@@ -184,6 +184,8 @@ pub const Command = enum {
     gate,
     autolearn,
     doctor,
+    /// `schema [command]`: the CLI Spec 0.3 document, generated from `specs`.
+    schema,
     /// `update [--check] [--repo owner/name]`: compare this build with the
     /// latest GitHub release. Without `--check`, replace this executable only
     /// after the asset matches its `.sha256` sidecar. `src/cli/update.zig`.
@@ -242,11 +244,35 @@ pub const Command = enum {
     plugin,
 };
 
+pub const OutputMode = enum {
+    auto,
+    text,
+    json,
+
+    fn fromStr(s: []const u8) ?OutputMode {
+        if (std.mem.eql(u8, s, "auto")) return .auto;
+        if (std.mem.eql(u8, s, "text")) return .text;
+        if (std.mem.eql(u8, s, "json")) return .json;
+        return null;
+    }
+};
+
+/// Process-wide, like `llm_stream.enabled`. Parse writes it as soon as `-o`
+/// is seen, so a usage error after `-o json` still emits the envelope. `auto`
+/// stays text on a pipe: text-on-a-pipe is the contract these commands already
+/// had.
+pub var output_mode: OutputMode = .auto;
+
 pub const Options = struct {
     /// No command given means the interactive REPL: a bare `clanker` should
     /// drop the user into a session, the way every other coding agent does,
     /// not print usage at them.
     command: Command = .repl,
+    /// `-o` / `--output`. Last value wins. JSON is only the explicit value.
+    output: OutputMode = .auto,
+    /// `schema` positionals, borrowed from argv and joined with spaces.
+    schema_argv: [4][]const u8 = .{ "", "", "", "" },
+    schema_argc: u8 = 0,
     /// Sub-command for `providers`: "check" (default), "models", "catalog",
     /// "fill", or "refresh". `provider` doubles as the catalog search query
     /// for "catalog" and the provider name for "fill".
@@ -696,11 +722,12 @@ const value_flags = [_]ValueFlag{
 /// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
 /// actual command in a help hint even when a global flag precedes it.
 pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
+    output_mode = .auto;
     var opts = Options{};
     var idx: usize = 1;
     var cmd_seen = false;
     var pending_sub: ?[]const u8 = null;
-    var seen_flags: [16]Flag = undefined;
+    var seen_flags: [32]Flag = undefined;
     var seen_flags_len: usize = 0;
     var workflow_args_owned = false;
     // Set by a bare `--`: every token after it is a positional, whatever it
@@ -791,6 +818,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             }
             if (used != null) {
                 // Handled by the tables above.
+            } else if (std.mem.eql(u8, a, "--output") or std.mem.eql(u8, a, "-o")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.output = OutputMode.fromStr(v) orelse {
+                    setDiag(diag, v);
+                    return error.BadOutput;
+                };
+                output_mode = opts.output;
+                used = .output;
             } else if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
                 used = .verbose;
@@ -957,6 +992,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .init;
             } else if (std.mem.eql(u8, a, "doctor")) {
                 opts.command = .doctor;
+            } else if (std.mem.eql(u8, a, "schema")) {
+                opts.command = .schema;
             } else if (std.mem.eql(u8, a, "update")) {
                 opts.command = .update;
             } else if (std.mem.eql(u8, a, "janitor") or std.mem.eql(u8, a, "prune")) {
@@ -1364,6 +1401,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else {
                 try joinOwned(&opts.workflow_args, &workflow_args_owned, a);
             }
+        } else if (opts.command == .schema) {
+            if (opts.schema_argc >= opts.schema_argv.len) {
+                setDiag(diag, a);
+                if (cmd_out) |c| c.* = opts.command;
+                return error.UnknownArg;
+            }
+            opts.schema_argv[opts.schema_argc] = a;
+            opts.schema_argc += 1;
         } else if (opts.command == .run and opts.task != null) {
             // A second positional here is hardly ever a second task. It is one
             // task the shell tore in half, and the usual tear is an unescaped
@@ -1674,7 +1719,7 @@ pub fn usageHintTarget(cmd: Command, argv_token: []const u8) []const u8 {
 /// stdout, the same stream `clanker --help` uses. It used to go to stderr,
 /// which made that one spelling of --help the only one a pipe could not read.
 fn printUsage(io: std.Io) !void {
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     try writeStdOut(io, renderUsage(&buf));
 }
 
@@ -1754,8 +1799,60 @@ fn renderUsageError(buf: []u8, comptime fmt: []const u8, args: anytype) []const 
 /// free of timestamps and log levels so the recovery action is the first
 /// thing a person or shell consumer sees.
 pub fn printUsageError(io: std.Io, comptime fmt: []const u8, args: anytype) void {
+    printKind(io, .usage, "clanker --help", fmt, args);
+}
+
+pub const ErrorKind = enum {
+    usage,
+    failure,
+    tty_required,
+    confirmation_required,
+
+    fn wire(self: ErrorKind) []const u8 {
+        return switch (self) {
+            .usage => "usage",
+            .failure => "failure",
+            .tty_required => "tty_required",
+            .confirmation_required => "confirmation_required",
+        };
+    }
+};
+
+/// Human line first, then the envelope, so the envelope is the last stderr
+/// line. Text mode writes only the human line.
+pub fn printKind(io: std.Io, kind: ErrorKind, hint: []const u8, comptime fmt: []const u8, args: anytype) void {
     var buf: [1024]u8 = undefined;
-    writeStdErr(io, renderUsageError(&buf, fmt, args)) catch {};
+    const line = renderUsageError(&buf, fmt, args);
+    writeStdErr(io, line) catch {};
+    if (output_mode != .json) return;
+    var msg = line;
+    if (std.mem.startsWith(u8, msg, "error: ")) msg = msg["error: ".len..];
+    if (msg.len > 0 and msg[msg.len - 1] == '\n') msg = msg[0 .. msg.len - 1];
+    if (std.mem.findScalar(u8, msg, '\n')) |nl| msg = msg[0..nl];
+    writeErrorEnvelope(io, kind, msg, hint);
+}
+
+pub fn writeErrorEnvelope(io: std.Io, kind: ErrorKind, message: []const u8, hint: []const u8) void {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .whitespace = .minified } };
+    s.beginObject() catch return;
+    s.objectField("error") catch return;
+    s.beginObject() catch return;
+    s.objectField("kind") catch return;
+    s.write(kind.wire()) catch return;
+    s.objectField("message") catch return;
+    s.write(message) catch return;
+    s.objectField("hint") catch return;
+    s.write(hint) catch return;
+    s.endObject() catch return;
+    s.endObject() catch return;
+    w.writeByte('\n') catch return;
+    writeStdErr(io, buf[0..w.end]) catch {};
+}
+
+fn wantsJson() bool {
+    return output_mode == .json;
 }
 
 /// Returns the closest public command spelling for a short mistyped token.
@@ -1814,7 +1911,7 @@ pub fn printUnknownCommand(io: std.Io, name: []const u8) void {
     var buf: [256]u8 = undefined;
     const rendered = formatUnknownCommand(&buf, name);
     printUsageError(io, "{s}", .{rendered.line});
-    if (rendered.hint) printUsageHint(io);
+    if (rendered.hint and output_mode != .json) printUsageHint(io);
 }
 
 /// Worded once so a missing positional names the command that needed it.
@@ -1935,7 +2032,7 @@ fn renderUsage(buf: []u8) []const u8 {
             writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
-    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config as JSON and exit\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config as JSON and exit\n  --output, -o <format>             auto, text, or json (default auto)\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -2026,7 +2123,7 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
             w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
     }
-    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --profile <name>;\n--dump-config; --help, -h.\n") catch {};
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --profile <name>;\n--output, -o; --dump-config; --help, -h.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -2119,12 +2216,12 @@ fn printCommandHelp(io: std.Io, cmd: Command) !void {
         try printUsage(io);
         return;
     }
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     try writeStdOut(io, renderCommandHelp(&buf, cmd));
 }
 
 fn printFlagHelp(io: std.Io, flag: Flag) !void {
-    var buf: [8192]u8 = undefined;
+    var buf: [16384]u8 = undefined;
     try writeStdOut(io, renderFlagHelp(&buf, flag));
 }
 
@@ -2191,6 +2288,7 @@ const Flag = enum {
     preset,
     update_check,
     update_repo,
+    output,
 
     fn name(self: Flag) []const u8 {
         return switch (self) {
@@ -2252,6 +2350,7 @@ const Flag = enum {
             .preset => "--preset",
             .update_check => "--check",
             .update_repo => "--repo <owner/name>",
+            .output => "--output, -o <format>",
         };
     }
 
@@ -2319,11 +2418,12 @@ const Flag = enum {
             .preset => "run with a preset from presets/<name>.toml",
             .update_check => "report the latest release and do not download or replace the binary",
             .update_repo => "GitHub repository as owner/name (default maci0/clanker)",
+            .output => "auto, text, or json; auto stays text, including on a pipe",
         };
     }
 
     fn global(self: Flag) bool {
-        return self == .verbose or self == .quiet or self == .profile or self == .dump_config;
+        return self == .verbose or self == .quiet or self == .profile or self == .dump_config or self == .output;
     }
 };
 
@@ -2344,6 +2444,7 @@ fn flagForHelp(arg: []const u8, command: Command) ?Flag {
     }
     if (std.mem.eql(u8, arg, "-v")) return .verbose;
     if (std.mem.eql(u8, arg, "-q")) return .quiet;
+    if (std.mem.eql(u8, arg, "-o")) return .output;
     if (std.mem.eql(u8, arg, "-m")) return .model;
     if (std.mem.eql(u8, arg, "-c")) return .continue_last;
     if (std.mem.eql(u8, arg, "-wt") or std.mem.eql(u8, arg, "--no-worktree")) return .worktree;
@@ -2369,6 +2470,42 @@ const Group = enum {
     }
 };
 
+const Effects = enum { read_only, idempotent, non_idempotent };
+
+/// `artifact` is written as `"opaque"`. The default keeps every existing
+/// spec literal valid, and the writer still emits `output_kind` because an
+/// omitted kind means data.
+const SchemaOutput = enum { data, artifact };
+
+const FieldDesc = struct {
+    name: []const u8,
+    type: []const u8,
+    @"enum": []const []const u8 = &.{},
+    items_type: []const u8 = "",
+};
+
+const doctor_fields = [_]FieldDesc{
+    .{ .name = "section", .type = "string" },
+    .{ .name = "status", .type = "string", .@"enum" = &.{ "ok", "warn", "fail" } },
+    .{ .name = "label", .type = "string" },
+    .{ .name = "detail", .type = "string" },
+};
+
+const schema_fields = [_]FieldDesc{
+    .{ .name = "clispec", .type = "string" },
+    .{ .name = "name", .type = "string" },
+    .{ .name = "version", .type = "string" },
+    .{ .name = "output", .type = "object" },
+    .{ .name = "global_args", .type = "array", .items_type = "object" },
+    .{ .name = "commands", .type = "array", .items_type = "object" },
+    .{ .name = "errors", .type = "array", .items_type = "object" },
+};
+
+const version_fields = [_]FieldDesc{
+    .{ .name = "name", .type = "string" },
+    .{ .name = "version", .type = "string" },
+};
+
 const Spec = struct {
     command: Command,
     /// How it is typed, including positional arguments.
@@ -2379,13 +2516,23 @@ const Spec = struct {
     /// Longer help shown by `clanker <command> --help`, when the blurb alone
     /// leaves a real question unanswered.
     detail: []const u8 = "",
+    effects: Effects = .non_idempotent,
+    output_kind: SchemaOutput = .artifact,
+    media_type: []const u8 = "text/plain",
+    cardinality: []const u8 = "",
+    output_fields: []const FieldDesc = &.{},
+    requires_tty: bool = false,
+    /// Written as `confirmation_bypass_arg`. Empty means the command does not prompt.
+    confirmation_bypass: []const u8 = "",
+    /// Appended to the schema description. Not shown in `--help`.
+    schema_note: []const u8 = "",
 };
 
 /// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
 /// everywhere and so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .stream, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--stream           also print one JSON usage line per model response, so a\n                   monitor can show live tokens per second\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .stream, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--stream           also print one JSON usage line per model response, so a\n                   monitor can show live tokens per second\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default", .schema_note = "The task is an argument, so this does not need a terminal. A retry is not safe: the run may have edited files." },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that.", .requires_tty = true, .schema_note = "Needs a terminal. One-shot work is clanker run with the task as an argument, and that path does not use the terminal. A retry is not a replay of the session." },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It appends the durable goal record to\nstate/goals.json and prints the id, but never starts work. The board card\nappears when the web UI mirrors goals onto the board; this command does not\ncreate it. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
@@ -2397,12 +2544,12 @@ const specs = [_]Spec{
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
     .{ .command = .acp, .usage = "acp", .blurb = "serve clanker as an ACP coding agent (stdio)", .group = .work },
 
-    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
+    .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .effects = .read_only, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
     .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file.\n\nThe other subcommand under `session` is `search <query>`, which finds saved\nconversations containing a substring; `clanker session search --help` has it." },
-    .{ .command = .session_search, .usage = "session search <query>", .blurb = "find saved conversations containing a substring", .group = .inspect, .detail = "Linear scan of state/sessions, newest first. Min 3 characters.\nResume a hit: clanker repl --session <id>" },
-    .{ .command = .graph, .usage = "graph [run-id | answer [run-id]]", .blurb = "list runs, draw one as a timeline, or print its answer", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively.\n\n`answer` prints the final answer a run recorded — the latest run's, or the\nnamed run's. The graph is the only durable copy of an answer once the\nterminal scrolls (clanker run saves no session); the recorded text is\ncapped, and a longer answer says how much of it the record holds.\n\nEXAMPLES\n  clanker graph                       list recorded runs\n  clanker graph run-1786940774        draw that run as a timeline\n  clanker graph answer                the latest run's final answer\n  clanker graph answer run-1786940774 that run's final answer" },
-    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
-    .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
+    .{ .command = .session_search, .usage = "session search <query>", .blurb = "find saved conversations containing a substring", .group = .inspect, .effects = .read_only, .detail = "Linear scan of state/sessions, newest first. Min 3 characters.\nResume a hit: clanker repl --session <id>" },
+    .{ .command = .graph, .usage = "graph [run-id | answer [run-id]]", .blurb = "list runs, draw one as a timeline, or print its answer", .group = .inspect, .effects = .read_only, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively.\n\n`answer` prints the final answer a run recorded — the latest run's, or the\nnamed run's. The graph is the only durable copy of an answer once the\nterminal scrolls (clanker run saves no session); the recorded text is\ncapped, and a longer answer says how much of it the record holds.\n\nEXAMPLES\n  clanker graph                       list recorded runs\n  clanker graph run-1786940774        draw that run as a timeline\n  clanker graph answer                the latest run's final answer\n  clanker graph answer run-1786940774 that run's final answer" },
+    .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .effects = .read_only, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
+    .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect, .effects = .read_only },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .plugin, .usage = "<plugin-command> [args...]", .blurb = "run a CLI plugin from cli-plugins/ or PATH", .group = .work, .detail = "A short single word that is not a built-in Command resolves against PRD\n0012's two tiers, in order: Tier 1 is an enabled {command, description,\ntool}.json in agent.cli_plugins_dir, dispatching to a sandboxed tool with\nthe remaining argv passed as {\"args\":[...]} - no new trust surface. Tier\n2 is a clanker-<name> executable on PATH or under ~/.clanker/plugins/,\nexec'd with the remaining argv and inherited stdio, trusted like anything\nelse the operator put on their PATH. A bare clanker help lists both\nsources, marked external with their origin." },
     .{ .command = .preset, .usage = "preset [list|show <name>|new <name>]", .blurb = "list, inspect, or scaffold presets", .group = .inspect, .detail = "A preset is one preset.toml from presets/ (plus configured roots).\nFilters the already-loaded Registry, no recompile. Examples: research\n(read/search only) and full (no filter).\n\nlist              every preset with its description\nshow <name>       print the preset.toml\nnew <name>        scaffold presets/<name>.toml" },
@@ -2416,12 +2563,15 @@ const specs = [_]Spec{
 
     .{ .command = .chat, .usage = "chat [rooms|send|history|subscribe]", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "Bare `chat` is `chat rooms`.\n\nchat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]\n\nsubscribe defaults to on. Also accepts true/1/yes for on and false/0/no\nfor off. Other values are usage errors and leave subscriptions unchanged." },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
-    .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
+    .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers, .effects = .read_only },
     .{ .command = .mesh, .usage = "mesh [status|join|leave|pending|admit|deny]", .blurb = "join or leave the clanker mesh, or inspect it", .group = .peers, .flags = &.{.webui_port}, .detail = "Talks to the local `clanker serve` over loopback HTTP. It never opens a\nmesh socket; serve owns those. `--webui-port` selects which serve when\nseveral run on one host (same protocol as two machines).\n\nstatus                 members, listen address, admission (default)\njoin <host:port>       dial that member\nleave [<peer-id>]      drop one peer, or leave the mesh yourself\npending                JOIN requests waiting for admit/deny\nadmit <peer-id>        accept a pending JOIN\ndeny <peer-id>         refuse a pending JOIN\n\n--webui-port <port>    local serve port (default 17921, or [serve].webui_port)\n\nRefuses if serve is not up, naming `clanker serve` and `modules.mesh`.\nSharing a workspace is a later verb (`workspace_share`); this command is\ninstance membership only." },
 
     .{ .command = .setup, .usage = "setup", .blurb = "guided first run: check config, keys and tools", .group = .maintain, .detail = "Scaffolds what is missing, says which provider this environment can\nactually reach, and finishes with the same checks `clanker doctor` runs." },
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, compare-and-swap lock files under state/locks/ that\nnothing has re-acquired in 12 hours, spilled tool results older than 12 hours,\nand the worktrees of goals that have been archived or abandoned whose branch\nis already merged. Sessions, goals, learnings and chat history are never\ntouched, and neither is a worktree whose branch still holds commits the base\ndoes not.\n\nAn aged lock file is not a stuck lock. ck_fs_write_if locks with flock, which\nthe kernel releases when the holding descriptor closes -- a crash included --\nso a lock is never stale. The 12 hours is a retention window for the file,\nwhich is named for a hash of its target: a target that recurs keeps the same\nlock fresh, and only one that will never be written again ages out." },
-    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. The check list goes to stdout; the tally, the\nfix-it advice and the copy-paste `diagnostic:` line go to stderr, so\n`clanker doctor > report.txt` keeps the evidence and nothing else." },
+    .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .effects = .read_only, .output_kind = .data, .cardinality = "bounded", .output_fields = &doctor_fields, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. The check list goes to stdout; the tally, the\nfix-it advice and the copy-paste `diagnostic:` line go to stderr, so\n`clanker doctor > report.txt` keeps the evidence and nothing else.\n\n-o json            one document: items of section, status, label, detail.\n                   A failing check still exits 1. -o text is this list." },
+    .{ .command = .schema, .usage = "schema [command]", .blurb = "print the CLI Spec 0.3 document", .group = .maintain, .effects = .read_only, .output_kind = .data, .cardinality = "single", .output_fields = &schema_fields, .detail = "Prints one JSON document and reads no config.\nA path keeps that command and any name that starts with it.\nThe document stays JSON when -o text is set." },
+    .{ .command = .help, .usage = "help [command]", .blurb = "print command help", .group = .maintain, .effects = .read_only, .detail = "Same text as --help. With a command name, that command's page." },
+    .{ .command = .version, .usage = "version", .blurb = "print the version", .group = .maintain, .effects = .read_only, .output_kind = .data, .cardinality = "single", .output_fields = &version_fields, .detail = "-o json prints the name and the version. Otherwise the text line stands." },
     .{ .command = .update, .usage = "update [--check] [--repo <owner/name>]", .blurb = "replace this binary with the latest verified release", .group = .maintain, .flags = &.{ .update_check, .update_repo }, .detail = "Replace this binary with the latest verified GitHub release.\n\n--check              report the latest release and do not download or replace\n--repo <owner/name>  repository as owner/name (default maci0/clanker)\n\nA failed verification does not replace the binary. The download must match\nthe .sha256 sidecar published with that release. The same version is left\nin place. Comparison is exact, not a range.\n\nStdout of --check is only the release page URL. The comparison is printed\non stderr. An optional GITHUB_TOKEN authenticates the API request." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi,\ntools-ts-toolchain, the release contract (CHANGELOG/RELEASES.md),\nreports-inventory (record ## Status vs README row), skills-inventory (every\nskill file has a prompt-visible trigger) and dep-patches (patches/ applied to\nzig-pkg/) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
@@ -2433,8 +2583,327 @@ const specs = [_]Spec{
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
-    .{ .command = .commit, .usage = "commit [--all] [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .commit_all, .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups the changed files, validates\nconventional commit messages, then asks before committing.\n\nThe default scope is the index: each group is committed from what is\nstaged, so an index narrowed to one session's hunks lands exactly as\nstaged and anything else stays unstaged. --all widens it to every\nchange in the working tree, tracked or new (untracked files honour\n.gitignore), and commits by\npathspec, which takes the worktree copy; after writing it re-checks that\nevery planned path reached a commit.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--all       group every working-tree change, new files included\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
+    .{ .command = .commit, .usage = "commit [--all] [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .commit_all, .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups the changed files, validates\nconventional commit messages, then asks before committing.\n\nThe default scope is the index: each group is committed from what is\nstaged, so an index narrowed to one session's hunks lands exactly as\nstaged and anything else stays unstaged. --all widens it to every\nchange in the working tree, tracked or new (untracked files honour\n.gitignore), and commits by\npathspec, which takes the worktree copy; after writing it re-checks that\nevery planned path reached a commit.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--all       group every working-tree change, new files included\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only", .confirmation_bypass = "--yes", .schema_note = "Asks on a terminal before committing. Without a terminal it refuses unless --yes is set. A retry can create another commit, so it is not safe." },
 };
+
+/// Leading words of `usage`, stopping at a placeholder, a bracket, a quote,
+/// a flag, or a `|`. `<plugin-command>` is the one usage that starts with a
+/// placeholder; its command name is `plugin`.
+fn schemaCommandName(usage: []const u8) []const u8 {
+    if (usage.len > 0 and usage[0] == '<') return "plugin";
+    var i: usize = 0;
+    var end: usize = 0;
+    while (i < usage.len) {
+        const start = i;
+        while (i < usage.len and usage[i] != ' ') i += 1;
+        const tok = usage[start..i];
+        if (tok.len == 0) break;
+        if (tok[0] == '<' or tok[0] == '[' or tok[0] == '"' or tok[0] == '\'') break;
+        if (std.mem.findScalar(u8, tok, '|') != null) break;
+        if (std.mem.startsWith(u8, tok, "--")) break;
+        end = i;
+        if (i < usage.len and usage[i] == ' ') i += 1 else break;
+    }
+    return usage[0..end];
+}
+
+fn schemaMatches(name: []const u8, filter: []const u8) bool {
+    if (filter.len == 0) return true;
+    if (std.mem.eql(u8, name, filter)) return true;
+    return name.len > filter.len and std.mem.startsWith(u8, name, filter) and name[filter.len] == ' ';
+}
+
+fn flagIsBoolean(f: Flag) bool {
+    return switch (f) {
+        .verbose, .quiet, .continue_last, .stream, .dry_run, .worktree, .tasks, .proxy, .yes, .compare_synthesize, .compare_reveal, .records_replace_all, .commit_all, .dump_config, .update_check => true,
+        else => false,
+    };
+}
+
+fn flagShort(f: Flag) ?[]const u8 {
+    const n = f.name();
+    const comma = std.mem.find(u8, n, ", -") orelse return null;
+    const rest = n[comma + 2 ..];
+    if (rest.len < 2 or rest[0] != '-') return null;
+    const end = std.mem.findAny(u8, rest, " [") orelse rest.len;
+    if (end != 2) return null;
+    return rest[0..end];
+}
+
+fn writeFlagArg(s: *std.json.Stringify, f: Flag) !void {
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write(primaryFlagName(f));
+    try s.objectField("type");
+    try s.write(if (flagIsBoolean(f)) "boolean" else "string");
+    if (flagShort(f)) |short| {
+        try s.objectField("short");
+        try s.write(short);
+    }
+    if (f == .output) {
+        try s.objectField("default");
+        try s.write("auto");
+        try s.objectField("enum");
+        try s.beginArray();
+        try s.write("auto");
+        try s.write("text");
+        try s.write("json");
+        try s.endArray();
+    }
+    try s.objectField("description");
+    try s.write(f.describe());
+    try s.endObject();
+}
+
+fn writeOutputFields(s: *std.json.Stringify, fields: []const FieldDesc) !void {
+    try s.objectField("output_fields");
+    try s.beginArray();
+    for (fields) |f| {
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(f.name);
+        try s.objectField("type");
+        try s.write(f.type);
+        if (f.@"enum".len > 0) {
+            try s.objectField("enum");
+            try s.beginArray();
+            for (f.@"enum") |item| try s.write(item);
+            try s.endArray();
+        }
+        if (f.items_type.len > 0) {
+            try s.objectField("items");
+            try s.beginObject();
+            try s.objectField("type");
+            try s.write(f.items_type);
+            try s.endObject();
+        }
+        try s.endObject();
+    }
+    try s.endArray();
+}
+
+fn writeSchemaCommand(s: *std.json.Stringify, arena: std.mem.Allocator, spec: *const Spec, name: []const u8) !void {
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write(name);
+    try s.objectField("description");
+    if (spec.schema_note.len == 0) {
+        try s.write(spec.blurb);
+    } else {
+        const desc = try std.fmt.allocPrint(arena, "{s} {s}", .{ spec.blurb, spec.schema_note });
+        try s.write(desc);
+    }
+    try s.objectField("effects");
+    try s.write(@tagName(spec.effects));
+    try s.objectField("output_kind");
+    if (spec.output_kind == .data) {
+        try s.write("data");
+        try s.objectField("cardinality");
+        try s.write(spec.cardinality);
+        try writeOutputFields(s, spec.output_fields);
+    } else {
+        try s.write("opaque");
+        try s.objectField("media_type");
+        try s.write(spec.media_type);
+    }
+    if (spec.requires_tty) {
+        try s.objectField("requires_tty");
+        try s.write(true);
+    }
+    if (spec.confirmation_bypass.len > 0) {
+        try s.objectField("confirmation_bypass_arg");
+        try s.write(spec.confirmation_bypass);
+    }
+    var has_args = spec.command == .schema;
+    if (!has_args) {
+        for (spec.flags) |f| {
+            if (!f.global()) {
+                has_args = true;
+                break;
+            }
+        }
+    }
+    if (has_args) {
+        try s.objectField("args");
+        try s.beginArray();
+        if (spec.command == .schema) {
+            try s.beginObject();
+            try s.objectField("name");
+            try s.write("command");
+            try s.objectField("type");
+            try s.write("string");
+            try s.objectField("required");
+            try s.write(false);
+            try s.objectField("description");
+            try s.write("command path to include; prefixes match nested paths");
+            try s.endObject();
+        }
+        for (spec.flags) |f| {
+            if (f.global()) continue;
+            try writeFlagArg(s, f);
+        }
+        try s.endArray();
+    }
+    try s.endObject();
+}
+
+fn writeSchemaError(s: *std.json.Stringify, kind: []const u8, code: i64, description: []const u8) !void {
+    try s.beginObject();
+    try s.objectField("kind");
+    try s.write(kind);
+    try s.objectField("exit_code");
+    try s.write(code);
+    try s.objectField("retryable");
+    try s.write(false);
+    try s.objectField("description");
+    try s.write(description);
+    try s.endObject();
+}
+
+/// One CLI Spec 0.3 document. Names come from `specs`, not a second list.
+/// `error.NoMatch` means the filter named nothing; the caller has not written
+/// stdout yet.
+fn schemaBytes(arena: std.mem.Allocator, filter: []const u8, pretty: bool) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{
+        .writer = &out.writer,
+        .options = .{ .whitespace = if (pretty) .indent_2 else .minified },
+    };
+    try s.beginObject();
+    try s.objectField("clispec");
+    try s.write("0.3");
+    try s.objectField("name");
+    try s.write("clanker");
+    try s.objectField("version");
+    try s.write(version);
+    try s.objectField("description");
+    try s.write("Self-improving agent harness.");
+    try s.objectField("output");
+    try s.beginObject();
+    try s.objectField("tty");
+    try s.write("text");
+    try s.objectField("piped");
+    try s.write("text");
+    try s.endObject();
+    try s.objectField("global_args");
+    try s.beginArray();
+    for (std.enums.values(Flag)) |f| {
+        if (!f.global()) continue;
+        try writeFlagArg(&s, f);
+    }
+    try s.endArray();
+    var matched: usize = 0;
+    try s.objectField("commands");
+    try s.beginArray();
+    for (&specs) |*spec| {
+        const name = schemaCommandName(spec.usage);
+        if (!schemaMatches(name, filter)) continue;
+        matched += 1;
+        try writeSchemaCommand(&s, arena, spec, name);
+    }
+    try s.endArray();
+    if (matched == 0) return error.NoMatch;
+    try s.objectField("errors");
+    try s.beginArray();
+    try writeSchemaError(&s, "usage", 2, "The invocation was rejected before it ran.");
+    try writeSchemaError(&s, "failure", 1, "The command ran and failed.");
+    try writeSchemaError(&s, "tty_required", 1, "The command needs a terminal.");
+    try writeSchemaError(&s, "confirmation_required", 1, "The command asked for confirmation and stdin is not a terminal.");
+    try s.endArray();
+    try s.endObject();
+    return out.written();
+}
+
+fn schemaFilterOf(opts: Options, buf: []u8) []const u8 {
+    var n: usize = 0;
+    for (opts.schema_argv[0..opts.schema_argc]) |part| {
+        if (n != 0 and n < buf.len) {
+            buf[n] = ' ';
+            n += 1;
+        }
+        if (n >= buf.len) break;
+        const take = @min(part.len, buf.len - n);
+        @memcpy(buf[n..][0..take], part[0..take]);
+        n += take;
+    }
+    return buf[0..n];
+}
+
+fn cmdSchema(init: std.process.Init, opts: Options) !void {
+    var filter_buf: [256]u8 = undefined;
+    const filter = schemaFilterOf(opts, &filter_buf);
+    const pretty = std.Io.File.stdout().isTty(init.io) catch false;
+    const bytes = schemaBytes(init.arena.allocator(), filter, pretty) catch |err| switch (err) {
+        error.NoMatch => {
+            printKind(init.io, .usage, "clanker --help", "unknown command path '{s}'", .{filter});
+            std.process.exit(2);
+        },
+        else => return err,
+    };
+    try writeStdOut(init.io, bytes);
+    try writeStdOut(init.io, "\n");
+}
+
+fn writeVersionJson(io: std.Io) !void {
+    var buf: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = std.json.Stringify{ .writer = &w, .options = .{ .whitespace = .minified } };
+    try s.beginObject();
+    try s.objectField("name");
+    try s.write("clanker");
+    try s.objectField("version");
+    try s.write(version);
+    try s.endObject();
+    try w.writeByte('\n');
+    try writeStdOut(io, buf[0..w.end]);
+}
+
+test "schema command names come from the spec table and stay unique" {
+    var seen: [specs.len][]const u8 = undefined;
+    for (&specs, 0..) |*s, i| {
+        const name = schemaCommandName(s.usage);
+        try std.testing.expect(name.len > 0);
+        try std.testing.expect(std.mem.findScalar(u8, name, '<') == null);
+        try std.testing.expect(std.mem.findScalar(u8, name, '[') == null);
+        for (seen[0..i]) |prev| try std.testing.expect(!std.mem.eql(u8, prev, name));
+        seen[i] = name;
+        if (s.output_kind == .data) {
+            try std.testing.expect(s.cardinality.len > 0);
+            try std.testing.expect(s.output_fields.len > 0);
+        }
+    }
+    try std.testing.expectEqualStrings("session export", schemaCommandName(specFor(.session_export).?.usage));
+    try std.testing.expectEqualStrings("plugin", schemaCommandName(specFor(.plugin).?.usage));
+    try std.testing.expectEqualStrings("schema", schemaCommandName(specFor(.schema).?.usage));
+    try std.testing.expect(schemaMatches("session export", "session"));
+    try std.testing.expect(!schemaMatches("sessions", "session"));
+    try std.testing.expect(schemaMatches("doctor", "doctor"));
+    try std.testing.expect(!schemaMatches("doctor", "nope"));
+    try std.testing.expect(specFor(.repl).?.requires_tty);
+    try std.testing.expect(!specFor(.run).?.requires_tty);
+    try std.testing.expectEqualStrings("--yes", specFor(.commit).?.confirmation_bypass);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const bytes = try schemaBytes(arena, "", false);
+    const parsed = try std.json.parseFromSlice(std.json.Value, arena, bytes, .{});
+    defer parsed.deinit();
+    const root = parsed.value.object;
+    try std.testing.expectEqualStrings("0.3", root.get("clispec").?.string);
+    try std.testing.expectEqualStrings("clanker", root.get("name").?.string);
+    try std.testing.expectEqualStrings(version, root.get("version").?.string);
+    try std.testing.expectEqualStrings("text", root.get("output").?.object.get("tty").?.string);
+    try std.testing.expectEqualStrings("text", root.get("output").?.object.get("piped").?.string);
+    try std.testing.expectEqual(specs.len, root.get("commands").?.array.items.len);
+    try std.testing.expect(root.get("global_args").?.array.items.len >= 1);
+    try std.testing.expect(root.get("errors").?.array.items.len >= 1);
+    const one = try schemaBytes(arena, "doctor", false);
+    const one_parsed = try std.json.parseFromSlice(std.json.Value, arena, one, .{});
+    defer one_parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 1), one_parsed.value.object.get("commands").?.array.items.len);
+    try std.testing.expectError(error.NoMatch, schemaBytes(arena, "nope-nope", false));
+}
 
 fn specFor(cmd: Command) ?*const Spec {
     for (&specs) |*s| {
@@ -2548,6 +3017,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
     // command funnels through here, so one assignment covers serve, run,
     // repl, mcp, and acp. Null means ck_publish validates and then no-ops.
     host.plugin_publish = live.notePlugin;
+    output_mode = opts.output;
     switch (opts.command) {
         // Requested output (--help, --version), not an error: stdout, exit 0.
         .help => {
@@ -2556,7 +3026,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             } else if (opts.help_for) |c| {
                 try printCommandHelp(init.io, c);
             } else {
-                var buf: [8192]u8 = undefined;
+                var buf: [16384]u8 = undefined;
                 try writeStdOut(init.io, renderUsage(&buf));
                 // CLI plugins are local, so a bare `clanker help` lists them
                 // beside the built-ins, marked external with their origin
@@ -2564,9 +3034,15 @@ pub fn run(init: std.process.Init, opts: Options) !void {
                 printPluginCommandHelp(init);
             }
         },
-        .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
+        .version => if (wantsJson()) try writeVersionJson(init.io) else try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
         .init => try cmdInit(init, true),
-        .doctor => try doctor_mod.cmdDoctor(init),
+        .doctor => {
+            if (try doctor_mod.cmdDoctor(init, wantsJson())) {
+                if (wantsJson()) writeErrorEnvelope(init.io, .failure, "doctor reported failures", "the check list is the items array on stdout");
+                std.process.exit(1);
+            }
+        },
+        .schema => try cmdSchema(init, opts),
         .update => try update_mod.cmdUpdate(init, opts.update_check, opts.update_repo),
         .prune => try cmdPrune(init, opts.apply),
         .setup => {
@@ -2605,7 +3081,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             // early with the one-shot spelling instead, the same way
             // `commit` handles its confirmation prompt.
             if (!(std.Io.File.stdin().isTty(init.io) catch false)) {
-                printUsageError(init.io, "the REPL needs a terminal; run `clanker run \"<task>\"` for one-shot work, or start `clanker repl` from a terminal", .{});
+                printKind(init.io, .tty_required, "clanker run \"<task>\"", "the REPL needs a terminal; run `clanker run \"<task>\"` for one-shot work, or start `clanker repl` from a terminal", .{});
                 std.process.exit(1);
             }
             try repl.cmdReplVaxis(init, .{
@@ -7366,7 +7842,7 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
         // command printed "aborted" and exited 0, so an automated caller was
         // told it had succeeded at committing nothing. Name the flag instead.
         if (!(std.Io.File.stdin().isTty(io) catch false)) {
-            printUsageError(io, "refusing to commit: stdin is not a terminal, so `Proceed? [y/N]` cannot be answered; pass --yes to apply the plan above, or --dry-run to only print it", .{});
+            printKind(io, .confirmation_required, "pass --yes", "refusing to commit: stdin is not a terminal, so `Proceed? [y/N]` cannot be answered; pass --yes to apply the plan above, or --dry-run to only print it", .{});
             std.process.exit(1);
         }
         // The prompt and the abort are conversation, not the plan: stdout
@@ -19187,6 +19663,7 @@ test "every registered option routes a following help flag to itself" {
     const aliases = [_]struct { []const u8, Flag }{
         .{ "-v", .verbose },
         .{ "-q", .quiet },
+        .{ "-o", .output },
         .{ "-m", .model },
         .{ "-c", .continue_last },
         .{ "-wt", .worktree },

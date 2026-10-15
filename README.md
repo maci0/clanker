@@ -43,7 +43,7 @@ plugin's reach.
 
 ## Release status
 
-`0.13.0` is the newest published release, and `main` carries the next one. A
+`0.14.0` is the newest published release, and `main` carries the next one. A
 version in `build.zig.zon` is the version a build reports, not a published
 release: a release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries
 binaries and a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0`
@@ -62,7 +62,7 @@ To run a published release, download the binary for your platform from the
 `sbom.cdx.json`) and run it:
 
 ```sh
-./clanker-v0.13.0-x86_64-linux-musl --version   # clanker 0.13.0
+./clanker-v0.14.0-x86_64-linux-musl --version   # clanker 0.14.0
 ```
 
 To build from source, the requirements are **Zig 0.16.0**, **Git**, **Bash**,
@@ -334,12 +334,14 @@ slept through are counted into the ledger and dropped, not replayed. See
 `clanker` (no command) drops you into the REPL. `clanker <command>` runs one
 task; `clanker --help` lists commands. `clanker <command> --help` explains a
 command, while `clanker <option> -h` explains that option (for example,
-`clanker --mascot -h`).
+`clanker --mascot -h`). `clanker schema` prints the CLI Spec 0.3 document.
+Data commands take `-o json`; `auto` stays text, including on a pipe.
 
 | Command | Description |
 |---------|-------------|
 | `help` / `--help` | Print usage |
 | `version` / `--version` | Print the version |
+| `schema [command]` | Print the CLI Spec 0.3 document |
 | `init` | Create `config.local.toml` + `state/` |
 | `providers [check\|models\|catalog\|fill\|refresh] [name]` | Verify connectivity, list models, search the local models.dev snapshot, fill in model specs, or refresh that snapshot. Defaults to `check` |
 | `auth [status\|login\|logout] [codex\|grok\|claude]` | Manage clanker's native provider OAuth credentials (separate from `--backend`) |

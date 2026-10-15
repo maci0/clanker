@@ -332,6 +332,7 @@ pub fn main(init: std.process.Init) !void {
         // could not do it".
         if (err == error.OutOfMemory) {
             log.log(.error_, "out of memory", .{});
+            if (cli.output_mode == .json) cli.writeErrorEnvelope(init.io, .failure, "out of memory", "");
             std.process.exit(1);
         }
         // The rejected argument is quoted back in most of these, and it is
@@ -360,6 +361,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{shown}),
             // Both port flags parse the same way, so naming only one of them
             // sent a `--proxy-port` caller to the flag they never typed.
+            error.BadOutput => cli.printUsageError(init.io, "--output wants auto, text, or json, got '{s}'", .{shown}),
             error.BadPort => cli.printUsageError(init.io, "--webui-port and --proxy-port want a 16-bit port number, got '{s}'", .{shown}),
             error.BadDirection => cli.printUsageError(init.io, "--direction wants 'min' or 'max', got '{s}'", .{shown}),
             error.BadJudge => cli.printUsageError(init.io, "--judge wants 'self' or 'third', got '{s}'", .{shown}),
@@ -373,7 +375,7 @@ pub fn main(init: std.process.Init) !void {
             error.OutOfMemory => unreachable,
         }
         const skip_hint = skipUsageHint(err, diag, err == error.UnknownArg and cli.suggestFlagFor(diag, cmd_out) != null);
-        if (!skip_hint) {
+        if (!skip_hint and cli.output_mode != .json) {
             if (err == error.UnknownCommand or arg_list.items.len < 2) {
                 cli.printUsageHint(init.io);
             } else {
@@ -413,11 +415,11 @@ pub fn main(init: std.process.Init) !void {
         else
             config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml")) catch |err| {
             if (config.Config.takeLoadDiagnostic()) {
-                cli.printUsageError(init.io, "could not load configuration ({s}); correct the setting reported above", .{@errorName(err)});
+                cli.printKind(init.io, .failure, "", "could not load configuration ({s}); correct the setting reported above", .{@errorName(err)});
             } else if (recoveryHint(err)) |h| {
-                cli.printUsageError(init.io, "could not load configuration ({s}): {s}", .{ @errorName(err), h });
+                cli.printKind(init.io, .failure, "", "could not load configuration ({s}): {s}", .{ @errorName(err), h });
             } else {
-                cli.printUsageError(init.io, "could not load configuration ({s}); check config.toml syntax or run `clanker setup` to create one", .{@errorName(err)});
+                cli.printKind(init.io, .failure, "", "could not load configuration ({s}); check config.toml syntax or run `clanker setup` to create one", .{@errorName(err)});
             }
             std.process.exit(1);
         };
@@ -428,11 +430,11 @@ pub fn main(init: std.process.Init) !void {
         if (merged.writeJson(&out.writer, arena)) {
             cli.writeStdOut(init.io, out.written()) catch |err| {
                 if (err == error.BrokenPipe) std.process.exit(0);
-                cli.printUsageError(init.io, "{s}: could not write config JSON to stdout", .{@errorName(err)});
+                cli.printKind(init.io, .failure, "", "{s}: could not write config JSON to stdout", .{@errorName(err)});
                 std.process.exit(1);
             };
         } else |err| {
-            cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
+            cli.printKind(init.io, .failure, "", "could not render the config as JSON ({s})", .{@errorName(err)});
             std.process.exit(1);
         }
         std.process.exit(0);
@@ -445,10 +447,10 @@ pub fn main(init: std.process.Init) !void {
 
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
     // (existing real env vars always win). Gated by the modules.dotenv flag,
-    // and skipped for --help/--version: neither touches a provider or reads
-    // a key, so there is no reason for either to read config.toml/.env off
-    // disk or print the "loaded N key(s)" line ahead of its own output.
-    if (opts.command != .help and opts.command != .version) {
+    // and skipped for --help/--version/schema: none of them touches a provider
+    // or reads a key, so there is no reason to read config.toml/.env off disk
+    // or print the "loaded N key(s)" line ahead of that command's own output.
+    if (opts.command != .help and opts.command != .version and opts.command != .schema) {
         const early_cfg = config.Config.loadQuiet(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
         if (early_cfg) |c| {
             if (c.modules.dotenv) dotenv.load(init.io, gpa, init.environ_map);
@@ -469,9 +471,9 @@ pub fn main(init: std.process.Init) !void {
         else
             recoveryHint(err);
         if (hint) |h| {
-            cli.printUsageError(init.io, "{s}", .{h});
+            cli.printKind(init.io, .failure, "", "{s}", .{h});
         } else {
-            cli.printUsageError(init.io, "{s}", .{@errorName(err)});
+            cli.printKind(init.io, .failure, "", "{s}", .{@errorName(err)});
         }
         std.process.exit(1);
     };
