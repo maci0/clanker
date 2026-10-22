@@ -4,6 +4,8 @@ clanker is a self-improving AI agent harness in **Zig 0.16.0**; tools run as san
 
 ## Local agent rules
 
+Original code is GPL-3.0-or-later (`LICENSE`, `README.md`); dependency notices stay separate. Private reports use `SECURITY.md`. Append change evidence to `PROVENANCE.md`.
+
 Read first, before any task: when `.agents/AGENTS.md` exists, read it and every rule module it imports. Directory is checkout-private and gitignored, so only absence is a soft skip. The prompt also carries a device-global layer, `$HOME/.agents/AGENTS.md` unless `agent.global_instructions_file` names another path (empty takes the `$HOME` default; missing or empty content is skipped), separate from this file. `CLAUDE.md` is the companion file: it imports this one and carries the operator verb tables, so a convention belongs here and a verb belongs there.
 
 @.agents/AGENTS.md

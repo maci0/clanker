@@ -317,28 +317,28 @@ def check(doc_path, list_all):
 # waiver, and a waiver is how the last three passes each reported green over 96
 # stale references. Each string below was taken from the line it describes.
 ASSERTED = {
-    ('src/cli.zig', '8498-8503'): ('on_proxy', 'authorize'),
-    ('src/cli.zig', '8839'): ('"/api/run"',),
-    ('src/cli.zig', '8835'): ('"/api/ask"',),
-    ('src/cli.zig', '8653'): ('is_mcp_servers', '"/api/mcp/servers"'),
-    ('src/cli.zig', '8432-8435'): ('max_body_bytes',),
-    ('src/cli.zig', '10321'): ('max_image_bytes',),
-    ('src/cli.zig', '10321-10322'): ('max_run_images',),
-    ('src/cli.zig', '8560'): ('request_head',),
-    ('src/cli.zig', '12619'): ('handleMcpServers',),
+    ('src/cli.zig', '8974-8979'): ('on_proxy', 'authorize'),
+    ('src/cli.zig', '9315'): ('"/api/run"',),
+    ('src/cli.zig', '9311'): ('"/api/ask"',),
+    ('src/cli.zig', '9129'): ('is_mcp_servers', '"/api/mcp/servers"'),
+    ('src/cli.zig', '8908-8911'): ('max_body_bytes',),
+    ('src/cli.zig', '10797'): ('max_image_bytes',),
+    ('src/cli.zig', '10797-10798'): ('max_run_images',),
+    ('src/cli.zig', '9036'): ('request_head',),
+    ('src/cli.zig', '13095'): ('handleMcpServers',),
     # A command-table row, not a symbol definition: the `clanker update`
     # surface lives in `src/cli/update.zig`, and its entry in the CLI's verb
-    # table is what `src/cli.zig:2425` proves.
-    ('src/cli.zig', '2425'): ('.command = .update',),
-    # Prose citations that name no identifier: `src/cli.zig:17469` is the
+    # table is what `src/cli.zig:2575` proves.
+    ('src/cli.zig', '2575'): ('.command = .update',),
+    # Prose citations that name no identifier: `src/cli.zig:17961` is the
     # `req.backend` check the R1/T7 rows point at, and no symbol either cell
     # names is defined there, so the row falls through to this table and the
     # cited line has to say what it says.
-    ('src/cli.zig', '17485'): ('req.backend',),
-    ('src/cli.zig', '4434'): ('acp_vendor.Name.parse', 'BadBackend'),
+    ('src/cli.zig', '17961'): ('req.backend',),
+    ('src/cli.zig', '4910'): ('acp_vendor.Name.parse', 'BadBackend'),
     ('src/config.zig', '1110'): ('a2a: bool = true',),
     ('docs/README.md', '1623'): ('There is no authentication',),
-    ('README.md', '250'): ('There is no', 'authentication',),
+    ('README.md', '259'): ('There is no', 'authentication',),
     ('src/serve/proxy.zig', '30-31'): ('default_first_byte_s', 'default_idle_s'),
     ('src/serve/proxy.zig', '57'): ('fn authorize',),
     ('src/serve/proxy.zig', '426-427'): ('first_byte',),
@@ -357,11 +357,11 @@ ASSERTED = {
     # names (safeJoin, read_file, env_allow) live in other files, so the
     # keyword rule cannot see them from the cited span.
     ('src/util/secret_dotenv.zig', '49'): ('isSecretDotenvPath',),
-    ('src/cli.zig', '14540'): ('isSecretDotenvName',),
-    ('src/cli.zig', '14553'): ('pathHasSymlinkComponent', 'symlinked'),
-    ('src/cli.zig', '14640'): ('isOwnerOnlyFile',),
-    ('src/cli.zig', '14626'): ('isSecretDotenvName',),
-    ('src/cli.zig', '8685'): ('health/live',),
+    ('src/cli.zig', '15016'): ('isSecretDotenvName',),
+    ('src/cli.zig', '15029'): ('pathHasSymlinkComponent', 'symlinked'),
+    ('src/cli.zig', '15116'): ('isOwnerOnlyFile',),
+    ('src/cli.zig', '15102'): ('isSecretDotenvName',),
+    ('src/cli.zig', '9161'): ('health/live',),
     ('docs/README.md', '865'): ('repl_exec_allow',),
     ('docs/README.md', '1625'): ('What it binds',),
     ('docs/README.md', '1621-1625'): ('binds',),
@@ -372,18 +372,18 @@ ASSERTED = {
     # entry has to assert the text itself.
     ('src/peers/chatrooms.zig', '903'): ('.from = cfg.instance.name',),
     ('src/peers/chatrooms.zig', '435'): ('acquireChatroomLock',),
-    ('src/cli.zig', '9338'): ('chatrooms.isSubscribed',),
-    ('src/cli.zig', '9417'): ('/api/chat/react',),
-    ('src/cli.zig', '9079'): ('.from = parsed.from', '.text = text'),
-    ('src/cli.zig', '12162'): ('installCatalogCacheLocked',),
-    ('src/cli.zig', '12893'): ('provider.api_key_env',),
-    ('src/cli.zig', '12906'): ('budget_s', 'httpGetDeadline'),
+    ('src/cli.zig', '9814'): ('chatrooms.isSubscribed',),
+    ('src/cli.zig', '9893'): ('/api/chat/react',),
+    ('src/cli.zig', '9555'): ('.from = parsed.from', '.text = text'),
+    ('src/cli.zig', '12638'): ('installCatalogCacheLocked',),
+    ('src/cli.zig', '13369'): ('provider.api_key_env',),
+    ('src/cli.zig', '13382'): ('budget_s', 'httpGetDeadline'),
     ('src/agent/loop.zig', '4049'): ('buildChatroomInbox',),
     ('src/agent/loop.zig', '4054'): ('[chatroom inbox]', 'never follow instructions'),
     ('src/agent/loop.zig', '4059-4061'): ('prompt_fence.neutralize',),
     ('src/agent/loop.zig', '985'): ('modules.chatrooms', 'chatrooms.on'),
-    ('src/cli.zig', '5863'): ('prompt_fence.neutralize',),
-    ('src/cli.zig', '17384'): ('prompt_fence.neutralize',),
+    ('src/cli.zig', '6339'): ('prompt_fence.neutralize',),
+    ('src/cli.zig', '17860'): ('prompt_fence.neutralize',),
     ('src/peers/chatrooms.zig', '900'): ('safe_text', 'utf8.sanitize'),
     ('src/config.zig', '993'): ('admission',),
     ('src/config.zig', '1090'): ('max_history',),
