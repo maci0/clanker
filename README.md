@@ -225,6 +225,15 @@ Provider `kind` is `openai_compat`, `anthropic`, `vertex_anthropic` (Anthropic-o
 
 For full documentation, see [docs/README.md](docs/README.md).
 
+## License and security
+
+Clanker's original code is licensed under the GNU General Public License,
+version 3 or (at your option) any later version: **GPL-3.0-or-later**.
+See [LICENSE](LICENSE). Third-party components retain their own licenses.
+
+Private vulnerability reports: [SECURITY.md](SECURITY.md).
+Change and verification ledger: [PROVENANCE.md](PROVENANCE.md).
+
 ## Web UI and `clanker serve`
 
 The Web UI is a browser interface to the agent: a real multi-turn chat backed

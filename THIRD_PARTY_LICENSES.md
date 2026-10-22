@@ -5,11 +5,11 @@ time, with the license it carries and where its full text lives. Nothing is
 redistributed here without a row in this table; adding a dependency means
 adding a row in the same change.
 
-Two things are deliberately not claimed. clanker's own license is not declared
-in this repository, and the JS build toolchain (`assemblyscript`,
+Clanker's own code is GPL-3.0-or-later; see `LICENSE` and `README.md`.
+The JS build toolchain (`assemblyscript`,
 `binaryen`, `long`, `oxlint`, `tailwindcss`, `@tailwindcss/cli` and the lint
-packages listed below) is not vendored, so its licenses are not recorded in-tree either. Both are gaps a
-redistributor has to close, not facts this file can assert.
+packages listed below) is not vendored, so its license texts are not recorded
+in-tree. A redistributor must obtain those notices when shipping that toolchain.
 
 ## Fetched at build time (`build.zig.zon`)
 

@@ -2,6 +2,7 @@
   "name": "clanker",
   "version": "0.14.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "packageManager": "bun@1.4.2",
   "description": "clanker — self-improving AI agent harness",
   "type": "module",

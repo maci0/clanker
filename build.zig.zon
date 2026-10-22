@@ -16,6 +16,7 @@
         // fetched: see vendor/toml/README.md for why.
     },
     .paths = .{
+        "LICENSE",
         "CHANGELOG.md",
         "README.md",
         "RELEASES.md",
