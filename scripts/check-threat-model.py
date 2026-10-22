@@ -334,7 +334,7 @@ ASSERTED = {
     # `req.backend` check the R1/T7 rows point at, and no symbol either cell
     # names is defined there, so the row falls through to this table and the
     # cited line has to say what it says.
-    ('src/cli.zig', '17961'): ('req.backend',),
+    ('src/cli.zig', '17963'): ('req.backend',),
     ('src/cli.zig', '4910'): ('acp_vendor.Name.parse', 'BadBackend'),
     ('src/config.zig', '1110'): ('a2a: bool = true',),
     ('docs/README.md', '1623'): ('There is no authentication',),
@@ -357,10 +357,10 @@ ASSERTED = {
     # names (safeJoin, read_file, env_allow) live in other files, so the
     # keyword rule cannot see them from the cited span.
     ('src/util/secret_dotenv.zig', '49'): ('isSecretDotenvPath',),
-    ('src/cli.zig', '15016'): ('isSecretDotenvName',),
-    ('src/cli.zig', '15029'): ('pathHasSymlinkComponent', 'symlinked'),
-    ('src/cli.zig', '15116'): ('isOwnerOnlyFile',),
-    ('src/cli.zig', '15102'): ('isSecretDotenvName',),
+    ('src/cli.zig', '15018'): ('isSecretDotenvName',),
+    ('src/cli.zig', '15031'): ('pathHasSymlinkComponent', 'symlinked'),
+    ('src/cli.zig', '15118'): ('isOwnerOnlyFile',),
+    ('src/cli.zig', '15104'): ('isSecretDotenvName',),
     ('src/cli.zig', '9161'): ('health/live',),
     ('docs/README.md', '865'): ('repl_exec_allow',),
     ('docs/README.md', '1625'): ('What it binds',),
@@ -383,7 +383,7 @@ ASSERTED = {
     ('src/agent/loop.zig', '4059-4061'): ('prompt_fence.neutralize',),
     ('src/agent/loop.zig', '985'): ('modules.chatrooms', 'chatrooms.on'),
     ('src/cli.zig', '6339'): ('prompt_fence.neutralize',),
-    ('src/cli.zig', '17860'): ('prompt_fence.neutralize',),
+    ('src/cli.zig', '17862'): ('prompt_fence.neutralize',),
     ('src/peers/chatrooms.zig', '900'): ('safe_text', 'utf8.sanitize'),
     ('src/config.zig', '993'): ('admission',),
     ('src/config.zig', '1090'): ('max_history',),

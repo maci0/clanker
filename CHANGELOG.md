@@ -5,6 +5,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- Declared GPL-3.0-or-later for original code and documented a private security reporting contact.
+
+### Fixed
+
+- Process-registry test cleanup signals only owned child processes; numeric placeholder PIDs could terminate the build runner in a container.
+- File-view tests use distinct module URLs for each render; millisecond timestamps could reuse a cached module without registering the fresh view.
+- Refreshed stale threat-model source citations and their checked locations.
+
 ## [0.14.0] - 2026-10-15
 
 ### Added

@@ -582,9 +582,11 @@ test "cleanupSessionDirs removes the ending session and aged orphans, keeps live
     try tmp.dir.createDirPath(io, "state/kernels/s-live/python");
     try tmp.dir.writeFile(io, .{ .sub_path = "state/kernels/s-end/python/x.txt", .data = "x" });
 
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer subprocess.killChildBounded(io, &child);
     var reg = subprocess.Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try reg.register("s-live", "python", 1);
+    try reg.register("s-live", "python", child.id.?);
 
     // delay 0: the ending session goes, and so does the aged orphan; the
     // session with a live registered process survives.

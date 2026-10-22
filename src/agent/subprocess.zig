@@ -524,10 +524,13 @@ fn testIo() std.Io.Threaded {
 test "register and get by session+kind" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &child);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try reg.register("sess-1", "python", 42);
-    try std.testing.expectEqual(@as(std.posix.pid_t, 42), reg.get("sess-1", "python").?);
+    try reg.register("sess-1", "python", child.id.?);
+    try std.testing.expectEqual(child.id.?, reg.get("sess-1", "python").?);
     try std.testing.expect(reg.get("sess-1", "js") == null);
     try std.testing.expectEqual(@as(usize, 1), reg.count());
     var snap_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -541,33 +544,48 @@ test "register and get by session+kind" {
 test "register replaces the previous pid for the same key" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var first = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &first);
+    var second = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &second);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try reg.register("sess-1", "python", 1);
-    try reg.register("sess-1", "python", 2);
-    try std.testing.expectEqual(@as(std.posix.pid_t, 2), reg.get("sess-1", "python").?);
+    try reg.register("sess-1", "python", first.id.?);
+    try reg.register("sess-1", "python", second.id.?);
+    try std.testing.expectEqual(second.id.?, reg.get("sess-1", "python").?);
     try std.testing.expectEqual(@as(usize, 1), reg.count());
 }
 
 test "terminateSession drops every kind for that session" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var first = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &first);
+    var second = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &second);
+    var other = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &other);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try reg.register("a", "python", 1);
-    try reg.register("a", "js", 2);
-    try reg.register("b", "python", 3);
+    try reg.register("a", "python", first.id.?);
+    try reg.register("a", "js", second.id.?);
+    try reg.register("b", "python", other.id.?);
     reg.terminateSession("a");
     try std.testing.expect(reg.get("a", "python") == null);
-    try std.testing.expectEqual(@as(std.posix.pid_t, 3), reg.get("b", "python").?);
+    try std.testing.expectEqual(other.id.?, reg.get("b", "python").?);
 }
 
 test "forget removes a pid-only row without requiring the process" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &child);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try reg.register("sess-1", "job-abc", 1);
+    try reg.register("sess-1", "job-abc", child.id.?);
     try std.testing.expectEqual(@as(usize, 1), reg.count());
     reg.forget("sess-1", "job-abc");
     try std.testing.expectEqual(@as(usize, 0), reg.count());
@@ -577,9 +595,12 @@ test "forget removes a pid-only row without requiring the process" {
 test "invalid session id is refused" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &child);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try std.testing.expectError(error.InvalidSessionId, reg.register("../x", "python", 1));
+    try std.testing.expectError(error.InvalidSessionId, reg.register("../x", "python", child.id.?));
 }
 
 test "adopt a live process, write/read a line, SIGTERM on session end" {
@@ -670,9 +691,12 @@ test "terminateWithin SIGTERMs a child that outlives the window" {
 test "register refuses an empty kind" {
     var threaded = testIo();
     defer threaded.deinit();
-    var reg = Registry.init(std.testing.allocator, threaded.io());
+    const io = threaded.io();
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer killChildBounded(io, &child);
+    var reg = Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", 42));
+    try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", child.id.?));
 }
 
 test "killChildBounded escalates to SIGKILL without touching a reaped child" {

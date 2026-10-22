@@ -101,7 +101,7 @@ async function renderedGlyphs() {
     register: () => {},
   };
 
-  await import(`./app.js?glyphs=${Date.now()}`);
+  await import(`./app.js?glyphs=${crypto.randomUUID()}`);
 
   const view = registry.files;
   assert.ok(view, "the Files view registered");

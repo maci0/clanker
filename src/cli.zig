@@ -14423,10 +14423,12 @@ test "endServeSession releases a deleted session's registered processes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
+    var child = try std.process.spawn(io, .{ .argv = &.{ "sleep", "600" } });
+    defer subprocess.killChildBounded(io, &child);
     const reg = try subprocess.processRegistry(std.testing.allocator);
     defer subprocess.deinitProcessRegistry();
     const sid = "serve-end-check";
-    try reg.register(sid, "python", 7);
+    try reg.register(sid, "python", child.id.?);
     const cfg = config.Config{};
     endServeSession(io, &cfg, sid);
     // The registry row is what keeps a deleted session's supervisor alive in
